@@ -89,7 +89,7 @@ export default function Settings() {
       setEventImpact('medium')
       setEventNotes('')
     } catch {
-      // silent fail
+      setCafeState('error')
     } finally {
       setEventSaving(false)
     }
@@ -100,7 +100,7 @@ export default function Settings() {
       await api.delete(`/events/${id}`)
       setEvents((prev) => prev.filter((ev) => ev._id !== id))
     } catch {
-      // silent fail
+      setCafeState('error')
     }
   }
 

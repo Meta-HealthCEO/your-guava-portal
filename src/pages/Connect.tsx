@@ -106,7 +106,7 @@ export default function Connect() {
       await handleSync()
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, '')
-      setYocoError(msg ?? 'Failed to connect Yoco account. Please try again.')
+      setYocoError(msg || 'Failed to connect Yoco account. Please try again.')
     } finally {
       setYocoConnecting(false)
     }
@@ -119,7 +119,7 @@ export default function Connect() {
       window.location.href = data.url
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, '')
-      setYocoError(msg ?? 'Failed to start Yoco connection. Please try again.')
+      setYocoError(msg || 'Failed to start Yoco connection. Please try again.')
     }
   }
 
@@ -140,7 +140,7 @@ export default function Connect() {
       await fetchYocoStatus()
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, '')
-      setYocoError(msg ?? 'Sync failed. Please try again.')
+      setYocoError(msg || 'Sync failed. Please try again.')
     } finally {
       setYocoSyncing(false)
     }
@@ -156,7 +156,7 @@ export default function Connect() {
       setYocoStatus({ connected: false, lastSyncAt: null, tokenExpiresAt: null })
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, '')
-      setYocoError(msg ?? 'Failed to disconnect. Please try again.')
+      setYocoError(msg || 'Failed to disconnect. Please try again.')
     } finally {
       setYocoDisconnecting(false)
     }

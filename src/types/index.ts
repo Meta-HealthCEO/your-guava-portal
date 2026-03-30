@@ -80,7 +80,7 @@ export interface TransactionStats {
   totalTransactions: number
   totalRevenue: number
   avgDailyRevenue: number
-  topItems: { name: string; count: number }[]
+  topItems: { name: string; qty: number }[]
   firstDate: string
   lastDate: string
 }
