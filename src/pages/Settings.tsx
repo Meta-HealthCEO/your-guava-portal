@@ -115,12 +115,10 @@ export default function Settings() {
       setCafeState('success')
       setTimeout(() => setCafeState('idle'), 3000)
     } catch (err: unknown) {
-      const msg =
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response?: { data?: { message?: string } } }).response?.data?.message
-      setCafeError(msg ?? undefined)
+      const resp = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        : undefined
+      setCafeError(resp || undefined)
       setCafeState('error')
     }
   }

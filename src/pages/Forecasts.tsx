@@ -8,34 +8,6 @@ import api from '@/lib/api'
 import type { Forecast } from '@/types'
 import { cn } from '@/lib/utils'
 
-// Mock weekly forecast data
-// TODO: replace with GET /api/forecasts/week
-const MOCK_WEEK: Array<Forecast & { label: string }> = [
-  {
-    _id: 'f1', label: 'Today', date: new Date().toISOString(),
-    items: [{ itemName: 'Flat White', predictedQty: 71 }, { itemName: 'Cappuccino', predictedQty: 52 }],
-    signals: { weather: { temp: 22, condition: 'Sunny', humidity: 55 }, loadSheddingStage: 0, isPublicHoliday: false, isSchoolHoliday: false, isPayday: false, dayOfWeek: 4 },
-    totalPredictedRevenue: 7240, accuracy: 91.5,
-  },
-  {
-    _id: 'f2', label: 'Tomorrow', date: new Date(Date.now() + 86400000).toISOString(),
-    items: [{ itemName: 'Flat White', predictedQty: 84 }, { itemName: 'Cappuccino', predictedQty: 61 }],
-    signals: { weather: { temp: 23, condition: 'Partly Cloudy', humidity: 62 }, loadSheddingStage: 0, isPublicHoliday: false, isSchoolHoliday: false, isPayday: true, dayOfWeek: 5 },
-    totalPredictedRevenue: 8420, accuracy: 94.2,
-  },
-  {
-    _id: 'f3', label: 'Saturday', date: new Date(Date.now() + 2 * 86400000).toISOString(),
-    items: [{ itemName: 'Flat White', predictedQty: 96 }, { itemName: 'Cold Brew', predictedQty: 43 }],
-    signals: { weather: { temp: 25, condition: 'Sunny', humidity: 48 }, loadSheddingStage: 0, isPublicHoliday: false, isSchoolHoliday: false, isPayday: true, dayOfWeek: 6 },
-    totalPredictedRevenue: 9810, accuracy: undefined,
-  },
-  {
-    _id: 'f4', label: 'Sunday', date: new Date(Date.now() + 3 * 86400000).toISOString(),
-    items: [{ itemName: 'Flat White', predictedQty: 58 }, { itemName: 'Muffin', predictedQty: 35 }],
-    signals: { weather: { temp: 21, condition: 'Cloudy', humidity: 70 }, loadSheddingStage: 2, isPublicHoliday: false, isSchoolHoliday: false, isPayday: false, dayOfWeek: 0 },
-    totalPredictedRevenue: 5890, accuracy: undefined,
-  },
-]
 
 interface ForecastWithLabel extends Forecast {
   label: string

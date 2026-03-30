@@ -10,6 +10,14 @@ import {
   Unplug,
   Loader2,
 } from 'lucide-react'
+function extractErrorMsg(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+    if (msg) return msg
+  }
+  return fallback
+}
+
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -97,11 +105,7 @@ export default function Connect() {
       // Trigger initial sync automatically
       await handleSync()
     } catch (err: unknown) {
-      const msg =
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      const msg = extractErrorMsg(err, '')
       setYocoError(msg ?? 'Failed to connect Yoco account. Please try again.')
     } finally {
       setYocoConnecting(false)
@@ -114,11 +118,7 @@ export default function Connect() {
       const { data } = await api.get<{ success: boolean; url: string }>('/yoco/auth')
       window.location.href = data.url
     } catch (err: unknown) {
-      const msg =
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      const msg = extractErrorMsg(err, '')
       setYocoError(msg ?? 'Failed to start Yoco connection. Please try again.')
     }
   }
@@ -139,11 +139,7 @@ export default function Connect() {
       })
       await fetchYocoStatus()
     } catch (err: unknown) {
-      const msg =
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      const msg = extractErrorMsg(err, '')
       setYocoError(msg ?? 'Sync failed. Please try again.')
     } finally {
       setYocoSyncing(false)
@@ -159,11 +155,7 @@ export default function Connect() {
       await api.post('/yoco/disconnect')
       setYocoStatus({ connected: false, lastSyncAt: null, tokenExpiresAt: null })
     } catch (err: unknown) {
-      const msg =
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      const msg = extractErrorMsg(err, '')
       setYocoError(msg ?? 'Failed to disconnect. Please try again.')
     } finally {
       setYocoDisconnecting(false)
@@ -204,11 +196,7 @@ export default function Connect() {
       setUploadState('success')
       setLastUpload(new Date().toISOString())
     } catch (err: unknown) {
-      const msg =
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      const msg = extractErrorMsg(err, '')
       setErrorMsg(msg ?? 'Upload failed. Please check your file and try again.')
       setUploadState('error')
     }

@@ -158,7 +158,7 @@ function CircularGauge({ value, color, size = 48 }: { value: number; color: stri
 function KpiCard({
   label, value, sub, icon: Icon, accent,
 }: {
-  label: string; value: string; sub?: string; icon: React.ComponentType<{ className?: string }>; accent: string
+  label: string; value: string; sub?: string; icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; accent: string
 }) {
   return (
     <Card>

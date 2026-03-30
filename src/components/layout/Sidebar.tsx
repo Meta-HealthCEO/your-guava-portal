@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   TrendingUp,
@@ -36,14 +36,14 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
   const [cafeName, setCafeName] = useState('')
 
   useEffect(() => {
+    if (!user) return
     api.get('/cafe/me').then(({ data }) => {
       setCafeName(data?.cafe?.name || '')
     }).catch(() => {})
-  }, [])
+  }, [user])
 
   const handleLogout = async () => {
     await logout()
