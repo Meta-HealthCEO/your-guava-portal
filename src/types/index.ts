@@ -109,3 +109,105 @@ export interface TimePeriod {
   totalQty: number
   topItems: { name: string; qty: number }[]
 }
+
+// ── Analytics types ──────────────────────────────────────────────────────────
+
+export interface RevenueData {
+  date: string
+  revenue: number
+  transactions: number
+}
+
+export interface RevenueAnalytics {
+  data: RevenueData[]
+  totalRevenue: number
+  avgDailyRevenue: number
+  bestDay: { date: string; revenue: number }
+  worstDay: { date: string; revenue: number }
+  trend: number
+}
+
+export interface ItemPerformance {
+  name: string
+  totalQty: number
+  totalRevenue: number
+  avgPerDay: number
+  trend: number
+}
+
+export interface HeatmapCell {
+  dayOfWeek: number
+  hour: number
+  revenue: number
+  transactions: number
+}
+
+export interface CustomerInsights {
+  avgTransactionValue: number
+  avgItemsPerTransaction: number
+  cashVsCardRatio: { cash: number; card: number }
+  tippingRate: number
+  avgTip: number
+}
+
+// ── Workforce types ──────────────────────────────────────────────────────────
+
+export interface StaffMember {
+  _id: string
+  name: string
+  email?: string
+  phone?: string
+  role: 'barista' | 'kitchen' | 'front' | 'manager' | 'other'
+  hourlyRate: number
+  startDate: string
+  isActive: boolean
+}
+
+export interface Shift {
+  _id: string
+  staffId: string | { _id: string; name: string }
+  cafeId: string
+  date: string
+  startTime: string
+  endTime: string
+  hoursWorked: number
+  type: 'regular' | 'overtime'
+  status: 'scheduled' | 'completed' | 'cancelled'
+  notes?: string
+}
+
+export interface ShiftSummary {
+  staffId: string
+  staffName: string
+  totalHours: number
+  regularHours: number
+  overtimeHours: number
+  estimatedPay: number
+}
+
+export interface LeaveRequest {
+  _id: string
+  staffId: string | { _id: string; name: string }
+  cafeId: string
+  type: 'annual' | 'sick' | 'family' | 'unpaid'
+  startDate: string
+  endDate: string
+  days: number
+  reason?: string
+  status: 'pending' | 'approved' | 'rejected'
+  approvedBy?: string
+  approvedAt?: string
+}
+
+export interface LeaveBalanceData {
+  staffId: string
+  staffName?: string
+  annual: { total: number; used: number }
+  sick: { total: number; used: number }
+  family: { total: number; used: number }
+}
+
+export interface LeaveCalendarDay {
+  date: string
+  staff: { name: string; type: string }[]
+}

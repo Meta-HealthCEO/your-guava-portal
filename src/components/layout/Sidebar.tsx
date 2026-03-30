@@ -11,6 +11,10 @@ import {
   Users,
   ChevronDown,
   Store,
+  BarChart3,
+  UserCircle,
+  CalendarDays,
+  CalendarOff,
 } from 'lucide-react'
 import guavaIcon from '@/assets/guava-icon.png'
 import { useAuth } from '@/hooks/useAuth'
@@ -28,7 +32,11 @@ const navItems: NavItem[] = [
   { label: 'Forecasts', to: '/forecasts', icon: TrendingUp },
   { label: 'Connect Data', to: '/connect', icon: Upload },
   { label: 'Insights', to: '/insights', icon: Sparkles },
+  { label: 'Analytics', to: '/analytics', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: Settings },
+  { label: 'Staff', to: '/staff', icon: UserCircle },
+  { label: 'Roster', to: '/roster', icon: CalendarDays },
+  { label: 'Leave', to: '/leave', icon: CalendarOff },
 ]
 
 interface SidebarProps {

@@ -10,6 +10,10 @@ import Insights from '@/pages/Insights'
 import Settings from '@/pages/Settings'
 import Forecasts from '@/pages/Forecasts'
 import Team from '@/pages/Team'
+import Analytics from '@/pages/Analytics'
+import Roster from '@/pages/Roster'
+import Staff from '@/pages/Staff'
+import Leave from '@/pages/Leave'
 
 // ── ProtectedRoute ───────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -89,6 +93,38 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Team />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/analytics"
+        element={
+          <ProtectedRoute>
+            <Analytics />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/roster"
+        element={
+          <ProtectedRoute>
+            <Roster />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/staff"
+        element={
+          <ProtectedRoute>
+            <Staff />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/leave"
+        element={
+          <ProtectedRoute>
+            <Leave />
           </ProtectedRoute>
         }
       />
