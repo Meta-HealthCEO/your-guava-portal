@@ -33,7 +33,7 @@ function Toast({ toast }: { toast: ToastState }) {
 }
 
 export default function Team() {
-  const { user, isOwner } = useAuth()
+  const { isOwner } = useAuth()
 
   const [members, setMembers] = useState<TeamMember[]>([])
   const [cafes, setCafes] = useState<CafeBasic[]>([])
