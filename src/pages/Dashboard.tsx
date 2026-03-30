@@ -472,11 +472,13 @@ export default function Dashboard() {
   }, [selectedDayIdx, weekForecasts])
 
   const activeForecast = forecast
-  const topItem = activeForecast?.items.reduce((a, b) => a.predictedQty > b.predictedQty ? a : b)
+  const topItem = activeForecast?.items.length
+    ? activeForecast.items.reduce((a, b) => a.predictedQty > b.predictedQty ? a : b)
+    : undefined
   const totalItems = activeForecast?.items.reduce((sum, i) => sum + i.predictedQty, 0) ?? 0
   const timePeriods = activeForecast ? buildTimePeriods(activeForecast) : []
   const peakPeriod = timePeriods.length > 0 ? timePeriods.reduce((a, b) => a.totalQty > b.totalQty ? a : b) : null
-  const maxTimePeriodQty = timePeriods.length > 0 ? Math.max(...timePeriods.map(p => p.totalQty)) : 1
+  const maxTimePeriodQty = Math.max(...timePeriods.map(p => p.totalQty), 1)
 
   const kpis = [
     {

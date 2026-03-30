@@ -47,13 +47,16 @@ export default function Login() {
 
   return (
     <div className="min-h-screen relative flex">
-      {/* Full-page background — coffee shop photo */}
+      {/* Full-page background — coffee shop photo with gradient fallback */}
+      <div className="absolute inset-0 bg-[#0A0808]" />
       <div
-        className="absolute inset-0 bg-cover bg-center"
+        className="absolute inset-0 bg-cover bg-center opacity-40"
         style={{ backgroundImage: `url('https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=1920&q=80')` }}
       />
-      <div className="absolute inset-0 bg-black/70" />
-      <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-black/40" />
+      <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/40 to-black/60" />
+      {/* Fallback warm glow if image fails to load */}
+      <div className="absolute bottom-0 left-0 w-200 h-200 -translate-x-1/3 translate-y-1/3 rounded-full blur-[200px] opacity-10" style={{ background: '#D43D3D' }} />
+      <div className="absolute top-0 right-0 w-125 h-125 translate-x-1/4 -translate-y-1/4 rounded-full blur-[180px] opacity-[0.06]" style={{ background: '#4DA63B' }} />
 
       {/* Center container — logo left, form right */}
       <div className="relative z-10 flex items-center justify-center gap-16 w-full max-w-4xl mx-auto px-6 min-h-screen">

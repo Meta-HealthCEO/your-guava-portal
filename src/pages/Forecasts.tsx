@@ -27,7 +27,7 @@ function getDayLabel(date: Date) {
 function ForecastRow({ forecast }: { forecast: ForecastWithLabel }) {
   const date = new Date(forecast.date)
   const dateStr = date.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'short' })
-  const topItem = forecast.items[0]
+  const topItem = forecast.items.length > 0 ? forecast.items[0] : null
 
   return (
     <div className="flex items-center gap-4 py-4 border-b border-[#1F1F1F] last:border-0">
@@ -46,10 +46,12 @@ function ForecastRow({ forecast }: { forecast: ForecastWithLabel }) {
         </div>
 
         {/* Top item */}
-        <div className="w-32 hidden sm:block">
-          <p className="text-[#F0F0F0] text-sm">{topItem.itemName}</p>
-          <p className="text-[#555555] text-xs">{topItem.predictedQty} units</p>
-        </div>
+        {topItem && (
+          <div className="w-32 hidden sm:block">
+            <p className="text-[#F0F0F0] text-sm">{topItem.itemName}</p>
+            <p className="text-[#555555] text-xs">{topItem.predictedQty} units</p>
+          </div>
+        )}
 
         {/* Signals */}
         <div className="flex items-center gap-1.5 flex-wrap">

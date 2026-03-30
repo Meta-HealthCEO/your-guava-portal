@@ -53,15 +53,16 @@ export default function Settings() {
   // Load cafe data and events on mount
   useEffect(() => {
     api
-      .get<Cafe>('/cafe/me')
+      .get<{ success: boolean; cafe: Cafe }>('/cafe/me')
       .then(({ data }) => {
-        setCafeName(data.name)
-        setCafeAddress(data.location.address)
-        setCafeCity(data.location.city)
+        const cafe = data.cafe
+        setCafeName(cafe.name || '')
+        setCafeAddress(cafe.location?.address || '')
+        setCafeCity(cafe.location?.city || 'Cape Town')
       })
       .catch(() => {
         setCafeName('My Cafe')
-        setCafeAddress('123 Long Street')
+        setCafeAddress('')
         setCafeCity('Cape Town')
       })
 
