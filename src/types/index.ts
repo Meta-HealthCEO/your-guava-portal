@@ -2,7 +2,31 @@ export interface User {
   id: string
   email: string
   name: string
-  cafeId: string
+  role: 'owner' | 'manager'
+  orgId: string
+  cafeIds: string[]
+  activeCafeId: string
+}
+
+export interface Organization {
+  _id: string
+  name: string
+  ownerId: string
+  plan: 'free' | 'growth' | 'pro'
+}
+
+export interface TeamMember {
+  _id: string
+  name: string
+  email: string
+  role: 'owner' | 'manager'
+  cafeIds: { _id: string; name: string }[]
+  createdAt: string
+}
+
+export interface CafeBasic {
+  _id: string
+  name: string
 }
 
 export interface Cafe {

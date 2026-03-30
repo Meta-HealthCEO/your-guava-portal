@@ -5,9 +5,11 @@ import type { User } from '@/types'
 interface AuthContextType {
   user: User | null
   isLoading: boolean
+  isOwner: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
   register: (email: string, password: string, name: string, cafeName: string) => Promise<void>
+  switchCafe: (cafeId: string) => Promise<void>
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null)
@@ -77,8 +79,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setUser(data.user)
   }
 
+  const switchCafe = async (cafeId: string) => {
+    const { data } = await api.post<{ accessToken: string; activeCafeId: string }>(
+      '/team/switch-cafe',
+      { cafeId }
+    )
+    localStorage.setItem('accessToken', data.accessToken)
+    // Reload the page so all data refetches for the new cafe
+    window.location.reload()
+  }
+
+  const isOwner = user?.role === 'owner'
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, register }}>
+    <AuthContext.Provider value={{ user, isLoading, isOwner, login, logout, register, switchCafe }}>
       {children}
     </AuthContext.Provider>
   )

@@ -8,6 +8,9 @@ import {
   Settings,
   LogOut,
   X,
+  Users,
+  ChevronDown,
+  Store,
 } from 'lucide-react'
 import guavaIcon from '@/assets/guava-icon.png'
 import { useAuth } from '@/hooks/useAuth'
@@ -33,16 +36,30 @@ interface SidebarProps {
   onClose?: () => void
 }
 
+interface CafeOption {
+  _id: string
+  name: string
+}
+
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
-  const { user, logout } = useAuth()
+  const { user, logout, switchCafe, isOwner } = useAuth()
   const navigate = useNavigate()
   const [cafeName, setCafeName] = useState('')
+  const [cafeList, setCafeList] = useState<CafeOption[]>([])
+  const [switcherOpen, setSwitcherOpen] = useState(false)
 
   useEffect(() => {
     if (!user) return
     api.get('/cafe/me').then(({ data }) => {
       setCafeName(data?.cafe?.name || '')
     }).catch(() => {})
+
+    // Fetch list of accessible cafes for the switcher
+    if (user.cafeIds && user.cafeIds.length > 1) {
+      api.get<{ success: boolean; cafes: CafeOption[] }>('/cafe/list').then(({ data }) => {
+        setCafeList(data.cafes || [])
+      }).catch(() => {})
+    }
   }, [user])
 
   const handleLogout = async () => {
@@ -92,6 +109,47 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           </button>
         </div>
 
+        {/* Cafe Switcher — only show if user has multiple cafes */}
+        {user && user.cafeIds && user.cafeIds.length > 1 && (
+          <div className="px-3 pt-3 pb-1">
+            <div className="relative">
+              <button
+                onClick={() => setSwitcherOpen(!switcherOpen)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#1A1A1A] border border-[#2A2A2A] text-sm text-[#F0F0F0] hover:border-[#3A3A3A] transition-colors"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <Store className="w-3.5 h-3.5 shrink-0 text-[#888888]" />
+                  <span className="truncate">{cafeName || 'Select cafe'}</span>
+                </div>
+                <ChevronDown className={cn('w-3.5 h-3.5 shrink-0 text-[#555555] transition-transform', switcherOpen && 'rotate-180')} />
+              </button>
+              {switcherOpen && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg shadow-lg z-50 overflow-hidden">
+                  {cafeList.map((cafe) => (
+                    <button
+                      key={cafe._id}
+                      onClick={() => {
+                        setSwitcherOpen(false)
+                        if (cafe._id !== user.activeCafeId) {
+                          switchCafe(cafe._id)
+                        }
+                      }}
+                      className={cn(
+                        'w-full text-left px-3 py-2 text-sm transition-colors',
+                        cafe._id === user.activeCafeId
+                          ? 'bg-[#D43D3D]/10 text-[#D43D3D]'
+                          : 'text-[#888888] hover:bg-white/5 hover:text-[#F0F0F0]'
+                      )}
+                    >
+                      {cafe.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {navItems.map(({ label, to, icon: Icon }) => (
@@ -121,6 +179,34 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               )}
             </NavLink>
           ))}
+
+          {/* Team nav item — owner only */}
+          {isOwner && (
+            <NavLink
+              to="/team"
+              onClick={handleNavClick}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group relative',
+                  isActive
+                    ? 'bg-[#D43D3D]/10 text-[#D43D3D] border-l-2 border-[#D43D3D] pl-[10px]'
+                    : 'text-[#888888] hover:text-[#F0F0F0] hover:bg-white/5 border-l-2 border-transparent'
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <Users
+                    className={cn(
+                      'w-4 h-4 shrink-0',
+                      isActive ? 'text-[#D43D3D]' : 'text-[#888888] group-hover:text-[#F0F0F0]'
+                    )}
+                  />
+                  <span>Team</span>
+                </>
+              )}
+            </NavLink>
+          )}
         </nav>
 
         {/* User / Logout */}

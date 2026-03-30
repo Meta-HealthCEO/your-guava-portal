@@ -9,6 +9,7 @@ import Connect from '@/pages/Connect'
 import Insights from '@/pages/Insights'
 import Settings from '@/pages/Settings'
 import Forecasts from '@/pages/Forecasts'
+import Team from '@/pages/Team'
 
 // ── ProtectedRoute ───────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -80,6 +81,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Settings />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/team"
+        element={
+          <ProtectedRoute>
+            <Team />
           </ProtectedRoute>
         }
       />
