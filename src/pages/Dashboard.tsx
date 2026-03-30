@@ -244,13 +244,6 @@ function ImpactFactorsCard({ signals }: { signals: Forecast['signals'] }) {
       active: signals.isPublicHoliday || signals.isSchoolHoliday,
     },
     {
-      label: 'Loadshed',
-      pct: signals.loadSheddingStage > 0 ? Math.min(signals.loadSheddingStage * 20, 100) : 0,
-      impact: signals.loadSheddingStage > 0 ? `-${signals.loadSheddingStage * 8}%` : 'None',
-      color: signals.loadSheddingStage > 0 ? '#D43D3D' : '#4DA63B',
-      active: signals.loadSheddingStage > 0,
-    },
-    {
       label: 'Events',
       pct: signals.events && signals.events.length > 0
         ? (signals.events.some(e => e.impact === 'high') ? 90 : signals.events.some(e => e.impact === 'medium') ? 65 : 40)
@@ -272,7 +265,7 @@ function ImpactFactorsCard({ signals }: { signals: Forecast['signals'] }) {
         </div>
       </CardHeader>
       <CardContent className="pt-0">
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           {factors.map((f) => (
             <div key={f.label} className="flex flex-col items-center text-center">
               <div className="relative mb-1.5">
@@ -598,12 +591,6 @@ export default function Dashboard() {
               <div className="flex items-center gap-1.5 bg-[#4DA63B]/10 border border-[#4DA63B]/20 rounded-md px-3 py-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#4DA63B]" />
                 <span className="text-[#4DA63B] text-xs font-medium">Payday</span>
-              </div>
-            )}
-            {activeForecast.signals.loadSheddingStage > 0 && (
-              <div className="flex items-center gap-1.5 bg-[#FFD166]/10 border border-[#FFD166]/20 rounded-md px-3 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#FFD166]" />
-                <span className="text-[#FFD166] text-xs font-medium">Stage {activeForecast.signals.loadSheddingStage}</span>
               </div>
             )}
             {activeForecast.signals.isPublicHoliday && (
