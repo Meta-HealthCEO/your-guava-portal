@@ -37,7 +37,22 @@ const MOCK_WEEK: Array<Forecast & { label: string }> = [
   },
 ]
 
-function ForecastRow({ forecast }: { forecast: typeof MOCK_WEEK[0] }) {
+interface ForecastWithLabel extends Forecast {
+  label: string
+}
+
+function getDayLabel(date: Date) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(date)
+  target.setHours(0, 0, 0, 0)
+  const diff = Math.round((target.getTime() - today.getTime()) / 86400000)
+  if (diff === 0) return 'Today'
+  if (diff === 1) return 'Tomorrow'
+  return date.toLocaleDateString('en-ZA', { weekday: 'long' })
+}
+
+function ForecastRow({ forecast }: { forecast: ForecastWithLabel }) {
   const date = new Date(forecast.date)
   const dateStr = date.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'short' })
   const topItem = forecast.items[0]
@@ -105,18 +120,23 @@ function ForecastRow({ forecast }: { forecast: typeof MOCK_WEEK[0] }) {
 }
 
 export default function Forecasts() {
-  const [forecasts, setForecasts] = useState<typeof MOCK_WEEK>([])
+  const [forecasts, setForecasts] = useState<ForecastWithLabel[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     const load = async () => {
       setIsLoading(true)
       try {
-        // TODO: replace with real API call
-        await api.get('/forecasts/week').catch(() => null)
-        setForecasts(MOCK_WEEK)
+        const { data } = await api.get('/forecasts/week')
+        if (data?.forecasts?.length) {
+          const labeled = data.forecasts.map((f: Forecast) => ({
+            ...f,
+            label: getDayLabel(new Date(f.date)),
+          }))
+          setForecasts(labeled)
+        }
       } catch {
-        setForecasts(MOCK_WEEK)
+        // Show empty state on error
       } finally {
         setIsLoading(false)
       }

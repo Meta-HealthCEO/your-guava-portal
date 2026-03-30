@@ -149,12 +149,22 @@ export default function Insights() {
     else setIsLoading(true)
 
     try {
-      // TODO: replace mock with GET /api/forecasts/insights
-      await api.get('/forecasts/insights').catch(() => null)
-      setInsights(MOCK_INSIGHTS)
-      setHasData(true)
+      const { data } = await api.get('/forecasts/insights')
+      if (data?.insights?.length) {
+        const mapped: Insight[] = data.insights.map((text: string, i: number) => ({
+          id: String(i + 1),
+          text,
+          category: (['trend', 'warning', 'tip', 'highlight'] as const)[i % 4],
+          generatedAt: data.generatedAt || new Date().toISOString(),
+        }))
+        setInsights(mapped)
+        setHasData(true)
+      } else {
+        setHasData(false)
+      }
       setLastUpdated(new Date().toISOString())
     } catch {
+      // If Anthropic key not set, fall back to mock
       setInsights(MOCK_INSIGHTS)
       setHasData(true)
       setLastUpdated(new Date().toISOString())

@@ -1,11 +1,13 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @theme inline {
-  --font-sans: 'Inter', sans-serif;
+  --font-sans: 'Poppins', sans-serif;
   --color-guava-red: #D43D3D;
+  --color-guava-red-light: #FDEAEA;
   --color-guava-green: #4DA63B;
+  --color-guava-green-light: #EEFAEB;
   --color-guava-yellow: #FFD166;
+  --color-guava-cream: #FFFAF5;
   --color-surface: #1A1A1A;
   --color-surface-2: #222222;
   --color-border: #2A2A2A;
@@ -20,7 +22,26 @@
 body {
   background-color: #0F0F0F;
   color: #F0F0F0;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Poppins', sans-serif;
+}
+
+/* Aurora animations */
+@keyframes aurora1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(120px, -80px) scale(1.15); }
+  50% { transform: translate(80px, 60px) scale(1.05); }
+  75% { transform: translate(-60px, -20px) scale(1.1); }
+}
+@keyframes aurora2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(-80px, 60px) scale(1.2); }
+  50% { transform: translate(60px, -40px) scale(0.9); }
+  75% { transform: translate(-40px, -80px) scale(1.1); }
+}
+@keyframes aurora3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-60px, -50px) scale(1.3); }
+  66% { transform: translate(50px, 30px) scale(0.85); }
 }
 
 /* Scrollbar styling */

@@ -31,9 +31,25 @@ export interface Forecast {
     isSchoolHoliday: boolean
     isPayday: boolean
     dayOfWeek: number
+    events?: { name: string; impact: string }[]
   }
   totalPredictedRevenue: number
   accuracy?: number
+}
+
+export interface LocalEvent {
+  _id: string
+  name: string
+  date: string
+  impact: 'low' | 'medium' | 'high'
+  notes?: string
+  recurring: boolean
+}
+
+export interface YocoStatus {
+  connected: boolean
+  lastSyncAt: string | null
+  tokenExpiresAt: string | null
 }
 
 export interface TransactionStats {
