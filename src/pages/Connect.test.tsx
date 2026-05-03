@@ -58,7 +58,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your yoco csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
     })
   })
 
@@ -66,7 +66,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your yoco csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
     })
 
     // Create an invalid file and use fireEvent for the hidden input
@@ -87,7 +87,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your yoco csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
     })
 
     const file = new File(['col1,col2\n1,2'], 'data.csv', { type: 'text/csv' })
@@ -126,7 +126,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your yoco csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
     })
 
     const file = new File(['col1,col2\n1,2'], 'data.csv', { type: 'text/csv' })
@@ -141,14 +141,6 @@ describe('Connect', () => {
     expect(screen.getByText('500')).toBeInTheDocument()
     expect(screen.getByText('10')).toBeInTheDocument()
     expect(screen.getByText('510')).toBeInTheDocument()
-  })
-
-  it('renders Yoco integration section', async () => {
-    render(<Connect />)
-
-    await waitFor(() => {
-      expect(screen.getByText('Yoco Live Integration')).toBeInTheDocument()
-    })
   })
 
   it('opens the mapping wizard when needsConfirmation is true', async () => {
@@ -172,7 +164,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your yoco csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
     })
 
     const file = new File(['When,Items,Total\n2026-01-01,Coffee,50'], 'data.csv', { type: 'text/csv' })
