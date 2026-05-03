@@ -239,7 +239,7 @@ export default function Insights() {
 
       {/* Insights list */}
       {(isLoading || hasData) && (
-        <div className="max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
           {isLoading
             ? Array.from({ length: 4 }).map((_, i) => <InsightSkeleton key={i} />)
             : insights.map((insight, i) => (

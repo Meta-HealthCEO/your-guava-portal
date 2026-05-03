@@ -55,7 +55,7 @@ export default function Forecasts() {
 
   return (
     <AppLayout title="Forecasts">
-      <div className="max-w-7xl space-y-6">
+      <div className="space-y-6">
         <div className="flex items-center gap-2 text-[#555555] text-sm">
           <TrendingUp className="w-4 h-4 text-[#D43D3D]" />
           7-day rolling sales forecast · Updated daily
