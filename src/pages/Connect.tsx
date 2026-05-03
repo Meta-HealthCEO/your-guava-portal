@@ -10,6 +10,9 @@ import {
   Unplug,
   Loader2,
 } from 'lucide-react'
+import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
+import { UploadHistoryCard } from '@/components/upload/UploadHistoryCard'
+import type { ColumnMapping, ItemsMode, StageUploadResponse } from '@/types/upload'
 function extractErrorMsg(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
     const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message
@@ -50,6 +53,7 @@ export default function Connect() {
   const [result, setResult] = useState<ImportResult | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [lastUpload, setLastUpload] = useState<string | null>(null)
+  const [stageResponse, setStageResponse] = useState<StageUploadResponse | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Yoco OAuth state ─────────────────────────────────────────────
@@ -186,18 +190,34 @@ export default function Connect() {
     formData.append('file', file)
 
     try {
-      const { data } = await api.post<ImportResult>('/transactions/upload', formData, {
+      const { data } = await api.post<StageUploadResponse>('/transactions/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (e) => {
           if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
         },
       })
-      setResult(data)
-      setUploadState('success')
-      setLastUpload(new Date().toISOString())
+      if (data.needsConfirmation) {
+        setStageResponse(data)
+        setUploadState('idle')
+      } else {
+        // Auto-confirm Yoco
+        const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number } }>(
+          `/uploads/${data.uploadId}/confirm`,
+          { columnMapping: data.columnMapping, itemsMode: data.itemsMode }
+        )
+        setResult({
+          imported: confirmRes.data.stats.imported,
+          skipped: confirmRes.data.stats.skipped,
+          total: confirmRes.data.stats.totalRows,
+          firstDate: '',
+          lastDate: '',
+        })
+        setUploadState('success')
+        setLastUpload(new Date().toISOString())
+      }
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, '')
-      setErrorMsg(msg ?? 'Upload failed. Please check your file and try again.')
+      setErrorMsg(msg ?? 'Upload failed.')
       setUploadState('error')
     }
   }
@@ -545,7 +565,42 @@ export default function Connect() {
             )}
           </CardContent>
         </Card>
+
+        <UploadHistoryCard />
       </div>
+
+      {stageResponse && (
+        <ColumnMappingWizard
+          open
+          headers={stageResponse.headers}
+          preview={stageResponse.preview}
+          initialMapping={stageResponse.columnMapping}
+          initialItemsMode={stageResponse.itemsMode}
+          onCancel={() => setStageResponse(null)}
+          onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
+            try {
+              const res = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number } }>(
+                `/uploads/${stageResponse.uploadId}/confirm`,
+                { columnMapping: mapping, itemsMode }
+              )
+              setResult({
+                imported: res.data.stats.imported,
+                skipped: res.data.stats.skipped,
+                total: res.data.stats.totalRows,
+                firstDate: '',
+                lastDate: '',
+              })
+              setUploadState('success')
+              setLastUpload(new Date().toISOString())
+            } catch (err: unknown) {
+              setErrorMsg(extractErrorMsg(err, 'Confirm failed.'))
+              setUploadState('error')
+            } finally {
+              setStageResponse(null)
+            }
+          }}
+        />
+      )}
     </AppLayout>
   )
 }

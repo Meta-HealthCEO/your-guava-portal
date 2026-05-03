@@ -6,6 +6,17 @@ import Connect from './Connect'
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
+// Mock ColumnMappingWizard for wizard-appearance tests
+vi.mock('@/components/upload/ColumnMappingWizard', () => ({
+  ColumnMappingWizard: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="column-mapping-wizard">Map your CSV columns</div> : null,
+}))
+
+// Mock UploadHistoryCard to avoid API calls in tests
+vi.mock('@/components/upload/UploadHistoryCard', () => ({
+  UploadHistoryCard: () => <div data-testid="upload-history-card" />,
+}))
+
 // Mock the api module
 const mockGet = vi.fn()
 const mockPost = vi.fn()
@@ -93,7 +104,20 @@ describe('Connect', () => {
     mockPost.mockImplementation((url: string) => {
       if (url.includes('/transactions/upload')) {
         return Promise.resolve({
-          data: { imported: 500, skipped: 10, total: 510, firstDate: '2025-12-01', lastDate: '2026-03-27' },
+          data: {
+            uploadId: 'mock-id',
+            posType: 'yoco',
+            columnMapping: { date: 'Date', total: 'Total' },
+            itemsMode: 'packed',
+            headers: ['Date', 'Total'],
+            preview: [],
+            needsConfirmation: false,
+          },
+        })
+      }
+      if (url.includes('/uploads/mock-id/confirm')) {
+        return Promise.resolve({
+          data: { stats: { imported: 500, skipped: 10, errors: 0, totalRows: 510 } },
         })
       }
       return Promise.reject(new Error('Unknown URL'))
@@ -125,5 +149,40 @@ describe('Connect', () => {
     await waitFor(() => {
       expect(screen.getByText('Yoco Live Integration')).toBeInTheDocument()
     })
+  })
+
+  it('opens the mapping wizard when needsConfirmation is true', async () => {
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/transactions/upload') {
+        return Promise.resolve({
+          data: {
+            uploadId: 'u1',
+            posType: 'wizard',
+            columnMapping: { date: 'When' },
+            itemsMode: 'packed',
+            headers: ['When', 'Items', 'Total'],
+            preview: [],
+            needsConfirmation: true,
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Connect />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/drop your yoco csv or xlsx here/i)).toBeInTheDocument()
+    })
+
+    const file = new File(['When,Items,Total\n2026-01-01,Coffee,50'], 'data.csv', { type: 'text/csv' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('column-mapping-wizard')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Map your CSV columns')).toBeInTheDocument()
   })
 })
