@@ -1,179 +1,115 @@
 import { useState, useEffect } from 'react'
-import { TrendingUp, Calendar, CheckCircle, AlertCircle } from 'lucide-react'
+import { TrendingUp } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import api from '@/lib/api'
 import type { Forecast } from '@/types'
-import { cn } from '@/lib/utils'
+import { WeekHeader } from '@/components/forecasts/WeekHeader'
+import { WeekTrajectoryChart } from '@/components/forecasts/WeekTrajectoryChart'
+import { DayCard } from '@/components/forecasts/DayCard'
+import { DayDetailDrawer } from '@/components/forecasts/DayDetailDrawer'
+import { ItemsHeatmap } from '@/components/forecasts/ItemsHeatmap'
 
-
-interface ForecastWithLabel extends Forecast {
-  label: string
-}
-
-function getDayLabel(date: Date) {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const target = new Date(date)
-  target.setHours(0, 0, 0, 0)
-  const diff = Math.round((target.getTime() - today.getTime()) / 86400000)
-  if (diff === 0) return 'Today'
-  if (diff === 1) return 'Tomorrow'
-  return date.toLocaleDateString('en-ZA', { weekday: 'long' })
-}
-
-function ForecastRow({ forecast }: { forecast: ForecastWithLabel }) {
-  const date = new Date(forecast.date)
-  const dateStr = date.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'short' })
-  const topItem = forecast.items.length > 0 ? forecast.items[0] : null
-
-  return (
-    <div className="flex items-center gap-4 py-4 border-b border-[#1F1F1F] last:border-0">
-      <div className="w-28 flex-shrink-0">
-        <p className="text-[#F0F0F0] text-sm font-medium">{forecast.label}</p>
-        <p className="text-[#555555] text-xs">{dateStr}</p>
-      </div>
-
-      <div className="flex-1 flex items-center gap-3">
-        {/* Revenue */}
-        <div className="w-28">
-          <p className="text-[#4DA63B] text-sm font-semibold">
-            R {forecast.totalPredictedRevenue.toLocaleString('en-ZA')}
-          </p>
-          <p className="text-[#555555] text-xs">predicted revenue</p>
-        </div>
-
-        {/* Top item */}
-        {topItem && (
-          <div className="w-32 hidden sm:block">
-            <p className="text-[#F0F0F0] text-sm">{topItem.itemName}</p>
-            <p className="text-[#555555] text-xs">{topItem.predictedQty} units</p>
-          </div>
-        )}
-
-        {/* Signals */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {forecast.signals.isPayday && (
-            <Badge variant="success" className="text-[10px] py-0 h-4 px-1.5">Payday</Badge>
-          )}
-          {forecast.signals.loadSheddingStage > 0 && (
-            <Badge variant="warning" className="text-[10px] py-0 h-4 px-1.5">
-              Stage {forecast.signals.loadSheddingStage}
-            </Badge>
-          )}
-          {forecast.signals.isPublicHoliday && (
-            <Badge variant="default" className="text-[10px] py-0 h-4 px-1.5">Holiday</Badge>
-          )}
-        </div>
-      </div>
-
-      {/* Accuracy */}
-      <div className="flex-shrink-0 flex items-center gap-1.5">
-        {forecast.accuracy ? (
-          <>
-            <CheckCircle className="w-3.5 h-3.5 text-[#4DA63B]" />
-            <span className="text-[#4DA63B] text-xs font-semibold">{forecast.accuracy}%</span>
-          </>
-        ) : (
-          <>
-            <AlertCircle className="w-3.5 h-3.5 text-[#555555]" />
-            <span className="text-[#555555] text-xs">Pending</span>
-          </>
-        )}
-      </div>
-
-      {/* Weather */}
-      <div className="flex-shrink-0 text-right hidden md:block">
-        <p className="text-[#888888] text-sm">{forecast.signals.weather.temp}°C</p>
-        <p className="text-[#555555] text-xs">{forecast.signals.weather.condition}</p>
-      </div>
-    </div>
-  )
+interface AccuracyPayload {
+  avgAccuracy: number | null
+  forecasts: { date: string; accuracy: number; totalPredictedRevenue: number }[]
 }
 
 export default function Forecasts() {
-  const [forecasts, setForecasts] = useState<ForecastWithLabel[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [forecasts, setForecasts] = useState<Forecast[]>([])
+  const [accuracy, setAccuracy] = useState<AccuracyPayload | null>(null)
+  const [lastWeekRevenue, setLastWeekRevenue] = useState<{ date: string; revenue: number }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
 
   useEffect(() => {
-    const load = async () => {
-      setIsLoading(true)
-      try {
-        const { data } = await api.get('/forecasts/week')
-        if (data?.forecasts?.length) {
-          const labeled = data.forecasts.map((f: Forecast) => ({
-            ...f,
-            label: getDayLabel(new Date(f.date)),
-          }))
-          setForecasts(labeled)
-        }
-      } catch {
-        // Show empty state on error
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    load()
+    const startDate = new Date()
+    startDate.setDate(startDate.getDate() - 8)
+    const endDate = new Date()
+    endDate.setDate(endDate.getDate() - 1)
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+
+    Promise.all([
+      api.get<{ forecasts: Forecast[] }>('/forecasts/week'),
+      api.get<AccuracyPayload>('/forecasts/accuracy'),
+      api
+        .get<{ data: { date: string; revenue: number }[] }>(
+          `/analytics/revenue?startDate=${fmt(startDate)}&endDate=${fmt(endDate)}`
+        )
+        .catch(() => ({ data: { data: [] } })),
+    ])
+      .then(([wk, acc, rev]) => {
+        setForecasts(wk.data.forecasts)
+        setAccuracy(acc.data)
+        setLastWeekRevenue(rev.data.data || [])
+      })
+      .finally(() => setLoading(false))
   }, [])
+
+  const weekTotal = forecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
+  const peakDay = forecasts.reduce(
+    (best, f) => (!best || f.totalPredictedRevenue > best.totalPredictedRevenue ? f : best),
+    null as Forecast | null
+  )
+  const weekAvg = forecasts.length > 0 ? weekTotal / forecasts.length : 0
 
   return (
     <AppLayout title="Forecasts">
-      <div className="max-w-3xl space-y-5">
-        {/* Summary header */}
-        <div className="flex items-center gap-3">
+      <div className="max-w-7xl space-y-6">
+        <div className="flex items-center gap-2 text-[#555555] text-sm">
           <TrendingUp className="w-4 h-4 text-[#D43D3D]" />
-          <p className="text-[#888888] text-sm">7-day rolling sales forecast · Updated daily</p>
+          7-day rolling sales forecast · Updated daily
         </div>
 
-        {/* Weekly forecast list */}
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Calendar className="w-3.5 h-3.5" />
-                This Week
-              </CardTitle>
-              <span className="text-[#555555] text-xs">Based on your historical data</span>
+        {loading && (
+          <div className="space-y-6">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-72 w-full" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Array.from({ length: 7 }).map((_, i) => (
+                <Skeleton key={i} className="h-48" />
+              ))}
             </div>
-          </CardHeader>
-          <CardContent className="pt-2">
-            {isLoading ? (
-              <div className="space-y-4">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="flex items-center gap-4 py-4 border-b border-[#1F1F1F]">
-                    <Skeleton className="w-28 h-10" />
-                    <Skeleton className="flex-1 h-10" />
-                    <Skeleton className="w-16 h-6" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              forecasts.map((f) => <ForecastRow key={f._id} forecast={f} />)
-            )}
-          </CardContent>
-        </Card>
+          </div>
+        )}
 
-        {/* Legend */}
-        <div className="flex items-center gap-4 text-xs text-[#555555]">
-          <div className="flex items-center gap-1.5">
-            <CheckCircle className="w-3 h-3 text-[#4DA63B]" />
-            <span>Accuracy verified</span>
+        {!loading && forecasts.length === 0 && (
+          <div className="text-center py-12">
+            <p className="text-[#888888]">
+              No forecast data yet. Upload sales data on the Connect page to get started.
+            </p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <AlertCircle className="w-3 h-3 text-[#555555]" />
-            <span>Awaiting actuals</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className={cn('w-1.5 h-1.5 rounded-full bg-[#4DA63B]')} />
-            <span>Payday weekend</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#FFD166]" />
-            <span>Load shedding</span>
-          </div>
-        </div>
+        )}
+
+        {!loading && forecasts.length > 0 && (
+          <>
+            <WeekHeader
+              weekTotal={weekTotal}
+              peakDay={peakDay}
+              accuracy={accuracy?.avgAccuracy ?? null}
+            />
+            <WeekTrajectoryChart forecasts={forecasts} lastWeekRevenue={lastWeekRevenue} />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {forecasts.map((f, i) => (
+                <DayCard
+                  key={f._id}
+                  forecast={f}
+                  weekAvg={weekAvg}
+                  onClick={() => setSelectedIdx(i)}
+                />
+              ))}
+            </div>
+            <ItemsHeatmap forecasts={forecasts} />
+          </>
+        )}
+
+        {selectedIdx !== null && forecasts[selectedIdx] && (
+          <DayDetailDrawer
+            forecast={forecasts[selectedIdx]}
+            weekAvg={weekAvg}
+            onClose={() => setSelectedIdx(null)}
+          />
+        )}
       </div>
     </AppLayout>
   )
