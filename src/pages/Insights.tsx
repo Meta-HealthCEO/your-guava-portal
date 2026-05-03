@@ -226,12 +226,12 @@ export default function Insights() {
           </div>
           <h2 className="text-[#F0F0F0] text-lg font-semibold mb-2">No insights yet</h2>
           <p className="text-[#555555] text-sm mb-6 max-w-xs">
-            Upload your Yoco data to unlock AI-powered sales insights tailored to your cafe.
+            Upload your transaction data to unlock AI-powered sales insights tailored to your cafe.
           </p>
           <Link to="/connect">
             <Button>
               <Upload className="w-4 h-4" />
-              Upload Yoco Data
+              Upload Sales Data
             </Button>
           </Link>
         </div>
@@ -239,7 +239,7 @@ export default function Insights() {
 
       {/* Insights list */}
       {(isLoading || hasData) && (
-        <div className="max-w-2xl space-y-3">
+        <div className="max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-3">
           {isLoading
             ? Array.from({ length: 4 }).map((_, i) => <InsightSkeleton key={i} />)
             : insights.map((insight, i) => (

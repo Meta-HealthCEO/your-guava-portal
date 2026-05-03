@@ -201,7 +201,7 @@ export default function Connect() {
         setStageResponse(data)
         setUploadState('idle')
       } else {
-        // Auto-confirm Yoco
+        // Auto-confirm Yoco or any POS file with a complete saved/AI mapping.
         const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
           `/uploads/${data.uploadId}/confirm`,
           { columnMapping: data.columnMapping, itemsMode: data.itemsMode }
@@ -246,16 +246,17 @@ export default function Connect() {
 
   return (
     <AppLayout title="Connect Data">
-      <div className="max-w-2xl space-y-6">
+      <div className="max-w-6xl space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ── Upload Card ───────────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
               <Upload className="w-4 h-4 text-[#D43D3D]" />
-              <CardTitle>Upload Yoco Data</CardTitle>
+              <CardTitle>Upload Sales Data</CardTitle>
             </div>
             <CardDescription>
-              Export your transaction history from the Yoco dashboard and upload it here. Supports CSV and XLSX.
+              Upload a Yoco export or another POS CSV/XLSX. Unknown formats are mapped automatically when possible.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -285,7 +286,7 @@ export default function Connect() {
                   <Upload className="w-6 h-6 text-[#555555]" />
                 </div>
                 <p className="text-[#F0F0F0] font-medium mb-1">
-                  Drop your Yoco CSV or XLSX here
+                  Drop your sales CSV or XLSX here
                 </p>
                 <p className="text-[#555555] text-sm">
                   or{' '}
@@ -569,6 +570,7 @@ export default function Connect() {
             )}
           </CardContent>
         </Card>
+        </div>
 
         <UploadHistoryCard refreshKey={historyRefreshKey} />
       </div>

@@ -34,9 +34,10 @@ const navItems: NavItem[] = [
   { label: 'Insights', to: '/insights', icon: Sparkles },
   { label: 'Analytics', to: '/analytics', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: Settings },
-  { label: 'Staff', to: '/staff', icon: UserCircle },
-  { label: 'Roster', to: '/roster', icon: CalendarDays },
-  { label: 'Leave', to: '/leave', icon: CalendarOff },
+  // Workforce module — temporarily hidden until ready for production
+  // { label: 'Staff', to: '/staff', icon: UserCircle },
+  // { label: 'Roster', to: '/roster', icon: CalendarDays },
+  // { label: 'Leave', to: '/leave', icon: CalendarOff },
 ]
 
 interface SidebarProps {
