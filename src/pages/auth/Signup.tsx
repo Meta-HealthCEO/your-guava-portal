@@ -7,12 +7,15 @@ import { Label } from '@/components/ui/label'
 import { AlertCircle, ArrowRight } from 'lucide-react'
 import logo from '@/assets/logo.png'
 
-export default function Login() {
-  const { login } = useAuth()
+export default function Signup() {
+  const { register } = useAuth()
   const navigate = useNavigate()
 
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [cafeName, setCafeName] = useState('')
+  const [orgName, setOrgName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -22,7 +25,7 @@ export default function Login() {
     setIsLoading(true)
 
     try {
-      await login(email, password)
+      await register(email, password, name, cafeName, orgName.trim() || undefined)
       navigate('/dashboard')
     } catch (err: unknown) {
       if (
@@ -38,7 +41,7 @@ export default function Login() {
       ) {
         setError(String((err.response.data as { message: string }).message))
       } else {
-        setError('Invalid email or password. Please try again.')
+        setError('Could not create account. Please try again.')
       }
     } finally {
       setIsLoading(false)
@@ -93,8 +96,8 @@ export default function Login() {
           </div>
 
           <div className="bg-[#111111]/60 backdrop-blur-xl border border-white/8 rounded-2xl p-8">
-            <h1 className="text-[#F0F0F0] text-xl font-bold tracking-tight mb-1">Welcome back</h1>
-            <p className="text-[#555555] text-sm mb-6">Sign in to your portal</p>
+            <h1 className="text-[#F0F0F0] text-xl font-bold tracking-tight mb-1">Welcome to Your Guava</h1>
+            <p className="text-[#555555] text-sm mb-6">Create your portal account</p>
 
             {error && (
               <div className="flex items-start gap-2.5 bg-red-900/20 border border-red-900/40 rounded-lg px-3.5 py-3 mb-5">
@@ -105,6 +108,20 @@ export default function Login() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
+                <Label htmlFor="name">Full name</Label>
+                <Input
+                  id="name"
+                  type="text"
+                  placeholder="Jane Smith"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  autoComplete="name"
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-1.5">
                 <Label htmlFor="email">Email address</Label>
                 <Input
                   id="email"
@@ -114,7 +131,6 @@ export default function Login() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="email"
-                  autoFocus
                 />
               </div>
 
@@ -123,11 +139,37 @@ export default function Login() {
                 <Input
                   id="password"
                   type="password"
-                  placeholder="Enter your password"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  autoComplete="current-password"
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="cafeName">Cafe name</Label>
+                <Input
+                  id="cafeName"
+                  type="text"
+                  placeholder="The Daily Grind"
+                  value={cafeName}
+                  onChange={(e) => setCafeName(e.target.value)}
+                  required
+                  autoComplete="organization"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="orgName">Organization name</Label>
+                <Input
+                  id="orgName"
+                  type="text"
+                  placeholder="Auto-generated if empty"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  autoComplete="off"
                 />
               </div>
 
@@ -139,11 +181,11 @@ export default function Login() {
                 {isLoading ? (
                   <span className="flex items-center gap-2">
                     <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Signing in...
+                    Creating account...
                   </span>
                 ) : (
                   <span className="flex items-center gap-2">
-                    Sign In
+                    Create account
                     <ArrowRight className="w-4 h-4" />
                   </span>
                 )}
@@ -151,11 +193,10 @@ export default function Login() {
             </form>
 
             <p className="text-[#3A3A3A] text-xs text-center mt-6">
-              Don't have an account?{' '}
-              <Link to="/signup" className="text-guava-green hover:underline">Sign up</Link>
+              Already have an account?{' '}
+              <Link to="/login" className="text-guava-green hover:underline">Sign in</Link>
             </p>
           </div>
-
         </div>
       </div>
 

@@ -8,7 +8,7 @@ interface AuthContextType {
   isOwner: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
-  register: (email: string, password: string, name: string, cafeName: string) => Promise<void>
+  register: (email: string, password: string, name: string, cafeName: string, orgName?: string) => Promise<void>
   switchCafe: (cafeId: string) => Promise<void>
 }
 
@@ -67,13 +67,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     email: string,
     password: string,
     name: string,
-    cafeName: string
+    cafeName: string,
+    orgName?: string
   ) => {
     const { data } = await api.post<{ accessToken: string; user: User }>('/auth/register', {
       email,
       password,
       name,
       cafeName,
+      ...(orgName ? { orgName } : {}),
     })
     localStorage.setItem('accessToken', data.accessToken)
     setUser(data.user)

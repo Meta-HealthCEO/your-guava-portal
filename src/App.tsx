@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth'
 
 // Pages
 import Login from '@/pages/auth/Login'
+import Signup from '@/pages/auth/Signup'
 import Dashboard from '@/pages/Dashboard'
 import Connect from '@/pages/Connect'
 import Insights from '@/pages/Insights'
@@ -44,6 +45,7 @@ export default function App() {
     <Routes>
       {/* Public */}
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
 
       {/* Root redirect */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
