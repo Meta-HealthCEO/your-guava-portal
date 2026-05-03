@@ -5,8 +5,9 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import api from '@/lib/api'
-import type { Upload } from '@/types/upload'
+import type { Upload, ColumnMapping, ItemsMode } from '@/types/upload'
 
 interface Row {
   _id: string
@@ -25,6 +26,7 @@ export default function UploadDetail() {
   const [tab, setTab] = useState<'rows' | 'file'>('rows')
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const [remapping, setRemapping] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -156,11 +158,33 @@ export default function UploadDetail() {
         )}
 
         <div className="pt-4 border-t border-[#2A2A2A]">
+          <Button variant="outline" size="sm" className="mr-2" onClick={() => setRemapping(true)}>
+            Re-map columns
+          </Button>
           <Button variant="ghost" size="sm" className="text-[#D43D3D]" onClick={handleDelete} disabled={deleting}>
             <Trash2 className="w-4 h-4" /> Delete this upload
           </Button>
         </div>
       </div>
+
+      {remapping && upload && (
+        <ColumnMappingWizard
+          open
+          headers={Object.values(upload.columnMapping).filter((v): v is string => typeof v === 'string')}
+          preview={[]}
+          initialMapping={upload.columnMapping}
+          initialItemsMode={upload.itemsMode}
+          onCancel={() => setRemapping(false)}
+          onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
+            try {
+              await api.patch(`/uploads/${id}/mapping`, { columnMapping: mapping, itemsMode })
+              window.location.reload()
+            } catch {
+              setRemapping(false)
+            }
+          }}
+        />
+      )}
     </AppLayout>
   )
 }
