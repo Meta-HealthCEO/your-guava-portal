@@ -12,9 +12,10 @@ import {
   ChevronDown,
   Store,
   BarChart3,
-  UserCircle,
-  CalendarDays,
-  CalendarOff,
+  // Workforce module icons — re-import alongside the nav entries below when re-enabling
+  // UserCircle,
+  // CalendarDays,
+  // CalendarOff,
 } from 'lucide-react'
 import guavaIcon from '@/assets/guava-icon.png'
 import { useAuth } from '@/hooks/useAuth'
