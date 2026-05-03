@@ -42,6 +42,7 @@ export interface ForecastItem {
   itemName: string
   predictedQty: number
   actualQty?: number
+  suggestedStock?: number
 }
 
 export interface Forecast {
@@ -145,7 +146,7 @@ export interface HeatmapCell {
 export interface CustomerInsights {
   avgTransactionValue: number
   avgItemsPerTransaction: number
-  cashVsCardRatio: { cash: number; card: number }
+  cashVsCardRatio: { cash: number; card: number } | null
   tippingRate: number
   avgTip: number
 }

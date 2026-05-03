@@ -16,42 +16,38 @@ interface AccuracyPayload {
 }
 
 export default function Forecasts() {
-  const [forecasts, setForecasts] = useState<Forecast[]>([])
+  const [futureForecasts, setFutureForecasts] = useState<Forecast[]>([])
+  const [pastForecasts, setPastForecasts] = useState<Forecast[]>([])
   const [accuracy, setAccuracy] = useState<AccuracyPayload | null>(null)
-  const [lastWeekRevenue, setLastWeekRevenue] = useState<{ date: string; revenue: number }[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+  const [selectedForecastId, setSelectedForecastId] = useState<string | null>(null)
 
   useEffect(() => {
-    const startDate = new Date()
-    startDate.setDate(startDate.getDate() - 8)
-    const endDate = new Date()
-    endDate.setDate(endDate.getDate() - 1)
-    const fmt = (d: Date) => d.toISOString().slice(0, 10)
-
     Promise.all([
       api.get<{ forecasts: Forecast[] }>('/forecasts/week'),
+      api.get<{ forecasts: Forecast[] }>('/forecasts/recent').catch(() => ({ data: { forecasts: [] } })),
       api.get<AccuracyPayload>('/forecasts/accuracy'),
-      api
-        .get<{ data: { date: string; revenue: number }[] }>(
-          `/analytics/revenue?startDate=${fmt(startDate)}&endDate=${fmt(endDate)}`
-        )
-        .catch(() => ({ data: { data: [] } })),
     ])
-      .then(([wk, acc, rev]) => {
-        setForecasts(wk.data.forecasts)
+      .then(([wk, recent, acc]) => {
+        setFutureForecasts(wk.data.forecasts)
+        setPastForecasts(recent.data.forecasts)
         setAccuracy(acc.data)
-        setLastWeekRevenue(rev.data.data || [])
       })
       .finally(() => setLoading(false))
   }, [])
 
-  const weekTotal = forecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
-  const peakDay = forecasts.reduce(
+  const weekTotal = futureForecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
+  const peakDay = futureForecasts.reduce(
     (best, f) => (!best || f.totalPredictedRevenue > best.totalPredictedRevenue ? f : best),
     null as Forecast | null
   )
-  const weekAvg = forecasts.length > 0 ? weekTotal / forecasts.length : 0
+  const weekAvg = futureForecasts.length > 0 ? weekTotal / futureForecasts.length : 0
+
+  // Look up selected forecast from either array
+  const selectedForecast =
+    selectedForecastId != null
+      ? [...futureForecasts, ...pastForecasts].find((f) => f._id === selectedForecastId) ?? null
+      : null
 
   return (
     <AppLayout title="Forecasts">
@@ -73,7 +69,7 @@ export default function Forecasts() {
           </div>
         )}
 
-        {!loading && forecasts.length === 0 && (
+        {!loading && futureForecasts.length === 0 && (
           <div className="text-center py-12">
             <p className="text-[#888888]">
               No forecast data yet. Upload sales data on the Connect page to get started.
@@ -81,33 +77,73 @@ export default function Forecasts() {
           </div>
         )}
 
-        {!loading && forecasts.length > 0 && (
+        {!loading && futureForecasts.length > 0 && (
           <>
             <WeekHeader
               weekTotal={weekTotal}
               peakDay={peakDay}
               accuracy={accuracy?.avgAccuracy ?? null}
             />
-            <WeekTrajectoryChart forecasts={forecasts} lastWeekRevenue={lastWeekRevenue} />
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {forecasts.map((f, i) => (
-                <DayCard
-                  key={f._id}
-                  forecast={f}
-                  weekAvg={weekAvg}
-                  onClick={() => setSelectedIdx(i)}
-                />
-              ))}
+            <WeekTrajectoryChart futureForecasts={futureForecasts} pastForecasts={pastForecasts} />
+
+            {/* This week's plan */}
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-[#F0F0F0] text-base font-semibold">This week's plan</h2>
+                <p className="text-[#888888] text-xs mt-0.5">
+                  Predicted output and suggested stock for the next 7 days
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {futureForecasts.map((f) => (
+                  <DayCard
+                    key={f._id}
+                    forecast={f}
+                    weekAvg={weekAvg}
+                    mode="plan"
+                    onClick={() => setSelectedForecastId(f._id)}
+                  />
+                ))}
+              </div>
             </div>
-            <ItemsHeatmap forecasts={forecasts} />
+
+            {/* Last week's results */}
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-[#F0F0F0] text-base font-semibold">Last week's results</h2>
+                <p className="text-[#888888] text-xs mt-0.5">
+                  Predicted vs actual — see where we missed
+                </p>
+              </div>
+              {pastForecasts.length === 0 ? (
+                <p className="text-[#555555] text-sm py-4">
+                  No past forecasts yet — your first comparison will appear once today's predictions
+                  can be checked against tomorrow's data.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pastForecasts.map((f) => (
+                    <DayCard
+                      key={f._id}
+                      forecast={f}
+                      weekAvg={weekAvg}
+                      mode="review"
+                      onClick={() => setSelectedForecastId(f._id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <ItemsHeatmap forecasts={futureForecasts} />
           </>
         )}
 
-        {selectedIdx !== null && forecasts[selectedIdx] && (
+        {selectedForecast && (
           <DayDetailDrawer
-            forecast={forecasts[selectedIdx]}
+            forecast={selectedForecast}
             weekAvg={weekAvg}
-            onClose={() => setSelectedIdx(null)}
+            onClose={() => setSelectedForecastId(null)}
           />
         )}
       </div>

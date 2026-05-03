@@ -16,6 +16,7 @@ vi.mock('recharts', () => ({
   CartesianGrid: () => null,
   Tooltip: () => null,
   Legend: () => null,
+  ReferenceLine: () => null,
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
@@ -52,6 +53,9 @@ describe('Forecasts', () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/forecasts/week')) {
         return Promise.resolve({ data: { forecasts: twoForecasts } })
+      }
+      if (url.includes('/forecasts/recent')) {
+        return Promise.resolve({ data: { forecasts: [] } })
       }
       if (url.includes('/forecasts/accuracy')) {
         return Promise.resolve({ data: { avgAccuracy: 85, forecasts: [] } })
@@ -90,6 +94,9 @@ describe('Forecasts', () => {
   it('shows empty state when no forecasts returned', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/forecasts/week')) {
+        return Promise.resolve({ data: { forecasts: [] } })
+      }
+      if (url.includes('/forecasts/recent')) {
         return Promise.resolve({ data: { forecasts: [] } })
       }
       if (url.includes('/forecasts/accuracy')) {

@@ -24,7 +24,7 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
       : 'text-[#D43D3D]'
 
   const accuracyLabel =
-    accuracy === null ? 'No data' : `${Math.round(accuracy)}%`
+    accuracy === null ? 'Awaiting yesterday\'s data' : `${Math.round(accuracy)}%`
 
   const accuracyStatus =
     accuracy === null
