@@ -32,6 +32,7 @@ import api from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type {
   RevenueAnalytics,
+  RevenueData,
   ItemPerformance,
   HeatmapCell,
   CustomerInsights,
@@ -47,16 +48,47 @@ function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 }
 
-type TabId = 'revenue' | 'items' | 'heatmap' | 'customers'
+type TabId = 'revenue' | 'items' | 'heatmap' | 'customers' | 'combos'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'revenue', label: 'Revenue' },
   { id: 'items', label: 'Items' },
   { id: 'heatmap', label: 'Heatmap' },
   { id: 'customers', label: 'Customers' },
+  { id: 'combos', label: 'Combos' },
 ]
 
 type PeriodId = '7d' | '30d' | '90d'
+
+interface RevenueResponse {
+  data: RevenueData[]
+  summary: {
+    totalRevenue: number
+    avgDailyRevenue: number
+    bestDay: RevenueAnalytics['bestDay'] | null
+    worstDay: RevenueAnalytics['worstDay'] | null
+    trend: number
+  }
+  meta?: {
+    summary?: {
+      totalRevenue: number
+      avgDailyRevenue: number
+      bestDay: RevenueAnalytics['bestDay'] | null
+      worstDay: RevenueAnalytics['worstDay'] | null
+      trend: number
+    }
+  }
+}
+
+interface MoverItem {
+  name: string
+  trend: number
+}
+
+interface ComboItem {
+  pair: [string, string]
+  count: number
+}
 
 function daysForPeriod(period: PeriodId): number {
   return period === '7d' ? 7 : period === '30d' ? 30 : 90
@@ -75,6 +107,25 @@ function getDateRange(period: PeriodId) {
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const HOURS = Array.from({ length: 17 }, (_, i) => i + 6) // 06:00 - 22:00
 
+// ── Period Selector ───────────────────────────────────────────────────────────
+
+function PeriodSelector({ period, onChange }: { period: PeriodId; onChange: (p: PeriodId) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      {(['7d', '30d', '90d'] as PeriodId[]).map((p) => (
+        <Button
+          key={p}
+          variant={period === p ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onChange(p)}
+        >
+          {p}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
 // ── Revenue Tab ──────────────────────────────────────────────────────────────
 
 function RevenueTab() {
@@ -88,8 +139,18 @@ function RevenueTab() {
     setError('')
     const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ analytics: RevenueAnalytics }>(`/api/analytics/revenue?period=daily&startDate=${startDate}&endDate=${endDate}`)
-      .then(({ data: res }) => setData(res.analytics))
+      .get<RevenueResponse>(`/analytics/revenue?period=daily&startDate=${startDate}&endDate=${endDate}`)
+      .then(({ data: res }) => {
+        const summary = res.summary ?? res.meta?.summary
+        setData({
+          totalRevenue: summary?.totalRevenue ?? 0,
+          avgDailyRevenue: summary?.avgDailyRevenue ?? 0,
+          bestDay: summary?.bestDay ?? { date: '', revenue: 0 },
+          worstDay: summary?.worstDay ?? { date: '', revenue: 0 },
+          trend: summary?.trend ?? 0,
+          data: res.data || [],
+        })
+      })
       .catch(() => setError('Failed to load revenue data'))
       .finally(() => setLoading(false))
   }, [period])
@@ -108,18 +169,7 @@ function RevenueTab() {
   return (
     <div className="space-y-6">
       {/* Period Selector */}
-      <div className="flex items-center gap-2">
-        {(['7d', '30d', '90d'] as PeriodId[]).map((p) => (
-          <Button
-            key={p}
-            variant={period === p ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setPeriod(p)}
-          >
-            {p}
-          </Button>
-        ))}
-      </div>
+      <PeriodSelector period={period} onChange={setPeriod} />
 
       {/* KPI Row */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
@@ -139,7 +189,7 @@ function RevenueTab() {
             <KpiCard
               label="Best Day"
               value={formatZAR(data.bestDay.revenue)}
-              sub={formatDate(data.bestDay.date)}
+              sub={data.bestDay.date ? formatDate(data.bestDay.date) : 'No data yet'}
               icon={TrendingUp}
               accent="#FFD166"
             />
@@ -210,27 +260,43 @@ function RevenueTab() {
 // ── Items Tab ────────────────────────────────────────────────────────────────
 
 function ItemsTab() {
+  const [period, setPeriod] = useState<PeriodId>('90d')
   const [items, setItems] = useState<ItemPerformance[]>([])
+  const [risingItems, setRisingItems] = useState<MoverItem[]>([])
+  const [decliningItems, setDecliningItems] = useState<MoverItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     setLoading(true)
     setError('')
+    const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ items: ItemPerformance[] }>('/api/analytics/items')
-      .then(({ data }) => setItems(data.items || []))
+      .get<{ items: ItemPerformance[]; meta?: { risingItems?: MoverItem[]; decliningItems?: MoverItem[] } }>(
+        `/analytics/items?startDate=${startDate}&endDate=${endDate}`
+      )
+      .then(({ data }) => {
+        setItems(data.items || [])
+        setRisingItems(data.meta?.risingItems || [])
+        setDecliningItems(data.meta?.decliningItems || [])
+      })
       .catch(() => setError('Failed to load item data'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [period])
 
   const sorted = useMemo(() => [...items].sort((a, b) => b.totalQty - a.totalQty), [items])
   const top10 = sorted.slice(0, 10)
 
-  // Rising and declining
-  const byTrend = useMemo(() => [...items].sort((a, b) => b.trend - a.trend), [items])
-  const risingNames = new Set(byTrend.slice(0, 3).map((i) => i.name))
-  const decliningNames = new Set(byTrend.slice(-3).map((i) => i.name))
+  // Use backend-provided movers; fall back to client-side sort if backend didn't return them
+  const rising = risingItems.length > 0
+    ? risingItems.slice(0, 5)
+    : [...items].sort((a, b) => b.trend - a.trend).slice(0, 5).map(({ name, trend }) => ({ name, trend }))
+  const declining = decliningItems.length > 0
+    ? decliningItems.slice(0, 5)
+    : [...items].sort((a, b) => a.trend - b.trend).slice(0, 5).map(({ name, trend }) => ({ name, trend }))
+
+  const risingNames = new Set(rising.map((i) => i.name))
+  const decliningNames = new Set(declining.map((i) => i.name))
 
   if (error) {
     return (
@@ -242,6 +308,57 @@ function ItemsTab() {
 
   return (
     <div className="space-y-6">
+      {/* Period Selector */}
+      <PeriodSelector period={period} onChange={setPeriod} />
+
+      {/* Movers Card */}
+      {!loading && (rising.length > 0 || declining.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Movers</CardTitle>
+            <p className="text-[#555555] text-xs mt-0.5">Comparing last 7 days to the prior 7</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[#4DA63B] text-xs font-semibold uppercase tracking-wider mb-2">Rising 📈</p>
+                {rising.length === 0 ? (
+                  <p className="text-[#555555] text-xs">No rising items</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {rising.map((item) => (
+                      <li key={item.name} className="flex items-center justify-between text-xs">
+                        <span className="text-[#F0F0F0] truncate mr-2">{item.name}</span>
+                        <span className="text-[#4DA63B] font-medium tabular-nums shrink-0">
+                          +{item.trend.toFixed(1)}%
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <p className="text-[#D43D3D] text-xs font-semibold uppercase tracking-wider mb-2">Declining 📉</p>
+                {declining.length === 0 ? (
+                  <p className="text-[#555555] text-xs">No declining items</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {declining.map((item) => (
+                      <li key={item.name} className="flex items-center justify-between text-xs">
+                        <span className="text-[#F0F0F0] truncate mr-2">{item.name}</span>
+                        <span className="text-[#D43D3D] font-medium tabular-nums shrink-0">
+                          {item.trend.toFixed(1)}%
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Bar Chart: top 10 */}
       <Card>
         <CardHeader className="pb-2">
@@ -348,6 +465,7 @@ function ItemsTab() {
 // ── Heatmap Tab ──────────────────────────────────────────────────────────────
 
 function HeatmapTab() {
+  const [period, setPeriod] = useState<PeriodId>('90d')
   const [cells, setCells] = useState<HeatmapCell[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -356,12 +474,13 @@ function HeatmapTab() {
   useEffect(() => {
     setLoading(true)
     setError('')
+    const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ heatmap: HeatmapCell[] }>('/api/analytics/heatmap')
-      .then(({ data }) => setCells(data.heatmap || []))
+      .get<{ heatmap: HeatmapCell[]; data?: HeatmapCell[] }>(`/analytics/heatmap?startDate=${startDate}&endDate=${endDate}`)
+      .then(({ data }) => setCells(data.heatmap || data.data || []))
       .catch(() => setError('Failed to load heatmap data'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [period])
 
   const cellMap = useMemo(() => {
     const map = new Map<string, HeatmapCell>()
@@ -389,73 +508,78 @@ function HeatmapTab() {
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Revenue Heatmap</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <Skeleton className="h-[300px] rounded-lg" />
-        ) : cells.length > 0 ? (
-          <div className="relative">
-            {/* Tooltip */}
-            {hoveredCell && (
-              <div className="absolute top-0 right-0 bg-[#111111] border border-[#2A2A2A] rounded-lg px-3 py-2 z-10 text-xs">
-                <p className="text-[#F0F0F0] font-medium">
-                  {DAYS[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
-                </p>
-                <p className="text-[#888888]">{formatZAR(hoveredCell.revenue)} avg</p>
-                <p className="text-[#555555]">{hoveredCell.transactions} transactions</p>
-              </div>
-            )}
-            <div className="overflow-x-auto">
-              <div className="min-w-[600px]">
-                {/* Hour headers */}
-                <div className="flex items-center mb-1">
-                  <div className="w-10 shrink-0" />
-                  {HOURS.map((h) => (
-                    <div key={h} className="flex-1 text-center text-[10px] text-[#555555]">
-                      {String(h).padStart(2, '0')}
+    <div className="space-y-6">
+      {/* Period Selector */}
+      <PeriodSelector period={period} onChange={setPeriod} />
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Revenue Heatmap</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <Skeleton className="h-[300px] rounded-lg" />
+          ) : cells.length > 0 ? (
+            <div className="relative">
+              {/* Tooltip */}
+              {hoveredCell && (
+                <div className="absolute top-0 right-0 bg-[#111111] border border-[#2A2A2A] rounded-lg px-3 py-2 z-10 text-xs">
+                  <p className="text-[#F0F0F0] font-medium">
+                    {DAYS[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
+                  </p>
+                  <p className="text-[#888888]">{formatZAR(hoveredCell.revenue)} avg</p>
+                  <p className="text-[#555555]">{hoveredCell.transactions} transactions</p>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <div className="min-w-[600px]">
+                  {/* Hour headers */}
+                  <div className="flex items-center mb-1">
+                    <div className="w-10 shrink-0" />
+                    {HOURS.map((h) => (
+                      <div key={h} className="flex-1 text-center text-[10px] text-[#555555]">
+                        {String(h).padStart(2, '0')}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Grid rows */}
+                  {DAYS.map((day, dayIdx) => (
+                    <div key={day} className="flex items-center mb-0.5">
+                      <div className="w-10 shrink-0 text-[11px] text-[#888888]">{day}</div>
+                      {HOURS.map((hour) => {
+                        const cell = cellMap.get(`${dayIdx}-${hour}`)
+                        const revenue = cell?.revenue ?? 0
+                        return (
+                          <div
+                            key={hour}
+                            className="flex-1 aspect-square rounded-sm mx-0.5 cursor-pointer transition-opacity hover:opacity-80"
+                            style={{ backgroundColor: getCellColor(revenue) }}
+                            onMouseEnter={() =>
+                              setHoveredCell(cell ?? { dayOfWeek: dayIdx, hour, revenue: 0, transactions: 0 })
+                            }
+                            onMouseLeave={() => setHoveredCell(null)}
+                          />
+                        )
+                      })}
                     </div>
                   ))}
                 </div>
-                {/* Grid rows */}
-                {DAYS.map((day, dayIdx) => (
-                  <div key={day} className="flex items-center mb-0.5">
-                    <div className="w-10 shrink-0 text-[11px] text-[#888888]">{day}</div>
-                    {HOURS.map((hour) => {
-                      const cell = cellMap.get(`${dayIdx}-${hour}`)
-                      const revenue = cell?.revenue ?? 0
-                      return (
-                        <div
-                          key={hour}
-                          className="flex-1 aspect-square rounded-sm mx-0.5 cursor-pointer transition-opacity hover:opacity-80"
-                          style={{ backgroundColor: getCellColor(revenue) }}
-                          onMouseEnter={() =>
-                            setHoveredCell(cell ?? { dayOfWeek: dayIdx, hour, revenue: 0, transactions: 0 })
-                          }
-                          onMouseLeave={() => setHoveredCell(null)}
-                        />
-                      )
-                    })}
-                  </div>
+              </div>
+              {/* Legend */}
+              <div className="flex items-center justify-end gap-1 mt-3">
+                <span className="text-[10px] text-[#555555] mr-1">Less</span>
+                {['#1A1A1A', '#1E2A1E', '#2A4A2A', '#3A6A3A', '#4DA63B'].map((color) => (
+                  <div key={color} className="w-3 h-3 rounded-sm" style={{ backgroundColor: color }} />
                 ))}
+                <span className="text-[10px] text-[#555555] ml-1">More</span>
               </div>
             </div>
-            {/* Legend */}
-            <div className="flex items-center justify-end gap-1 mt-3">
-              <span className="text-[10px] text-[#555555] mr-1">Less</span>
-              {['#1A1A1A', '#1E2A1E', '#2A4A2A', '#3A6A3A', '#4DA63B'].map((color) => (
-                <div key={color} className="w-3 h-3 rounded-sm" style={{ backgroundColor: color }} />
-              ))}
-              <span className="text-[10px] text-[#555555] ml-1">More</span>
-            </div>
-          </div>
-        ) : (
-          <p className="text-[#555555] text-sm text-center py-16">No heatmap data available</p>
-        )}
-      </CardContent>
-    </Card>
+          ) : (
+            <p className="text-[#555555] text-sm text-center py-16">No heatmap data available</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -464,6 +588,7 @@ function HeatmapTab() {
 const DONUT_COLORS = ['#4DA63B', '#D43D3D']
 
 function CustomersTab() {
+  const [period, setPeriod] = useState<PeriodId>('90d')
   const [data, setData] = useState<CustomerInsights | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -471,12 +596,13 @@ function CustomersTab() {
   useEffect(() => {
     setLoading(true)
     setError('')
+    const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ insights: CustomerInsights }>('/api/analytics/customers')
-      .then(({ data: res }) => setData(res.insights))
+      .get<{ insights: CustomerInsights; data?: CustomerInsights }>(`/analytics/customers?startDate=${startDate}&endDate=${endDate}`)
+      .then(({ data: res }) => setData(res.insights ?? res.data ?? null))
       .catch(() => setError('Failed to load customer insights'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [period])
 
   if (error) {
     return (
@@ -488,13 +614,16 @@ function CustomersTab() {
 
   const donutData = data
     ? [
-        { name: 'Card', value: data.cashVsCardRatio.card },
-        { name: 'Cash', value: data.cashVsCardRatio.cash },
+        { name: 'Card', value: data.cashVsCardRatio?.card ?? 0 },
+        { name: 'Cash', value: data.cashVsCardRatio?.cash ?? 0 },
       ]
     : []
 
   return (
     <div className="space-y-6">
+      {/* Period Selector */}
+      <PeriodSelector period={period} onChange={setPeriod} />
+
       <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
@@ -521,7 +650,7 @@ function CustomersTab() {
             />
             <KpiCard
               label="Tipping Rate"
-              value={`${(data.tippingRate * 100).toFixed(1)}%`}
+              value={`${data.tippingRate.toFixed(1)}%`}
               icon={Percent}
               accent="#FFD166"
             />
@@ -569,17 +698,97 @@ function CustomersTab() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-[#4DA63B]" />
-                  <span className="text-[#F0F0F0] text-sm">Card: {data.cashVsCardRatio.card.toFixed(1)}%</span>
+                  <span className="text-[#F0F0F0] text-sm">Card: {(data.cashVsCardRatio?.card ?? 0).toFixed(1)}%</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Banknote className="w-4 h-4 text-[#D43D3D]" />
-                  <span className="text-[#F0F0F0] text-sm">Cash: {data.cashVsCardRatio.cash.toFixed(1)}%</span>
+                  <span className="text-[#F0F0F0] text-sm">Cash: {(data.cashVsCardRatio?.cash ?? 0).toFixed(1)}%</span>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
+    </div>
+  )
+}
+
+// ── Combos Tab ───────────────────────────────────────────────────────────────
+
+function CombosTab() {
+  const [period, setPeriod] = useState<PeriodId>('90d')
+  const [combos, setCombos] = useState<ComboItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setLoading(true)
+    setError('')
+    const { startDate, endDate } = getDateRange(period)
+    api
+      .get<{ data: ComboItem[] }>(`/analytics/combos?startDate=${startDate}&endDate=${endDate}`)
+      .then(({ data: res }) => setCombos(res.data || []))
+      .catch(() => setError('Failed to load combo data'))
+      .finally(() => setLoading(false))
+  }, [period])
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <p className="text-[#888888] text-sm">{error}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Period Selector */}
+      <PeriodSelector period={period} onChange={setPeriod} />
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Frequently Bought Together</CardTitle>
+          <p className="text-[#555555] text-xs mt-1">
+            Use these to design bundle deals or stock paired items together.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 rounded-lg" />
+              ))}
+            </div>
+          ) : combos.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#2A2A2A]">
+                    <th className="text-left py-2 pr-4 text-[#888888] font-medium">Pair</th>
+                    <th className="text-right py-2 pl-4 text-[#888888] font-medium">Times sold together</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {combos.map((combo, idx) => (
+                    <tr key={idx} className="border-b border-[#1F1F1F] last:border-0">
+                      <td className="py-2.5 pr-4 text-[#F0F0F0]">
+                        {combo.pair[0]} + {combo.pair[1]}
+                      </td>
+                      <td className="py-2.5 pl-4 text-right text-[#F0F0F0] tabular-nums font-medium">
+                        {combo.count}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-[#555555] text-sm text-center py-16">
+              Need more transactions with 2+ items to surface combos.
+            </p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -653,6 +862,7 @@ export default function Analytics() {
       {activeTab === 'items' && <ItemsTab />}
       {activeTab === 'heatmap' && <HeatmapTab />}
       {activeTab === 'customers' && <CustomersTab />}
+      {activeTab === 'combos' && <CombosTab />}
     </AppLayout>
   )
 }

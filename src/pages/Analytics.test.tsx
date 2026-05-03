@@ -54,6 +54,7 @@ describe('Analytics', () => {
     expect(screen.getByText('Items')).toBeInTheDocument()
     expect(screen.getByText('Heatmap')).toBeInTheDocument()
     expect(screen.getByText('Customers')).toBeInTheDocument()
+    expect(screen.getByText('Combos')).toBeInTheDocument()
   })
 
   it('switches between tabs', async () => {
@@ -69,17 +70,30 @@ describe('Analytics', () => {
   })
 
   it('shows revenue chart with data', async () => {
+    // New envelope shape: summary at top-level AND inside meta
     const revenueData = {
-      analytics: {
-        data: [
-          { date: '2026-03-01', revenue: 5000, transactions: 50 },
-          { date: '2026-03-02', revenue: 6000, transactions: 60 },
-        ],
+      data: [
+        { date: '2026-03-01', revenue: 5000, transactions: 50 },
+        { date: '2026-03-02', revenue: 6000, transactions: 60 },
+      ],
+      summary: {
         totalRevenue: 11000,
         avgDailyRevenue: 5500,
         bestDay: { date: '2026-03-02', revenue: 6000 },
         worstDay: { date: '2026-03-01', revenue: 5000 },
         trend: 5.2,
+      },
+      meta: {
+        startDate: '2026-03-01',
+        endDate: '2026-03-02',
+        period: 'daily',
+        summary: {
+          totalRevenue: 11000,
+          avgDailyRevenue: 5500,
+          bestDay: { date: '2026-03-02', revenue: 6000 },
+          worstDay: { date: '2026-03-01', revenue: 5000 },
+          trend: 5.2,
+        },
       },
     }
 
@@ -119,6 +133,12 @@ describe('Analytics', () => {
               { name: 'Flat White', totalQty: 200, totalRevenue: 8000, avgPerDay: 10, trend: 5.0 },
               { name: 'Long White', totalQty: 180, totalRevenue: 7200, avgPerDay: 9, trend: -2.0 },
             ],
+            meta: {
+              startDate: null,
+              endDate: null,
+              risingItems: [{ name: 'Flat White', trend: 5.0 }],
+              decliningItems: [{ name: 'Long White', trend: -2.0 }],
+            },
           },
         })
       }
@@ -137,7 +157,73 @@ describe('Analytics', () => {
       expect(screen.getByText('Item Performance')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Flat White')).toBeInTheDocument()
-    expect(screen.getByText('Long White')).toBeInTheDocument()
+    expect(screen.getAllByText('Flat White').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Long White').length).toBeGreaterThan(0)
+  })
+
+  it('shows combos tab with data', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/combos')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            data: [
+              { pair: ['Flat White', 'Brownie'], count: 42 },
+              { pair: ['Long White', 'Muffin'], count: 28 },
+            ],
+            meta: { startDate: null, endDate: null },
+          },
+        })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Combos' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Frequently Bought Together')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Flat White + Brownie')).toBeInTheDocument()
+    expect(screen.getByText('Long White + Muffin')).toBeInTheDocument()
+  })
+
+  it('shows tipping rate as percentage (no double-multiply)', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/customers')) {
+        return Promise.resolve({
+          data: {
+            insights: {
+              avgTransactionValue: 85,
+              avgItemsPerTransaction: 2.1,
+              cashVsCardRatio: { cash: 30, card: 70 },
+              tippingRate: 23.5,   // backend already returns percentage form
+              avgTip: 4.50,
+            },
+            meta: { startDate: null, endDate: null },
+          },
+        })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Customers' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Tipping Rate')).toBeInTheDocument()
+    })
+
+    // Should display "23.5%" not "2350.0%"
+    expect(screen.getByText('23.5%')).toBeInTheDocument()
   })
 })
