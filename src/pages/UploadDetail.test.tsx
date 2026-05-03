@@ -10,6 +10,9 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/components/layout/AppLayout', () => ({
   AppLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ user: { role: 'owner' }, isLoading: false, isOwner: true }),
+}))
 
 const apiMock = api as unknown as { get: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> }
 

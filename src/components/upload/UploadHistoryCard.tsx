@@ -13,18 +13,23 @@ const statusColor: Record<string, 'success' | 'secondary' | 'destructive'> = {
   failed: 'destructive',
 }
 
-export function UploadHistoryCard() {
+interface UploadHistoryCardProps {
+  refreshKey?: number
+}
+
+export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
   const [uploads, setUploads] = useState<Upload[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let active = true
+    setLoading(true)
     api.get<{ success: boolean; uploads: Upload[] }>('/uploads')
       .then(({ data }) => { if (active) setUploads(data.uploads) })
       .catch(() => { if (active) setUploads([]) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [])
+  }, [refreshKey])
 
   return (
     <Card>

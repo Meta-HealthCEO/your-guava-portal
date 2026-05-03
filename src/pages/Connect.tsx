@@ -48,6 +48,7 @@ interface SyncResult {
 export default function Connect() {
   // ── CSV Upload state ─────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false)
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -201,7 +202,7 @@ export default function Connect() {
         setUploadState('idle')
       } else {
         // Auto-confirm Yoco
-        const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number } }>(
+        const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
           `/uploads/${data.uploadId}/confirm`,
           { columnMapping: data.columnMapping, itemsMode: data.itemsMode }
         )
@@ -209,10 +210,11 @@ export default function Connect() {
           imported: confirmRes.data.stats.imported,
           skipped: confirmRes.data.stats.skipped,
           total: confirmRes.data.stats.totalRows,
-          firstDate: '',
-          lastDate: '',
+          firstDate: confirmRes.data.dateRange?.firstDate ?? '',
+          lastDate: confirmRes.data.dateRange?.lastDate ?? '',
         })
         setUploadState('success')
+        setHistoryRefreshKey((k) => k + 1)
         setLastUpload(new Date().toISOString())
       }
     } catch (err: unknown) {
@@ -338,9 +340,11 @@ export default function Connect() {
                         <p className="text-[#555555] text-xs">total rows</p>
                       </div>
                     </div>
-                    <p className="text-[#555555] text-xs">
-                      Date range: {result.firstDate} → {result.lastDate}
-                    </p>
+                    {result.firstDate && result.lastDate && (
+                      <p className="text-[#555555] text-xs">
+                        Date range: {new Date(result.firstDate).toLocaleDateString('en-ZA')} → {new Date(result.lastDate).toLocaleDateString('en-ZA')}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2 mt-4">
@@ -566,7 +570,7 @@ export default function Connect() {
           </CardContent>
         </Card>
 
-        <UploadHistoryCard />
+        <UploadHistoryCard refreshKey={historyRefreshKey} />
       </div>
 
       {stageResponse && (
@@ -579,7 +583,7 @@ export default function Connect() {
           onCancel={() => setStageResponse(null)}
           onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
             try {
-              const res = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number } }>(
+              const res = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
                 `/uploads/${stageResponse.uploadId}/confirm`,
                 { columnMapping: mapping, itemsMode }
               )
@@ -587,10 +591,11 @@ export default function Connect() {
                 imported: res.data.stats.imported,
                 skipped: res.data.stats.skipped,
                 total: res.data.stats.totalRows,
-                firstDate: '',
-                lastDate: '',
+                firstDate: res.data.dateRange?.firstDate ?? '',
+                lastDate: res.data.dateRange?.lastDate ?? '',
               })
               setUploadState('success')
+              setHistoryRefreshKey((k) => k + 1)
               setLastUpload(new Date().toISOString())
             } catch (err: unknown) {
               setErrorMsg(extractErrorMsg(err, 'Confirm failed.'))

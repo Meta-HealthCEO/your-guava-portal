@@ -46,6 +46,8 @@ export interface Upload {
   stats: UploadStats;
   dateRange: UploadDateRange;
   errorMessage?: string;
+  headers?: string[];
+  sampleRows?: Record<string, string>[];
   createdAt: string;
   completedAt?: string;
 }

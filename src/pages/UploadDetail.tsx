@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useAuth } from '@/hooks/useAuth'
 import { Loader2, Download, Trash2, ArrowLeft } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,12 +21,14 @@ interface Row {
 export default function UploadDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [upload, setUpload] = useState<Upload | null>(null)
   const [downloadUrl, setDownloadUrl] = useState<string>('')
   const [rows, setRows] = useState<Row[]>([])
   const [tab, setTab] = useState<'rows' | 'file'>('rows')
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [remapping, setRemapping] = useState(false)
 
   useEffect(() => {
@@ -45,10 +48,17 @@ export default function UploadDetail() {
   const handleDelete = async () => {
     if (!confirm('Delete this upload? Linked transactions will be removed.')) return
     setDeleting(true)
+    setDeleteError(null)
     try {
       await api.delete(`/uploads/${id}`)
       navigate('/connect')
-    } catch {
+    } catch (err: unknown) {
+      let msg = 'Delete failed.'
+      if (err && typeof err === 'object' && 'response' in err) {
+        const m = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        if (m) msg = m
+      }
+      setDeleteError(msg)
       setDeleting(false)
     }
   }
@@ -134,7 +144,7 @@ export default function UploadDetail() {
                     <tr key={r._id} className="border-t border-[#2A2A2A]">
                       <td className="py-2">{new Date(r.date).toLocaleString('en-ZA')}</td>
                       <td>{r.receiptId || '—'}</td>
-                      <td>{r.items.map((i) => `${i.quantity} × ${i.name}`).join(', ')}</td>
+                      <td>{(r.items ?? []).map((i) => `${i.quantity} × ${i.name}`).join(', ')}</td>
                       <td>R{r.total?.toFixed(2)}</td>
                     </tr>
                   ))}
@@ -161,17 +171,20 @@ export default function UploadDetail() {
           <Button variant="outline" size="sm" className="mr-2" onClick={() => setRemapping(true)}>
             Re-map columns
           </Button>
-          <Button variant="ghost" size="sm" className="text-[#D43D3D]" onClick={handleDelete} disabled={deleting}>
-            <Trash2 className="w-4 h-4" /> Delete this upload
-          </Button>
+          {user?.role === 'owner' && (
+            <Button variant="ghost" size="sm" className="text-[#D43D3D]" onClick={handleDelete} disabled={deleting}>
+              <Trash2 className="w-4 h-4" /> Delete this upload
+            </Button>
+          )}
+          {deleteError && <p className="text-red-400 text-xs mt-2">{deleteError}</p>}
         </div>
       </div>
 
       {remapping && upload && (
         <ColumnMappingWizard
           open
-          headers={Object.values(upload.columnMapping).filter((v): v is string => typeof v === 'string')}
-          preview={[]}
+          headers={upload.headers || Object.values(upload.columnMapping).filter((v): v is string => typeof v === 'string')}
+          preview={upload.sampleRows || []}
           initialMapping={upload.columnMapping}
           initialItemsMode={upload.itemsMode}
           onCancel={() => setRemapping(false)}
