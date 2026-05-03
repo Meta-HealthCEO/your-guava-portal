@@ -14,6 +14,7 @@ import Analytics from '@/pages/Analytics'
 import Roster from '@/pages/Roster'
 import Staff from '@/pages/Staff'
 import Leave from '@/pages/Leave'
+import UploadDetail from './pages/UploadDetail'
 
 // ── ProtectedRoute ───────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -125,6 +126,15 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Leave />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/uploads/:id"
+        element={
+          <ProtectedRoute>
+            <UploadDetail />
           </ProtectedRoute>
         }
       />
