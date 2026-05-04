@@ -9,6 +9,7 @@ import Dashboard from '@/pages/Dashboard'
 import Connect from '@/pages/Connect'
 import Insights from '@/pages/Insights'
 import Settings from '@/pages/Settings'
+import Account from '@/pages/Account'
 import Forecasts from '@/pages/Forecasts'
 import Team from '@/pages/Team'
 import Analytics from '@/pages/Analytics'
@@ -16,6 +17,8 @@ import Roster from '@/pages/Roster'
 import Staff from '@/pages/Staff'
 import Leave from '@/pages/Leave'
 import UploadDetail from './pages/UploadDetail'
+import Integrations from '@/pages/Integrations'
+import IntegrationCallback from '@/pages/IntegrationCallback'
 
 // ── ProtectedRoute ───────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -92,6 +95,14 @@ export default function App() {
         }
       />
       <Route
+        path="/account"
+        element={
+          <ProtectedRoute>
+            <Account />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/team"
         element={
           <ProtectedRoute>
@@ -137,6 +148,23 @@ export default function App() {
         element={
           <ProtectedRoute>
             <UploadDetail />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/integrations"
+        element={
+          <ProtectedRoute>
+            <Integrations />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/integrations/:provider/callback"
+        element={
+          <ProtectedRoute>
+            <IntegrationCallback />
           </ProtectedRoute>
         }
       />

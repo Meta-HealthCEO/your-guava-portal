@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Store,
   BarChart3,
+  CircleUserRound,
+  Cable,
   // Workforce module icons — re-import alongside the nav entries below when re-enabling
   // UserCircle,
   // CalendarDays,
@@ -34,6 +36,8 @@ const navItems: NavItem[] = [
   { label: 'Connect Data', to: '/connect', icon: Upload },
   { label: 'Insights', to: '/insights', icon: Sparkles },
   { label: 'Analytics', to: '/analytics', icon: BarChart3 },
+  { label: 'Integrations', to: '/integrations', icon: Cable },
+  { label: 'Account', to: '/account', icon: CircleUserRound },
   { label: 'Settings', to: '/settings', icon: Settings },
   // Workforce module — temporarily hidden until ready for production
   // { label: 'Staff', to: '/staff', icon: UserCircle },
