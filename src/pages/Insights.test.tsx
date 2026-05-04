@@ -93,4 +93,26 @@ describe('Insights', () => {
     expect(screen.getByText('Tip')).toBeInTheDocument()
     expect(screen.getByText('Highlight')).toBeInTheDocument()
   })
+
+  it('restores saved chat messages', async () => {
+    localStorage.setItem(
+      'your-guava:insights-chat:v1',
+      JSON.stringify({
+        messages: [
+          { id: 'user-saved', role: 'user', content: 'Saved question' },
+          { id: 'assistant-saved', role: 'assistant', content: '# Saved answer\n\n**Bold result**' },
+        ],
+      })
+    )
+    mockGet.mockRejectedValue(new Error('No key'))
+
+    render(<Insights />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Saved question')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Saved answer')).toBeInTheDocument()
+    expect(screen.getByText('Bold result')).toBeInTheDocument()
+  })
 })

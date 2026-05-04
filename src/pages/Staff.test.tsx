@@ -34,10 +34,10 @@ describe('Staff', () => {
 
   it('renders staff list', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({ data: { staff: [mockStaffMember] } })
       }
-      if (url.includes('/api/leave/balances')) {
+      if (url.includes('/leave/balances')) {
         return Promise.resolve({
           data: {
             balances: [{
@@ -93,10 +93,10 @@ describe('Staff', () => {
 
   it('renders leave balance progress bars', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({ data: { staff: [mockStaffMember] } })
       }
-      if (url.includes('/api/leave/balances')) {
+      if (url.includes('/leave/balances')) {
         return Promise.resolve({
           data: {
             balances: [{
@@ -131,10 +131,10 @@ describe('Staff', () => {
 
   it('shows edit mode on click', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({ data: { staff: [mockStaffMember] } })
       }
-      if (url.includes('/api/leave/balances')) {
+      if (url.includes('/leave/balances')) {
         return Promise.resolve({ data: { balances: [] } })
       }
       if (url.includes('/cafe/me')) {

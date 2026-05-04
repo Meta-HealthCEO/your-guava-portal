@@ -176,7 +176,7 @@ export default function Team() {
 
   return (
     <AppLayout title="Team Management">
-      <div className="space-y-6 max-w-6xl">
+      <div className="space-y-6">
         {/* Subtitle */}
         <p className="text-[#888888] text-sm -mt-2">
           Manage your team and cafe locations.

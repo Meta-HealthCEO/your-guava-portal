@@ -77,7 +77,7 @@ export default function UploadDetail() {
 
   return (
     <AppLayout title={upload.fileName}>
-      <div className="max-w-4xl space-y-4">
+      <div className="space-y-4">
         <Button variant="ghost" size="sm" onClick={() => navigate('/connect')}>
           <ArrowLeft className="w-4 h-4" /> Back to Connect
         </Button>

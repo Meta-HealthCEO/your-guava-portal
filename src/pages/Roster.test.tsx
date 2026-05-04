@@ -83,7 +83,7 @@ describe('Roster', () => {
     const mondayStr = getCurrentMonday()
 
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/shifts?')) {
+      if (url.includes('/shifts?')) {
         return Promise.resolve({
           data: {
             shifts: [
@@ -102,7 +102,7 @@ describe('Roster', () => {
           },
         })
       }
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({
           data: {
             staff: [
@@ -111,7 +111,7 @@ describe('Roster', () => {
           },
         })
       }
-      if (url.includes('/api/shifts/summary')) {
+      if (url.includes('/shifts/summary')) {
         return Promise.resolve({ data: { summaries: [] } })
       }
       if (url.includes('/cafe/me')) {
@@ -132,10 +132,10 @@ describe('Roster', () => {
 
   it('shows overtime warning badge', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/shifts?')) {
+      if (url.includes('/shifts?')) {
         return Promise.resolve({ data: { shifts: [] } })
       }
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({
           data: {
             staff: [
@@ -144,7 +144,7 @@ describe('Roster', () => {
           },
         })
       }
-      if (url.includes('/api/shifts/summary')) {
+      if (url.includes('/shifts/summary')) {
         return Promise.resolve({
           data: {
             summaries: [

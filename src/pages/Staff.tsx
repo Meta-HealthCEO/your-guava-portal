@@ -376,8 +376,8 @@ export default function Staff() {
     setLoading(true)
     try {
       const [staffRes, balancesRes] = await Promise.all([
-        api.get<{ staff: StaffMember[] }>('/api/staff').catch(() => null),
-        api.get<{ balances: LeaveBalanceData[] }>('/api/leave/balances').catch(() => null),
+        api.get<{ staff: StaffMember[] }>('/staff').catch(() => null),
+        api.get<{ balances: LeaveBalanceData[] }>('/leave/balances').catch(() => null),
       ])
       setStaffList(staffRes?.data?.staff ?? [])
       setBalances(balancesRes?.data?.balances ?? [])
@@ -394,18 +394,18 @@ export default function Staff() {
   balances.forEach((b) => balanceMap.set(b.staffId, b))
 
   async function handleAdd(data: Omit<StaffMember, '_id' | 'isActive'>) {
-    await api.post('/api/staff', data)
+    await api.post('/staff', data)
     setShowAddForm(false)
     await loadData()
   }
 
   async function handleEdit(id: string, data: Partial<StaffMember>) {
-    await api.put(`/api/staff/${id}`, data)
+    await api.put(`/staff/${id}`, data)
     await loadData()
   }
 
   async function handleDeactivate(id: string) {
-    await api.put(`/api/staff/${id}`, { isActive: false })
+    await api.put(`/staff/${id}`, { isActive: false })
     await loadData()
   }
 

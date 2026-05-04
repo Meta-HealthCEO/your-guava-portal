@@ -85,7 +85,7 @@ describe('Dashboard', () => {
       expect(screen.getByText('No data yet')).toBeInTheDocument()
     })
 
-    expect(screen.getByText(/upload your yoco transaction data/i)).toBeInTheDocument()
+    expect(screen.getByText(/upload your transaction data/i)).toBeInTheDocument()
   })
 
   it('renders day selector with correct days', async () => {

@@ -67,13 +67,13 @@ describe('Leave', () => {
 
   it('renders leave request list', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/leave/calendar')) {
+      if (url.includes('/leave/calendar')) {
         return Promise.resolve({ data: { calendar: [] } })
       }
-      if (url.includes('/api/leave/balances')) {
+      if (url.includes('/leave/balances')) {
         return Promise.resolve({ data: { balances: [] } })
       }
-      if (url.includes('/api/leave')) {
+      if (url.includes('/leave')) {
         return Promise.resolve({
           data: {
             requests: [
@@ -91,7 +91,7 @@ describe('Leave', () => {
           },
         })
       }
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({
           data: {
             staff: [
@@ -138,10 +138,10 @@ describe('Leave', () => {
 
   it('shows approve/reject buttons for pending requests', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/api/leave/calendar')) {
+      if (url.includes('/leave/calendar')) {
         return Promise.resolve({ data: { calendar: [] } })
       }
-      if (url.includes('/api/leave')) {
+      if (url.includes('/leave')) {
         return Promise.resolve({
           data: {
             requests: [
@@ -159,7 +159,7 @@ describe('Leave', () => {
           },
         })
       }
-      if (url.includes('/api/staff')) {
+      if (url.includes('/staff')) {
         return Promise.resolve({ data: { staff: [] } })
       }
       if (url.includes('/cafe/me')) {

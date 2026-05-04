@@ -251,9 +251,9 @@ export default function Roster() {
     const endDate = formatDateISO(weekEnd)
     try {
       const [shiftsRes, staffRes, summaryRes] = await Promise.all([
-        api.get<{ shifts: Shift[] }>(`/api/shifts?startDate=${startDate}&endDate=${endDate}`).catch(() => null),
-        api.get<{ staff: StaffMember[] }>('/api/staff').catch(() => null),
-        api.get<{ summaries: ShiftSummary[] }>('/api/shifts/summary').catch(() => null),
+        api.get<{ shifts: Shift[] }>(`/shifts?startDate=${startDate}&endDate=${endDate}`).catch(() => null),
+        api.get<{ staff: StaffMember[] }>('/staff').catch(() => null),
+        api.get<{ summaries: ShiftSummary[] }>('/shifts/summary').catch(() => null),
       ])
       setShifts(shiftsRes?.data?.shifts ?? [])
       setStaffList(staffRes?.data?.staff ?? [])
@@ -280,7 +280,7 @@ export default function Roster() {
   }, [shifts])
 
   async function handleAddShift(data: { staffId: string; date: string; startTime: string; endTime: string; notes: string }) {
-    await api.post('/api/shifts', data)
+    await api.post('/shifts', data)
     setAddingDay(null)
     await loadData()
   }

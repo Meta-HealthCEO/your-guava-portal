@@ -513,9 +513,9 @@ export default function Dashboard() {
             <AlertTriangle className="w-7 h-7 text-[#555555]" />
           </div>
           <h2 className="text-[#F0F0F0] text-lg font-semibold mb-2">No data yet</h2>
-          <p className="text-[#555555] text-sm mb-6 max-w-xs">Upload your Yoco transaction data to start generating forecasts.</p>
+          <p className="text-[#555555] text-sm mb-6 max-w-xs">Upload your transaction data to start generating forecasts.</p>
           <Link to="/connect">
-            <Button><Upload className="w-4 h-4" />Upload Yoco Data</Button>
+            <Button><Upload className="w-4 h-4" />Upload Sales Data</Button>
           </Link>
         </div>
       </AppLayout>

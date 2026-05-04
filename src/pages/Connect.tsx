@@ -1,5 +1,6 @@
-import { useState, useRef, type DragEvent, type ChangeEvent } from 'react'
-import { Upload, CheckCircle, AlertCircle, Clock } from 'lucide-react'
+import { useState, useRef, useEffect, type DragEvent, type ChangeEvent } from 'react'
+import { Upload, CheckCircle, AlertCircle, Clock, TrendingUp } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import { UploadHistoryCard } from '@/components/upload/UploadHistoryCard'
 import type { ColumnMapping, ItemsMode, StageUploadResponse } from '@/types/upload'
@@ -27,7 +28,156 @@ interface ImportResult {
   lastDate: string
 }
 
+interface DataStatus {
+  latestDataDate: string | null
+  earliestDataDate: string | null
+  daysSinceLatest: number | null
+  totalTransactions: number
+  coverage30d: { date: string; count: number }[]
+}
+
+// Build an array of 30 dates: [today-29, ..., today] as YYYY-MM-DD strings
+function buildLast30Days(): string[] {
+  const days: string[] = []
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() - i)
+    days.push(d.toISOString().slice(0, 10))
+  }
+  return days
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-ZA')
+}
+
+function monthsSpan(earliest: string, latest: string): string {
+  const e = new Date(earliest)
+  const l = new Date(latest)
+  const months = (l.getFullYear() - e.getFullYear()) * 12 + (l.getMonth() - e.getMonth())
+  if (months <= 0) return '< 1 month'
+  if (months === 1) return '1 month'
+  return `${months} months`
+}
+
+function DataStatusCard({
+  status,
+  loading,
+  onUploadClick,
+}: {
+  status: DataStatus | null
+  loading: boolean
+  onUploadClick: () => void
+}) {
+  const days30 = buildLast30Days()
+  const coverageMap = new Map<string, number>()
+  status?.coverage30d.forEach((c) => coverageMap.set(c.date, c.count))
+
+  const daysSince = status?.daysSinceLatest ?? null
+  let pillColor = 'bg-red-500/20 text-red-400 border-red-500/30'
+  let statusLabel = 'No data uploaded yet'
+  let statusSubtitle = 'Upload your first sales CSV or XLSX to get started.'
+
+  if (!loading && status && status.latestDataDate) {
+    if (daysSince !== null && daysSince < 2) {
+      pillColor = 'bg-[#4DA63B]/20 text-[#4DA63B] border-[#4DA63B]/30'
+      statusLabel = 'Data is up to date'
+    } else if (daysSince !== null && daysSince <= 7) {
+      pillColor = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+      statusLabel = `Data is ${daysSince} day${daysSince === 1 ? '' : 's'} behind`
+    } else {
+      pillColor = 'bg-red-500/20 text-red-400 border-red-500/30'
+      statusLabel = daysSince !== null ? `Data is ${daysSince} days behind` : 'Data status unknown'
+    }
+
+    const txLabel = status.totalTransactions.toLocaleString() + ' transactions'
+    const span = status.earliestDataDate
+      ? monthsSpan(status.earliestDataDate, status.latestDataDate)
+      : ''
+    statusSubtitle = `Latest: ${formatDate(status.latestDataDate)} · ${txLabel}${span ? ` across ${span}` : ''}`
+  }
+
+  const isActionNeeded = !status?.latestDataDate || (daysSince !== null && daysSince >= 2)
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-[#D43D3D]" />
+          <CardTitle>Data Status</CardTitle>
+        </div>
+        <CardDescription>How fresh is your uploaded transaction data?</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex items-center gap-2 text-[#555555] text-sm py-2">
+            <div className="w-4 h-4 border-2 border-[#555555]/30 border-t-[#555555] rounded-full animate-spin" />
+            Checking data status…
+          </div>
+        ) : (
+          <div className="flex flex-col lg:flex-row lg:items-center gap-6">
+            {/* Left: status */}
+            <div className="flex-1 min-w-0">
+              <div className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium mb-2', pillColor)}>
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                {statusLabel}
+              </div>
+              <p className="text-[#777777] text-sm truncate">{statusSubtitle}</p>
+            </div>
+
+            {/* Middle: 30-day coverage strip */}
+            <div className="shrink-0">
+              <p className="text-[#555555] text-xs mb-1.5">Last 30 days</p>
+              <div className="flex gap-0.5" role="list" aria-label="30-day data coverage">
+                {days30.map((day) => {
+                  const count = coverageMap.get(day)
+                  const hasData = count !== undefined && count > 0
+                  return (
+                    <div
+                      key={day}
+                      role="listitem"
+                      title={hasData ? `${formatDate(day)}: ${count} transactions` : `${formatDate(day)}: no data`}
+                      className={cn(
+                        'w-3 h-6 rounded-sm cursor-default',
+                        hasData ? 'bg-guava-red' : 'bg-border'
+                      )}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Right: action */}
+            <div className="shrink-0">
+              {isActionNeeded ? (
+                <Button
+                  size="sm"
+                  className="bg-guava-green hover:bg-[#3d8e2e] text-white rounded-lg"
+                  onClick={onUploadClick}
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Upload latest data
+                </Button>
+              ) : (
+                <div className="flex items-center gap-1.5 text-guava-green text-sm font-medium">
+                  <CheckCircle className="w-4 h-4" />
+                  Up to date
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Connect() {
+  // ── Data status state ────────────────────────────────────────────
+  const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
+  const [dataStatusLoading, setDataStatusLoading] = useState(true)
+
   // ── CSV Upload state ─────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
@@ -38,6 +188,23 @@ export default function Connect() {
   const [lastUpload, setLastUpload] = useState<string | null>(null)
   const [stageResponse, setStageResponse] = useState<StageUploadResponse | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Fetch data status ────────────────────────────────────────────
+  const fetchDataStatus = async () => {
+    try {
+      setDataStatusLoading(true)
+      const { data } = await api.get<{ success: boolean; data: DataStatus }>('/transactions/status')
+      setDataStatus(data.data)
+    } catch {
+      // Non-fatal: leave status null
+    } finally {
+      setDataStatusLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchDataStatus()
+  }, [historyRefreshKey])
 
   // ── CSV Upload handlers ──────────────────────────────────────────
   const handleFile = async (file: File) => {
@@ -116,9 +283,45 @@ export default function Connect() {
     setProgress(0)
   }
 
+  const openFilePicker = () => {
+    fileInputRef.current?.click()
+  }
+
+  // Detect whether any of the uploaded date range is in the past
+  const actualsWereFilled = result?.firstDate
+    ? new Date(result.firstDate) < new Date(new Date().toISOString().slice(0, 10))
+    : false
+
+  const importedDaysCount =
+    result?.firstDate && result?.lastDate
+      ? Math.max(
+          1,
+          Math.round(
+            (new Date(result.lastDate).getTime() - new Date(result.firstDate).getTime()) /
+              86400000
+          ) + 1
+        )
+      : null
+
   return (
     <AppLayout title="Connect Data">
       <div className="space-y-6">
+        {/* Hidden file input (shared between Data Status card CTA and Upload card) */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.xlsx"
+          className="hidden"
+          onChange={onFileChange}
+        />
+
+        {/* ── Data Status Card ──────────────────────────────────────────── */}
+        <DataStatusCard
+          status={dataStatus}
+          loading={dataStatusLoading}
+          onUploadClick={openFilePicker}
+        />
+
         {/* ── Upload Card ───────────────────────────────────────────────── */}
         <Card>
           <CardHeader>
@@ -138,7 +341,7 @@ export default function Connect() {
                 onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={onDrop}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={openFilePicker}
                 className={cn(
                   'border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors',
                   isDragging
@@ -146,13 +349,6 @@ export default function Connect() {
                     : 'border-[#2A2A2A] hover:border-[#3A3A3A] hover:bg-white/[0.02]'
                 )}
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv,.xlsx"
-                  className="hidden"
-                  onChange={onFileChange}
-                />
                 <div className="w-12 h-12 rounded-xl bg-[#111111] border border-[#2A2A2A] flex items-center justify-center mx-auto mb-4">
                   <Upload className="w-6 h-6 text-[#555555]" />
                 </div>
@@ -213,13 +409,42 @@ export default function Connect() {
                       </div>
                     </div>
                     {result.firstDate && result.lastDate && (
-                      <p className="text-[#555555] text-xs">
+                      <p className="text-[#555555] text-xs mb-4">
                         Date range: {new Date(result.firstDate).toLocaleDateString('en-ZA')} → {new Date(result.lastDate).toLocaleDateString('en-ZA')}
                       </p>
                     )}
+
+                    {/* What this did */}
+                    <div className="bg-[#111111] border border-border rounded-lg p-3 mb-4">
+                      <p className="text-muted text-xs font-medium mb-2 uppercase tracking-wide">What this did</p>
+                      <ul className="space-y-1.5">
+                        <li className="flex items-start gap-2 text-muted text-sm">
+                          <span className="text-guava-green mt-0.5">•</span>
+                          <span>
+                            Imported {result.imported.toLocaleString()} transactions
+                            {importedDaysCount ? ` covering ${importedDaysCount} day${importedDaysCount === 1 ? '' : 's'}` : ''}
+                          </span>
+                        </li>
+                        {actualsWereFilled && (
+                          <li className="flex items-start gap-2 text-muted text-sm">
+                            <span className="text-guava-red mt-0.5">•</span>
+                            <span>
+                              Filled actuals for past days — see{' '}
+                              <Link to="/forecasts" className="text-guava-red hover:underline">
+                                Forecasts → Last week's results
+                              </Link>
+                            </span>
+                          </li>
+                        )}
+                        <li className="flex items-start gap-2 text-muted text-sm">
+                          <span className="text-guava-green mt-0.5">•</span>
+                          <span>Updated next 7-day forecasts using fresh data</span>
+                        </li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-4">
+                <div className="flex gap-2 mt-2">
                   <Button variant="secondary" size="sm" onClick={reset}>
                     Upload another file
                   </Button>

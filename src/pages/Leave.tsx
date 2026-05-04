@@ -154,7 +154,7 @@ function LeaveCalendar() {
     const startDate = new Date(year, month, 1).toISOString().split('T')[0]
     const endDate = new Date(year, month + 1, 0).toISOString().split('T')[0]
     api
-      .get<{ calendar: LeaveCalendarDay[] }>(`/api/leave/calendar?startDate=${startDate}&endDate=${endDate}`)
+      .get<{ calendar: LeaveCalendarDay[] }>(`/leave/calendar?startDate=${startDate}&endDate=${endDate}`)
       .then(({ data }) => setCalendarDays(data.calendar || []))
       .catch(() => setCalendarDays([]))
       .finally(() => setLoading(false))
@@ -280,8 +280,8 @@ export default function Leave() {
     try {
       const statusParam = filter === 'all' ? '' : `?status=${filter}`
       const [leaveRes, staffRes] = await Promise.all([
-        api.get<{ requests: LeaveRequest[] }>(`/api/leave${statusParam}`).catch(() => null),
-        api.get<{ staff: StaffMember[] }>('/api/staff').catch(() => null),
+        api.get<{ requests: LeaveRequest[] }>(`/leave${statusParam}`).catch(() => null),
+        api.get<{ staff: StaffMember[] }>('/staff').catch(() => null),
       ])
       setRequests(leaveRes?.data?.requests ?? [])
       setStaffList(staffRes?.data?.staff ?? [])
@@ -295,18 +295,18 @@ export default function Leave() {
   }, [loadData])
 
   async function handleSubmit(data: { staffId: string; type: string; startDate: string; endDate: string; reason: string }) {
-    await api.post('/api/leave', data)
+    await api.post('/leave', data)
     setShowForm(false)
     await loadData()
   }
 
   async function handleApprove(id: string) {
-    await api.put(`/api/leave/${id}/approve`)
+    await api.put(`/leave/${id}/approve`)
     await loadData()
   }
 
   async function handleReject(id: string) {
-    await api.put(`/api/leave/${id}/reject`)
+    await api.put(`/leave/${id}/reject`)
     await loadData()
   }
 

@@ -40,7 +40,7 @@ describe('Connect', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
-    // Default: yoco not connected
+    // Default mocks
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/yoco/status')) {
         return Promise.resolve({
@@ -49,6 +49,11 @@ describe('Connect', () => {
       }
       if (url.includes('/cafe/me')) {
         return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      if (url.includes('/transactions/status')) {
+        return Promise.resolve({
+          data: { data: { latestDataDate: null, earliestDataDate: null, daysSinceLatest: null, totalTransactions: 0, coverage30d: [] } },
+        })
       }
       return Promise.reject(new Error('Unknown URL'))
     })
