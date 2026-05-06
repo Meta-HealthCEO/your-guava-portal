@@ -16,15 +16,15 @@ interface Props {
 export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
   const accuracyColor =
     accuracy === null
-      ? 'text-[#888888]'
+      ? 'text-muted'
       : accuracy >= 80
-      ? 'text-[#4DA63B]'
+      ? 'text-guava-green'
       : accuracy >= 60
-      ? 'text-[#FFD166]'
-      : 'text-[#D43D3D]'
+      ? 'text-guava-yellow'
+      : 'text-guava-red'
 
   const accuracyLabel =
-    accuracy === null ? 'Awaiting yesterday\'s data' : `${Math.round(accuracy)}%`
+    accuracy === null ? 'Awaiting matched sales data' : `${Math.round(accuracy)}%`
 
   const accuracyStatus =
     accuracy === null
@@ -41,12 +41,12 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
       <Card>
         <CardContent className="p-5">
           <div className="flex items-start gap-3">
-            <div className="p-2 rounded-lg bg-[#D43D3D]/10">
-              <TrendingUp className="w-4 h-4 text-[#D43D3D]" />
+            <div className="p-2 rounded-lg bg-guava-red/10">
+              <TrendingUp className="w-4 h-4 text-guava-red" />
             </div>
             <div>
-              <p className="text-[#888888] text-xs mb-1">Weekly predicted revenue</p>
-              <p className="text-[#F0F0F0] text-xl font-semibold">
+              <p className="text-muted text-xs mb-1">Weekly predicted revenue</p>
+              <p className="text-text text-xl font-semibold">
                 R {weekTotal.toLocaleString('en-ZA')}
               </p>
             </div>
@@ -58,20 +58,20 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
       <Card>
         <CardContent className="p-5">
           <div className="flex items-start gap-3">
-            <div className="p-2 rounded-lg bg-[#4DA63B]/10">
-              <Star className="w-4 h-4 text-[#4DA63B]" />
+            <div className="p-2 rounded-lg bg-guava-green/10">
+              <Star className="w-4 h-4 text-guava-green" />
             </div>
             <div>
-              <p className="text-[#888888] text-xs mb-1">Peak day</p>
+              <p className="text-muted text-xs mb-1">Peak day</p>
               {peakDay ? (
-                <p className="text-[#F0F0F0] text-xl font-semibold">
+                <p className="text-text text-xl font-semibold">
                   {getDayName(peakDay.date)}{' '}
-                  <span className="text-sm text-[#888888] font-normal">
+                  <span className="text-sm text-muted font-normal">
                     — R {peakDay.totalPredictedRevenue.toLocaleString('en-ZA')}
                   </span>
                 </p>
               ) : (
-                <p className="text-[#888888] text-sm">—</p>
+                <p className="text-muted text-sm">—</p>
               )}
             </div>
           </div>
@@ -83,14 +83,14 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
         <CardContent className="p-5">
           <div className="flex items-start gap-3">
             <div className="p-2 rounded-lg bg-[#555555]/20">
-              <Target className="w-4 h-4 text-[#888888]" />
+              <Target className="w-4 h-4 text-muted" />
             </div>
             <div>
-              <p className="text-[#888888] text-xs mb-1">30-day accuracy</p>
+              <p className="text-muted text-xs mb-1">30-day accuracy</p>
               <p className={`text-xl font-semibold ${accuracyColor}`}>
                 {accuracyLabel}
                 {accuracyStatus && (
-                  <span className="text-xs font-normal text-[#888888] ml-2">
+                  <span className="text-xs font-normal text-muted ml-2">
                     {accuracyStatus}
                   </span>
                 )}

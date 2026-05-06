@@ -65,7 +65,7 @@ describe('Analytics', () => {
     await userEvent.click(itemsTab)
 
     await waitFor(() => {
-      expect(itemsTab.className).toContain('text-[#D43D3D]')
+      expect(itemsTab.className).toContain('text-guava-red')
     })
   })
 

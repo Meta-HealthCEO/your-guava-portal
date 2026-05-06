@@ -12,7 +12,11 @@ export interface Organization {
   _id: string
   name: string
   ownerId: string
-  plan: 'free' | 'growth' | 'pro'
+  plan: 'starter' | 'growth' | 'pro'
+  billingStatus?: 'trialing' | 'active' | 'past_due' | 'canceled'
+  billingCycle?: 'monthly' | 'annual'
+  billingEmail?: string
+  paymentMethod?: { brand: string; last4: string; expiresAt: string }
 }
 
 export interface TeamMember {
@@ -22,6 +26,32 @@ export interface TeamMember {
   role: 'owner' | 'manager'
   cafeIds: { _id: string; name: string }[]
   createdAt: string
+}
+
+export interface BillingPlan {
+  id: 'starter' | 'growth' | 'pro'
+  name: string
+  priceMonthly: number
+  priceAnnual: number
+  includedSeats: number
+  includedAiCredits: number
+  includedLocations: number
+  overagePerSeat: number
+  aiCreditPackPrice: number
+  features: string[]
+}
+
+export interface AccountUsage {
+  seats: { used: number; included: number; remaining: number }
+  locations: { used: number; included: number; remaining: number }
+  aiCredits: { included: number; bonus: number; used: number; available: number; resetAt: string | null }
+}
+
+export interface Account {
+  user: User
+  organization: Organization
+  usage: AccountUsage
+  plans: BillingPlan[]
 }
 
 export interface CafeBasic {
@@ -41,7 +71,7 @@ export interface Cafe {
 export interface ForecastItem {
   itemName: string
   predictedQty: number
-  actualQty?: number
+  actualQty?: number | null
   suggestedStock?: number
 }
 
@@ -59,7 +89,17 @@ export interface Forecast {
     events?: { name: string; impact: string }[]
   }
   totalPredictedRevenue: number
+  actualRevenue?: number | null
+  actualTransactionCount?: number | null
+  actualsUpdatedAt?: string | null
   accuracy?: number
+  trainingData?: {
+    transactionCount: number
+    firstTransactionDate?: string
+    lastTransactionDate?: string
+    weeksWithSales: number
+    staleDays?: number
+  }
 }
 
 export interface LocalEvent {

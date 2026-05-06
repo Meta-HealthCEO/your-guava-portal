@@ -83,23 +83,23 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
       <CardContent>
         <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <Label className="text-xs text-[#888888]">Name *</Label>
+            <Label className="text-xs text-muted">Name *</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Email</Label>
+            <Label className="text-xs text-muted">Email</Label>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" />
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Phone</Label>
+            <Label className="text-xs text-muted">Phone</Label>
             <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="082 123 4567" />
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Role</Label>
+            <Label className="text-xs text-muted">Role</Label>
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as StaffMember['role'])}
-              className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-[#F0F0F0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D43D3D]"
+              className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
             >
               {ROLE_OPTIONS.map((r) => (
                 <option key={r} value={r}>
@@ -109,7 +109,7 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
             </select>
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Hourly Rate (R)</Label>
+            <Label className="text-xs text-muted">Hourly Rate (R)</Label>
             <Input
               type="number"
               value={hourlyRate}
@@ -120,7 +120,7 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
             />
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Start Date</Label>
+            <Label className="text-xs text-muted">Start Date</Label>
             <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
           <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
@@ -167,26 +167,26 @@ function EditStaffForm({ staff, onSave, onCancel }: EditStaffFormProps) {
   }
 
   return (
-    <div className="space-y-3 pt-3 border-t border-[#2A2A2A]">
+    <div className="space-y-3 pt-3 border-t border-border">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label className="text-xs text-[#888888]">Name</Label>
+          <Label className="text-xs text-muted">Name</Label>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-[#888888]">Email</Label>
+          <Label className="text-xs text-muted">Email</Label>
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-[#888888]">Phone</Label>
+          <Label className="text-xs text-muted">Phone</Label>
           <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-[#888888]">Role</Label>
+          <Label className="text-xs text-muted">Role</Label>
           <select
             value={role}
             onChange={(e) => setRole(e.target.value as StaffMember['role'])}
-            className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-[#F0F0F0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D43D3D]"
+            className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
           >
             {ROLE_OPTIONS.map((r) => (
               <option key={r} value={r}>
@@ -196,7 +196,7 @@ function EditStaffForm({ staff, onSave, onCancel }: EditStaffFormProps) {
           </select>
         </div>
         <div>
-          <Label className="text-xs text-[#888888]">Hourly Rate (R)</Label>
+          <Label className="text-xs text-muted">Hourly Rate (R)</Label>
           <Input
             type="number"
             value={hourlyRate}
@@ -237,12 +237,12 @@ function LeaveBar({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-[#888888]">{label}</span>
-        <span className="text-[10px] text-[#F0F0F0] tabular-nums">
+        <span className="text-[10px] text-muted">{label}</span>
+        <span className="text-[10px] text-text tabular-nums">
           {remaining}/{total} days
         </span>
       </div>
-      <div className="h-1.5 bg-[#222222] rounded-full overflow-hidden">
+      <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
       </div>
     </div>
@@ -287,7 +287,7 @@ function StaffCard({
         <div className="flex items-start justify-between mb-3">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-[#F0F0F0] text-sm font-semibold">{staff.name}</h3>
+              <h3 className="text-text text-sm font-semibold">{staff.name}</h3>
               <Badge
                 variant="secondary"
                 className="text-[10px]"
@@ -307,7 +307,7 @@ function StaffCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-[#D43D3D] hover:text-[#D43D3D]"
+                  className="h-7 w-7 text-guava-red hover:text-guava-red"
                   onClick={handleDeactivate}
                   disabled={deactivating}
                 >
@@ -321,22 +321,22 @@ function StaffCard({
         {/* Details */}
         <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs mb-3">
           {staff.phone && (
-            <div className="flex items-center gap-1.5 text-[#888888]">
+            <div className="flex items-center gap-1.5 text-muted">
               <Phone className="w-3 h-3" />
               <span>{staff.phone}</span>
             </div>
           )}
           {staff.email && (
-            <div className="flex items-center gap-1.5 text-[#888888]">
+            <div className="flex items-center gap-1.5 text-muted">
               <Mail className="w-3 h-3" />
               <span className="truncate">{staff.email}</span>
             </div>
           )}
-          <div className="flex items-center gap-1.5 text-[#888888]">
+          <div className="flex items-center gap-1.5 text-muted">
             <DollarSign className="w-3 h-3" />
             <span>R{staff.hourlyRate}/hr</span>
           </div>
-          <div className="flex items-center gap-1.5 text-[#888888]">
+          <div className="flex items-center gap-1.5 text-muted">
             <Calendar className="w-3 h-3" />
             <span>{formatDate(staff.startDate)}</span>
           </div>
@@ -451,11 +451,11 @@ export default function Staff() {
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center min-h-[300px] text-center">
-          <div className="w-14 h-14 rounded-xl bg-[#1A1A1A] border border-[#2A2A2A] flex items-center justify-center mb-4">
+        <div className="flex flex-col items-center justify-center min-h-75 text-center">
+          <div className="w-14 h-14 rounded-xl bg-surface border border-border flex items-center justify-center mb-4">
             <UserPlus className="w-7 h-7 text-[#555555]" />
           </div>
-          <h2 className="text-[#F0F0F0] text-lg font-semibold mb-2">No staff yet</h2>
+          <h2 className="text-text text-lg font-semibold mb-2">No staff yet</h2>
           <p className="text-[#555555] text-sm mb-6 max-w-xs">Add your first staff member to get started with scheduling.</p>
           <Button variant="success" onClick={() => setShowAddForm(true)}>
             <UserPlus className="w-4 h-4" />

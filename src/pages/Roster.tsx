@@ -86,19 +86,19 @@ function AddShiftForm({ date, staffList, onSubmit, onCancel }: AddShiftFormProps
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-[#111111] border border-[#2A2A2A] rounded-lg p-3 mt-2 space-y-2">
+    <form onSubmit={handleSubmit} className="bg-[#111111] border border-border rounded-lg p-3 mt-2 space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-[#F0F0F0] text-xs font-medium">Add Shift</p>
-        <button type="button" onClick={onCancel} className="text-[#555555] hover:text-[#F0F0F0]">
+        <p className="text-text text-xs font-medium">Add Shift</p>
+        <button type="button" onClick={onCancel} className="text-[#555555] hover:text-text">
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
       <div>
-        <Label className="text-xs text-[#888888]">Staff</Label>
+        <Label className="text-xs text-muted">Staff</Label>
         <select
           value={staffId}
           onChange={(e) => setStaffId(e.target.value)}
-          className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-[#F0F0F0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D43D3D]"
+          className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
         >
           <option value="">Select staff</option>
           {staffList.filter((s) => s.isActive).map((s) => (
@@ -110,16 +110,16 @@ function AddShiftForm({ date, staffList, onSubmit, onCancel }: AddShiftFormProps
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <Label className="text-xs text-[#888888]">Start</Label>
+          <Label className="text-xs text-muted">Start</Label>
           <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-[#888888]">End</Label>
+          <Label className="text-xs text-muted">End</Label>
           <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
         </div>
       </div>
       <div>
-        <Label className="text-xs text-[#888888]">Notes (optional)</Label>
+        <Label className="text-xs text-muted">Notes (optional)</Label>
         <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any notes..." />
       </div>
       <Button type="submit" size="sm" variant="success" className="w-full" disabled={!staffId || submitting}>
@@ -133,9 +133,9 @@ function AddShiftForm({ date, staffList, onSubmit, onCancel }: AddShiftFormProps
 
 function ShiftCard({ shift }: { shift: Shift }) {
   return (
-    <div className="bg-[#111111] border border-[#2A2A2A] rounded-lg p-2.5 mb-1.5">
+    <div className="bg-[#111111] border border-border rounded-lg p-2.5 mb-1.5">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[#F0F0F0] text-xs font-medium truncate">{getStaffName(shift.staffId)}</span>
+        <span className="text-text text-xs font-medium truncate">{getStaffName(shift.staffId)}</span>
         <Badge
           variant={shift.type === 'overtime' ? 'warning' : 'secondary'}
           className="text-[9px] px-1.5 py-0"
@@ -143,7 +143,7 @@ function ShiftCard({ shift }: { shift: Shift }) {
           {shift.type}
         </Badge>
       </div>
-      <div className="flex items-center gap-1.5 text-[#888888]">
+      <div className="flex items-center gap-1.5 text-muted">
         <Clock className="w-3 h-3" />
         <span className="text-[10px]">
           {shift.startTime} — {shift.endTime}
@@ -198,7 +198,7 @@ function StaffSidebar({
                   className="flex items-center justify-between py-1.5 border-b border-[#1F1F1F] last:border-0"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-[#F0F0F0] text-xs font-medium truncate">{staff.name}</span>
+                    <span className="text-text text-xs font-medium truncate">{staff.name}</span>
                     <Badge
                       variant="secondary"
                       className="text-[9px] px-1.5 py-0 shrink-0"
@@ -211,7 +211,7 @@ function StaffSidebar({
                     </Badge>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className={cn('text-xs tabular-nums', isOvertime ? 'text-[#D43D3D] font-bold' : 'text-[#888888]')}>
+                    <span className={cn('text-xs tabular-nums', isOvertime ? 'text-guava-red font-bold' : 'text-muted')}>
                       {totalHours.toFixed(1)}h
                     </span>
                     {isOvertime && (
@@ -297,7 +297,7 @@ export default function Roster() {
           <Button variant="outline" size="icon" onClick={() => setWeekStart(addDays(weekStart, -7))}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <span className="text-[#F0F0F0] text-sm font-medium">
+          <span className="text-text text-sm font-medium">
             {formatDateShort(weekStart)} — {formatDateShort(weekEnd)}
           </span>
           <Button variant="outline" size="icon" onClick={() => setWeekStart(addDays(weekStart, 7))}>
@@ -325,18 +325,18 @@ export default function Roster() {
                   className={cn(
                     'text-center py-2 rounded-t-lg border-b',
                     isToday
-                      ? 'bg-[#D43D3D]/10 border-[#D43D3D]/30'
-                      : 'bg-[#1A1A1A] border-[#2A2A2A]'
+                      ? 'bg-guava-red/10 border-guava-red/30'
+                      : 'bg-surface border-border'
                   )}
                 >
-                  <p className={cn('text-xs font-bold', isToday ? 'text-[#D43D3D]' : 'text-[#F0F0F0]')}>
+                  <p className={cn('text-xs font-bold', isToday ? 'text-guava-red' : 'text-text')}>
                     {dayLabel}
                   </p>
                   <p className="text-[10px] text-[#555555]">{formatDateShort(dayDate)}</p>
                 </div>
 
                 {/* Shifts */}
-                <div className="bg-[#1A1A1A] border border-t-0 border-[#2A2A2A] rounded-b-lg p-1.5 min-h-[120px]">
+                <div className="bg-surface border border-t-0 border-border rounded-b-lg p-1.5 min-h-30">
                   {loading ? (
                     <div className="space-y-2">
                       <Skeleton className="h-12 rounded-lg" />
@@ -362,7 +362,7 @@ export default function Roster() {
                       ) : (
                         <button
                           onClick={() => setAddingDay(dateStr)}
-                          className="w-full flex items-center justify-center gap-1 text-[10px] text-[#555555] hover:text-[#4DA63B] py-1.5 mt-1 rounded border border-dashed border-[#2A2A2A] hover:border-[#4DA63B]/30 transition-colors"
+                          className="w-full flex items-center justify-center gap-1 text-[10px] text-[#555555] hover:text-guava-green py-1.5 mt-1 rounded border border-dashed border-border hover:border-guava-green/30 transition-colors"
                         >
                           <Plus className="w-3 h-3" />
                           Add Shift

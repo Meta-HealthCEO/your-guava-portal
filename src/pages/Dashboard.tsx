@@ -165,8 +165,8 @@ function KpiCard({
       <CardContent className="pt-5 pb-5">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-[#888888] text-xs font-medium uppercase tracking-wider mb-1">{label}</p>
-            <p className="text-[#F0F0F0] text-2xl font-bold tracking-tight">{value}</p>
+            <p className="text-muted text-xs font-medium uppercase tracking-wider mb-1">{label}</p>
+            <p className="text-text text-2xl font-bold tracking-tight">{value}</p>
             {sub && <p className="text-[#555555] text-xs mt-1">{sub}</p>}
           </div>
           <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${accent}18` }}>
@@ -186,33 +186,33 @@ function WeatherCard({ signals }: { signals: Forecast['signals'] }) {
     weather.condition.toLowerCase().includes('storm') ? '⛈️' : '☀️'
 
   return (
-    <Card className="bg-linear-to-br from-[#1A2030] to-[#1A1A1A] border-[#2A3048]">
+    <Card className="bg-linear-to-br from-[#1A2030] to-surface border-[#2A3048]">
       <CardContent className="pt-5 pb-5">
         <div className="flex items-start justify-between mb-4">
           <div>
             <div className="flex items-end gap-3">
               <span className="text-5xl">{conditionIcon}</span>
               <div>
-                <span className="text-4xl font-bold text-[#F0F0F0]">{weather.temp}°</span>
+                <span className="text-4xl font-bold text-text">{weather.temp}°</span>
                 <p className="text-[#AAB8CC] text-sm">{weather.condition}</p>
               </div>
             </div>
           </div>
           {loadSheddingStage > 0 && (
-            <div className="bg-[#FFD166]/10 border border-[#FFD166]/20 rounded-lg px-2.5 py-2 text-center">
-              <Zap className="w-4 h-4 text-[#FFD166] mx-auto mb-0.5" />
-              <p className="text-[#FFD166] text-xs font-bold">Stage {loadSheddingStage}</p>
+            <div className="bg-guava-yellow/10 border border-guava-yellow/20 rounded-lg px-2.5 py-2 text-center">
+              <Zap className="w-4 h-4 text-guava-yellow mx-auto mb-0.5" />
+              <p className="text-guava-yellow text-xs font-bold">Stage {loadSheddingStage}</p>
             </div>
           )}
         </div>
         <div className="flex items-center gap-4 pt-3 border-t border-[#2A3048]">
           <div className="flex items-center gap-1.5">
             <Wind className="w-3.5 h-3.5 text-[#4A9ECC]" />
-            <span className="text-[#888888] text-xs">{weather.humidity}% humidity</span>
+            <span className="text-muted text-xs">{weather.humidity}% humidity</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Droplets className="w-3.5 h-3.5 text-[#888888]" />
-            <span className="text-[#888888] text-xs">Blouberg, Cape Town</span>
+            <Droplets className="w-3.5 h-3.5 text-muted" />
+            <span className="text-muted text-xs">Blouberg, Cape Town</span>
           </div>
         </div>
       </CardContent>
@@ -277,7 +277,7 @@ function ImpactFactorsCard({ signals }: { signals: Forecast['signals'] }) {
                   {f.impact}
                 </span>
               </div>
-              <span className="text-[#888888] text-[10px]">{f.label}</span>
+              <span className="text-muted text-[10px]">{f.label}</span>
             </div>
           ))}
         </div>
@@ -291,7 +291,7 @@ function ItemCard({ itemName, predictedQty }: { itemName: string; predictedQty: 
   const Icon = getItemIcon(itemName)
 
   return (
-    <div className="bg-[#111111] border border-[#2A2A2A] rounded-xl p-4 text-center hover:border-[#3A3A3A] transition-colors">
+    <div className="bg-[#111111] border border-border rounded-xl p-4 text-center hover:border-[#3A3A3A] transition-colors">
       <div
         className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-2"
         style={{ backgroundColor: `${color}18` }}
@@ -326,7 +326,7 @@ function TimePeriodRow({
         <Clock className="w-3.5 h-3.5 text-[#555555] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[#F0F0F0] text-sm font-medium">{period.label}</span>
+            <span className="text-text text-sm font-medium">{period.label}</span>
             <span className="text-[#555555] text-xs">{period.timeRange}</span>
             <span className="text-[#555555] text-xs">{period.temp}°</span>
           </div>
@@ -346,7 +346,7 @@ function TimePeriodRow({
               </span>
             )
           })}
-          <span className="text-[#F0F0F0] text-xs w-8 text-right font-bold ml-1">{period.totalQty}</span>
+          <span className="text-text text-xs w-8 text-right font-bold ml-1">{period.totalQty}</span>
           {expanded ? <ChevronUp className="w-3.5 h-3.5 text-[#555555]" /> : <ChevronDown className="w-3.5 h-3.5 text-[#555555]" />}
         </div>
       </button>
@@ -358,8 +358,8 @@ function TimePeriodRow({
             const pct = Math.round((item.qty / maxQty) * 100)
             return (
               <div key={item.name} className="flex items-center gap-3">
-                <span className="text-[#888888] text-xs w-32 truncate">{item.name.replace(/\s*\(.*?\)\s*/g, '')}</span>
-                <div className="flex-1 h-1.5 bg-[#222222] rounded-full overflow-hidden">
+                <span className="text-muted text-xs w-32 truncate">{item.name.replace(/\s*\(.*?\)\s*/g, '')}</span>
+                <div className="flex-1 h-1.5 bg-surface-2 rounded-full overflow-hidden">
                   <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
                 </div>
                 <span className="text-xs font-semibold tabular-nums w-6 text-right" style={{ color }}>{item.qty}</span>
@@ -508,11 +508,11 @@ export default function Dashboard() {
   if (!isLoading && !hasData) {
     return (
       <AppLayout title="Dashboard">
-        <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
-          <div className="w-14 h-14 rounded-xl bg-[#1A1A1A] border border-[#2A2A2A] flex items-center justify-center mb-4">
+        <div className="flex flex-col items-center justify-center min-h-100 text-center">
+          <div className="w-14 h-14 rounded-xl bg-surface border border-border flex items-center justify-center mb-4">
             <AlertTriangle className="w-7 h-7 text-[#555555]" />
           </div>
-          <h2 className="text-[#F0F0F0] text-lg font-semibold mb-2">No data yet</h2>
+          <h2 className="text-text text-lg font-semibold mb-2">No data yet</h2>
           <p className="text-[#555555] text-sm mb-6 max-w-xs">Upload your transaction data to start generating forecasts.</p>
           <Link to="/connect">
             <Button><Upload className="w-4 h-4" />Upload Sales Data</Button>
@@ -543,10 +543,10 @@ export default function Dashboard() {
                   key={idx}
                   onClick={() => setSelectedDayIdx(idx)}
                   className={cn(
-                    'flex flex-col items-center px-3.5 py-2 rounded-lg border text-center shrink-0 transition-colors min-w-[64px]',
+                    'flex flex-col items-center px-3.5 py-2 rounded-lg border text-center shrink-0 transition-colors min-w-16',
                     selectedDayIdx === idx
-                      ? 'bg-[#4DA63B]/10 border-[#4DA63B]/40 text-[#4DA63B]'
-                      : 'bg-[#111111] border-[#2A2A2A] text-[#888888] hover:text-[#F0F0F0] hover:border-[#3A3A3A]'
+                      ? 'bg-guava-green/10 border-guava-green/40 text-guava-green'
+                      : 'bg-[#111111] border-border text-muted hover:text-text hover:border-[#3A3A3A]'
                   )}
                 >
                   <span className="text-xs font-bold tracking-wide">{getDayLabel(d)}</span>
@@ -563,12 +563,12 @@ export default function Dashboard() {
       {!isLoading && activeForecast && (
         <div className="mb-6">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[#F0F0F0] text-sm font-semibold uppercase tracking-wider">
+            <h2 className="text-text text-sm font-semibold uppercase tracking-wider">
               Predicted Output
             </h2>
             <div className="flex items-center gap-3">
               {activeForecast.totalPredictedRevenue > 0 && (
-                <span className="text-[#4DA63B] text-sm font-bold">
+                <span className="text-guava-green text-sm font-bold">
                   Target {formatZAR(activeForecast.totalPredictedRevenue)}
                 </span>
               )}
@@ -588,15 +588,15 @@ export default function Dashboard() {
           {/* Signals strip */}
           <div className="flex flex-wrap gap-2 mt-4">
             {activeForecast.signals.isPayday && (
-              <div className="flex items-center gap-1.5 bg-[#4DA63B]/10 border border-[#4DA63B]/20 rounded-md px-3 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#4DA63B]" />
-                <span className="text-[#4DA63B] text-xs font-medium">Payday</span>
+              <div className="flex items-center gap-1.5 bg-guava-green/10 border border-guava-green/20 rounded-md px-3 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-guava-green" />
+                <span className="text-guava-green text-xs font-medium">Payday</span>
               </div>
             )}
             {activeForecast.signals.isPublicHoliday && (
-              <div className="flex items-center gap-1.5 bg-[#D43D3D]/10 border border-[#D43D3D]/20 rounded-md px-3 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#D43D3D]" />
-                <span className="text-[#D43D3D] text-xs font-medium">Public Holiday</span>
+              <div className="flex items-center gap-1.5 bg-guava-red/10 border border-guava-red/20 rounded-md px-3 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-guava-red" />
+                <span className="text-guava-red text-xs font-medium">Public Holiday</span>
               </div>
             )}
             {activeForecast.signals.events && activeForecast.signals.events.length > 0 && (
@@ -623,8 +623,8 @@ export default function Dashboard() {
         <div className="space-y-4">
           {isLoading ? (
             <>
-              <Skeleton className="h-[160px] rounded-xl" />
-              <Skeleton className="h-[160px] rounded-xl" />
+              <Skeleton className="h-40 rounded-xl" />
+              <Skeleton className="h-40 rounded-xl" />
             </>
           ) : activeForecast ? (
             <>

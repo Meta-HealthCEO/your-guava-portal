@@ -41,6 +41,7 @@ const PROVIDER_CONFIG: Record<
     description: string
     accentColor: string
     accentBg: string
+    accentHoverBg: string
     accentBorder: string
     bullets: string[]
   }
@@ -50,6 +51,7 @@ const PROVIDER_CONFIG: Record<
     description: 'Push daily sales summaries directly into your Xero accounting books.',
     accentColor: 'text-[#13B5EA]',
     accentBg: 'bg-[#13B5EA]/10',
+    accentHoverBg: 'hover:bg-[#13B5EA]/15',
     accentBorder: 'border-[#13B5EA]/25',
     bullets: [
       'Automatic bank transaction entries per sales period',
@@ -62,6 +64,7 @@ const PROVIDER_CONFIG: Record<
     description: 'Sync sales totals and tax breakdowns with your QuickBooks Online company.',
     accentColor: 'text-[#2CA01C]',
     accentBg: 'bg-[#2CA01C]/10',
+    accentHoverBg: 'hover:bg-[#2CA01C]/15',
     accentBorder: 'border-[#2CA01C]/25',
     bullets: [
       'Map sales to QuickBooks income accounts automatically',
@@ -74,6 +77,7 @@ const PROVIDER_CONFIG: Record<
     description: 'Post sales summaries to Sage Accounting for seamless bookkeeping.',
     accentColor: 'text-[#00C853]',
     accentBg: 'bg-[#00C853]/10',
+    accentHoverBg: 'hover:bg-[#00C853]/15',
     accentBorder: 'border-[#00C853]/25',
     bullets: [
       'Create journal entries from your daily revenue totals',
@@ -114,12 +118,20 @@ function extractError(err: unknown, fallback: string): string {
   return fallback
 }
 
+function connectErrorMessage(err: unknown, providerName: string): string {
+  const message = extractError(err, 'Could not start the connection.')
+  if (/CLIENT_ID|CLIENT_SECRET|REDIRECT_URI|not set/i.test(message)) {
+    return `${providerName} is not configured on the backend yet. Add the OAuth client ID, secret, and redirect URI, then restart the backend.`
+  }
+  return message
+}
+
 // ── StatusPill ────────────────────────────────────────────────────────────────
 
 function StatusPill({ connected, syncStatus }: { connected: boolean; syncStatus: SyncStatus }) {
   if (!connected) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#3A3A3A] bg-[#2A2A2A] px-2.5 py-0.5 text-xs font-medium text-[#888888]">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#3A3A3A] bg-border px-2.5 py-0.5 text-xs font-medium text-muted">
         <span className="w-1.5 h-1.5 rounded-full bg-[#555555]" />
         Not connected
       </span>
@@ -134,7 +146,7 @@ function StatusPill({ connected, syncStatus }: { connected: boolean; syncStatus:
     )
   }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[#4DA63B]/30 bg-[#4DA63B]/10 px-2.5 py-0.5 text-xs font-medium text-[#4DA63B]">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-guava-green/30 bg-guava-green/10 px-2.5 py-0.5 text-xs font-medium text-guava-green">
       <CheckCircle className="w-3 h-3" />
       Connected
     </span>
@@ -154,13 +166,13 @@ function ConfirmDialog({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-sm rounded-xl bg-[#1A1A1A] border border-[#2A2A2A] p-6 shadow-2xl">
+      <div className="w-full max-w-sm rounded-xl bg-surface border border-border p-6 shadow-2xl">
         <div className="flex items-start gap-3 mb-4">
           <div className="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center shrink-0">
             <Unplug className="w-4 h-4 text-red-400" />
           </div>
           <div>
-            <p className="text-[#F0F0F0] font-semibold text-sm">Disconnect {provider}?</p>
+            <p className="text-text font-semibold text-sm">Disconnect {provider}?</p>
             <p className="text-[#777777] text-sm mt-1">
               You'll need to reconnect to sync sales data.
             </p>
@@ -202,15 +214,19 @@ function ProviderCard({
   const [showConfirm, setShowConfirm] = useState(false)
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   const handleConnect = async () => {
     setConnecting(true)
+    setConnectError(null)
+    setSyncError(null)
     try {
       const { data } = await api.get<{ url: string }>(`/integrations/${provider}/auth`)
+      if (!data?.url) throw new Error('The backend did not return a connection URL.')
       window.location.href = data.url
     } catch (err) {
       setConnecting(false)
-      console.error('[integrations] Failed to get auth URL:', extractError(err, 'Unknown error'))
+      setConnectError(connectErrorMessage(err, cfg.name))
     }
   }
 
@@ -257,7 +273,7 @@ function ProviderCard({
       <div
         className={cn(
           'flex flex-col rounded-xl border bg-[#111111] p-5 gap-4',
-          state.connected ? cfg.accentBorder : 'border-[#2A2A2A]'
+          state.connected ? cfg.accentBorder : 'border-border'
         )}
       >
         {/* Header row */}
@@ -286,17 +302,17 @@ function ProviderCard({
             <div className="rounded-lg bg-[#0F0F0F] border border-[#1E1E1E] px-3 py-2.5 text-xs space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[#555555]">Connected since</span>
-                <span className="text-[#888888]">{formatDate(state.connectedAt)}</span>
+                <span className="text-muted">{formatDate(state.connectedAt)}</span>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[#555555]">Last sync</span>
-                <span className="text-[#888888]">{formatDateTime(state.lastSyncAt)}</span>
+                <span className="text-muted">{formatDateTime(state.lastSyncAt)}</span>
               </div>
               {state.lastSyncStatus && (
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[#555555]">Sync status</span>
                   {state.lastSyncStatus === 'success' ? (
-                    <span className="text-[#4DA63B] flex items-center gap-1">
+                    <span className="text-guava-green flex items-center gap-1">
                       <CheckCircle className="w-3 h-3" /> Success
                     </span>
                   ) : (
@@ -307,7 +323,7 @@ function ProviderCard({
                 </div>
               )}
               {state.lastSyncStatus === 'failed' && state.lastSyncError && (
-                <p className="text-red-400 text-[11px] pt-0.5 border-t border-[#2A2A2A]">
+                <p className="text-red-400 text-[11px] pt-0.5 border-t border-border">
                   {state.lastSyncError}
                 </p>
               )}
@@ -315,7 +331,7 @@ function ProviderCard({
 
             {/* Inline sync feedback */}
             {syncResult?.success && syncResult.summary && (
-              <div className="flex items-center gap-2 rounded-lg bg-[#4DA63B]/10 border border-[#4DA63B]/20 px-3 py-2 text-xs text-[#4DA63B]">
+              <div className="flex items-center gap-2 rounded-lg bg-guava-green/10 border border-guava-green/20 px-3 py-2 text-xs text-guava-green">
                 <CheckCircle className="w-3.5 h-3.5 shrink-0" />
                 <span>
                   Sent{' '}
@@ -356,7 +372,7 @@ function ProviderCard({
               <Button
                 variant="outline"
                 size="sm"
-                className="rounded-lg text-[#888888] hover:text-red-400 hover:border-red-500/40"
+                className="rounded-lg text-muted hover:text-red-400 hover:border-red-500/40"
                 onClick={() => setShowConfirm(true)}
                 disabled={syncing || disconnecting}
               >
@@ -377,16 +393,27 @@ function ProviderCard({
               ))}
             </ul>
 
+            {connectError && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200"
+              >
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{connectError}</span>
+              </div>
+            )}
+
             {/* Connect button */}
             <Button
+              variant="outline"
               size="sm"
               className={cn(
-                'rounded-lg text-white gap-1.5',
+                'rounded-lg gap-1.5 bg-transparent transition-colors',
                 cfg.accentBg,
                 cfg.accentColor,
-                'border',
                 cfg.accentBorder,
-                'hover:brightness-125'
+                cfg.accentHoverBg,
+                'hover:text-current hover:border-current'
               )}
               onClick={handleConnect}
               disabled={connecting}
@@ -412,13 +439,16 @@ const EMPTY_STATE: IntegrationsData = {
 export default function Integrations() {
   const [integrations, setIntegrations] = useState<IntegrationsData>(EMPTY_STATE)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const fetchIntegrations = useCallback(async () => {
+    setLoadError(null)
     try {
       const { data } = await api.get<{ data: IntegrationsData }>('/integrations')
-      setIntegrations(data.data)
-    } catch {
-      // Non-fatal: keep empty state
+      setIntegrations({ ...EMPTY_STATE, ...data.data })
+    } catch (err) {
+      setLoadError(extractError(err, 'Could not load integration status.'))
+      setIntegrations(EMPTY_STATE)
     } finally {
       setLoading(false)
     }
@@ -438,13 +468,23 @@ export default function Integrations() {
           </p>
         </div>
 
+        {loadError && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{loadError}</span>
+          </div>
+        )}
+
         {/* Provider cards grid */}
         {loading ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {(['xero', 'quickbooks', 'sage'] as Provider[]).map((p) => (
               <div
                 key={p}
-                className="rounded-xl border border-[#2A2A2A] bg-[#111111] p-5 h-48 animate-[skeleton-shimmer_1.5s_ease-in-out_infinite]"
+                className="rounded-xl border border-border bg-[#111111] p-5 h-48 animate-[skeleton-shimmer_1.5s_ease-in-out_infinite]"
               />
             ))}
           </div>

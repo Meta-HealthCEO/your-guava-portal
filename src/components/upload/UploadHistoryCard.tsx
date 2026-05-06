@@ -35,7 +35,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <History className="w-4 h-4 text-[#D43D3D]" />
+          <History className="w-4 h-4 text-guava-red" />
           <CardTitle>Upload history</CardTitle>
         </div>
         <CardDescription>
@@ -67,19 +67,19 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
               </thead>
               <tbody>
                 {uploads.map((u) => (
-                  <tr key={u._id} className="border-t border-[#2A2A2A]">
+                  <tr key={u._id} className="border-t border-border">
                     <td className="py-2 flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-[#777777]" />{u.fileName}</td>
                     <td>{u.posType}</td>
                     <td>{u.stats.imported}</td>
-                    <td className="text-[#888888]">
+                    <td className="text-muted">
                       {u.dateRange?.firstDate ? new Date(u.dateRange.firstDate).toLocaleDateString('en-ZA') : '—'}
                       {' → '}
                       {u.dateRange?.lastDate ? new Date(u.dateRange.lastDate).toLocaleDateString('en-ZA') : '—'}
                     </td>
                     <td><Badge variant={statusColor[u.status] || 'secondary'}>{u.status}</Badge></td>
-                    <td className="text-[#888888]">{new Date(u.createdAt).toLocaleString('en-ZA')}</td>
+                    <td className="text-muted">{new Date(u.createdAt).toLocaleString('en-ZA')}</td>
                     <td>
-                      <Link to={`/uploads/${u._id}`} className="text-[#D43D3D] hover:underline inline-flex items-center gap-1">
+                      <Link to={`/uploads/${u._id}`} className="text-guava-red hover:underline inline-flex items-center gap-1">
                         View <ExternalLink className="w-3 h-3" />
                       </Link>
                     </td>

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthContext } from '@/contexts/AuthContext'
 import Team from './Team'
@@ -143,12 +144,17 @@ describe('Team', () => {
     renderWithAuth(<Team />)
 
     await waitFor(() => {
-      // "Invite Manager" appears in both heading and submit button
-      expect(screen.getAllByText('Invite Manager').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText('Team members')).toBeInTheDocument()
     })
 
-    expect(screen.getByPlaceholderText('Manager name')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('manager@example.com')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Team member name')).not.toBeInTheDocument()
+
+    const addButtons = screen.getAllByRole('button', { name: /^add member$/i })
+    await userEvent.click(addButtons[0])
+
+    expect(screen.getByRole('dialog', { name: /add team member/i })).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Team member name')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('member@example.com')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Temporary password')).toBeInTheDocument()
   })
 
@@ -171,9 +177,12 @@ describe('Team', () => {
     renderWithAuth(<Team />)
 
     await waitFor(() => {
-      expect(screen.getByText('Blouberg Coffee')).toBeInTheDocument()
-      expect(screen.getByText('Sea Point Brew')).toBeInTheDocument()
+      expect(screen.getAllByText('Blouberg Coffee').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getAllByText('Sea Point Brew').length).toBeGreaterThanOrEqual(1)
     })
+
+    const addButtons = screen.getAllByRole('button', { name: /^add member$/i })
+    await userEvent.click(addButtons[0])
 
     const checkboxes = screen.getAllByRole('checkbox')
     expect(checkboxes.length).toBe(2)
@@ -218,8 +227,7 @@ describe('Team', () => {
       expect(screen.getByText('Alice Owner')).toBeInTheDocument()
     })
 
-    // There should be exactly one delete button (for Bob the manager)
-    const deleteButtons = document.querySelectorAll('button[class*="hover:text-red-400"]')
-    expect(deleteButtons.length).toBe(1)
+    expect(screen.queryByRole('button', { name: /remove alice owner/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /remove bob manager/i })).toBeInTheDocument()
   })
 })

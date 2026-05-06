@@ -158,7 +158,7 @@ function RevenueTab() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-[#888888] text-sm">{error}</p>
+        <p className="text-muted text-sm">{error}</p>
         <Button variant="outline" size="sm" className="mt-4" onClick={() => setPeriod(period)}>
           Retry
         </Button>
@@ -210,7 +210,7 @@ function RevenueTab() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <Skeleton className="h-[300px] rounded-lg" />
+            <Skeleton className="h-75 rounded-lg" />
           ) : data && data.data.length > 0 ? (
             <div style={{ height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -301,7 +301,7 @@ function ItemsTab() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-[#888888] text-sm">{error}</p>
+        <p className="text-muted text-sm">{error}</p>
       </div>
     )
   }
@@ -321,15 +321,15 @@ function ItemsTab() {
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-[#4DA63B] text-xs font-semibold uppercase tracking-wider mb-2">Rising 📈</p>
+                <p className="text-guava-green text-xs font-semibold uppercase tracking-wider mb-2">Rising 📈</p>
                 {rising.length === 0 ? (
                   <p className="text-[#555555] text-xs">No rising items</p>
                 ) : (
                   <ul className="space-y-1.5">
                     {rising.map((item) => (
                       <li key={item.name} className="flex items-center justify-between text-xs">
-                        <span className="text-[#F0F0F0] truncate mr-2">{item.name}</span>
-                        <span className="text-[#4DA63B] font-medium tabular-nums shrink-0">
+                        <span className="text-text truncate mr-2">{item.name}</span>
+                        <span className="text-guava-green font-medium tabular-nums shrink-0">
                           +{item.trend.toFixed(1)}%
                         </span>
                       </li>
@@ -338,15 +338,15 @@ function ItemsTab() {
                 )}
               </div>
               <div>
-                <p className="text-[#D43D3D] text-xs font-semibold uppercase tracking-wider mb-2">Declining 📉</p>
+                <p className="text-guava-red text-xs font-semibold uppercase tracking-wider mb-2">Declining 📉</p>
                 {declining.length === 0 ? (
                   <p className="text-[#555555] text-xs">No declining items</p>
                 ) : (
                   <ul className="space-y-1.5">
                     {declining.map((item) => (
                       <li key={item.name} className="flex items-center justify-between text-xs">
-                        <span className="text-[#F0F0F0] truncate mr-2">{item.name}</span>
-                        <span className="text-[#D43D3D] font-medium tabular-nums shrink-0">
+                        <span className="text-text truncate mr-2">{item.name}</span>
+                        <span className="text-guava-red font-medium tabular-nums shrink-0">
                           {item.trend.toFixed(1)}%
                         </span>
                       </li>
@@ -366,7 +366,7 @@ function ItemsTab() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <Skeleton className="h-[300px] rounded-lg" />
+            <Skeleton className="h-75 rounded-lg" />
           ) : top10.length > 0 ? (
             <div style={{ height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -412,12 +412,12 @@ function ItemsTab() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#2A2A2A]">
-                    <th className="text-left py-2 pr-4 text-[#888888] font-medium">Item</th>
-                    <th className="text-right py-2 px-4 text-[#888888] font-medium">Sold</th>
-                    <th className="text-right py-2 px-4 text-[#888888] font-medium">Revenue</th>
-                    <th className="text-right py-2 px-4 text-[#888888] font-medium">Avg/Day</th>
-                    <th className="text-right py-2 pl-4 text-[#888888] font-medium">Trend</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2 pr-4 text-muted font-medium">Item</th>
+                    <th className="text-right py-2 px-4 text-muted font-medium">Sold</th>
+                    <th className="text-right py-2 px-4 text-muted font-medium">Revenue</th>
+                    <th className="text-right py-2 px-4 text-muted font-medium">Avg/Day</th>
+                    <th className="text-right py-2 pl-4 text-muted font-medium">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -429,14 +429,14 @@ function ItemsTab() {
                         key={item.name}
                         className={cn(
                           'border-b border-[#1F1F1F] last:border-0',
-                          isRising && 'bg-[#4DA63B]/5',
-                          isDeclining && 'bg-[#D43D3D]/5'
+                          isRising && 'bg-guava-green/5',
+                          isDeclining && 'bg-guava-red/5'
                         )}
                       >
-                        <td className="py-2.5 pr-4 text-[#F0F0F0]">{item.name}</td>
-                        <td className="py-2.5 px-4 text-right text-[#F0F0F0] tabular-nums">{item.totalQty}</td>
-                        <td className="py-2.5 px-4 text-right text-[#F0F0F0] tabular-nums">{formatZAR(item.totalRevenue)}</td>
-                        <td className="py-2.5 px-4 text-right text-[#888888] tabular-nums">{item.avgPerDay.toFixed(1)}</td>
+                        <td className="py-2.5 pr-4 text-text">{item.name}</td>
+                        <td className="py-2.5 px-4 text-right text-text tabular-nums">{item.totalQty}</td>
+                        <td className="py-2.5 px-4 text-right text-text tabular-nums">{formatZAR(item.totalRevenue)}</td>
+                        <td className="py-2.5 px-4 text-right text-muted tabular-nums">{item.avgPerDay.toFixed(1)}</td>
                         <td className="py-2.5 pl-4 text-right">
                           <Badge variant={item.trend >= 0 ? 'success' : 'destructive'} className="text-[10px]">
                             {item.trend >= 0 ? (
@@ -502,7 +502,7 @@ function HeatmapTab() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-[#888888] text-sm">{error}</p>
+        <p className="text-muted text-sm">{error}</p>
       </div>
     )
   }
@@ -518,21 +518,21 @@ function HeatmapTab() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <Skeleton className="h-[300px] rounded-lg" />
+            <Skeleton className="h-75 rounded-lg" />
           ) : cells.length > 0 ? (
             <div className="relative">
               {/* Tooltip */}
               {hoveredCell && (
-                <div className="absolute top-0 right-0 bg-[#111111] border border-[#2A2A2A] rounded-lg px-3 py-2 z-10 text-xs">
-                  <p className="text-[#F0F0F0] font-medium">
+                <div className="absolute top-0 right-0 bg-[#111111] border border-border rounded-lg px-3 py-2 z-10 text-xs">
+                  <p className="text-text font-medium">
                     {DAYS[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
                   </p>
-                  <p className="text-[#888888]">{formatZAR(hoveredCell.revenue)} avg</p>
+                  <p className="text-muted">{formatZAR(hoveredCell.revenue)} avg</p>
                   <p className="text-[#555555]">{hoveredCell.transactions} transactions</p>
                 </div>
               )}
               <div className="overflow-x-auto">
-                <div className="min-w-[600px]">
+                <div className="min-w-150">
                   {/* Hour headers */}
                   <div className="flex items-center mb-1">
                     <div className="w-10 shrink-0" />
@@ -545,7 +545,7 @@ function HeatmapTab() {
                   {/* Grid rows */}
                   {DAYS.map((day, dayIdx) => (
                     <div key={day} className="flex items-center mb-0.5">
-                      <div className="w-10 shrink-0 text-[11px] text-[#888888]">{day}</div>
+                      <div className="w-10 shrink-0 text-[11px] text-muted">{day}</div>
                       {HOURS.map((hour) => {
                         const cell = cellMap.get(`${dayIdx}-${hour}`)
                         const revenue = cell?.revenue ?? 0
@@ -607,7 +607,7 @@ function CustomersTab() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-[#888888] text-sm">{error}</p>
+        <p className="text-muted text-sm">{error}</p>
       </div>
     )
   }
@@ -697,12 +697,12 @@ function CustomersTab() {
               </div>
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-[#4DA63B]" />
-                  <span className="text-[#F0F0F0] text-sm">Card: {(data.cashVsCardRatio?.card ?? 0).toFixed(1)}%</span>
+                  <CreditCard className="w-4 h-4 text-guava-green" />
+                  <span className="text-text text-sm">Card: {(data.cashVsCardRatio?.card ?? 0).toFixed(1)}%</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Banknote className="w-4 h-4 text-[#D43D3D]" />
-                  <span className="text-[#F0F0F0] text-sm">Cash: {(data.cashVsCardRatio?.cash ?? 0).toFixed(1)}%</span>
+                  <Banknote className="w-4 h-4 text-guava-red" />
+                  <span className="text-text text-sm">Cash: {(data.cashVsCardRatio?.cash ?? 0).toFixed(1)}%</span>
                 </div>
               </div>
             </div>
@@ -735,7 +735,7 @@ function CombosTab() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-[#888888] text-sm">{error}</p>
+        <p className="text-muted text-sm">{error}</p>
       </div>
     )
   }
@@ -763,18 +763,18 @@ function CombosTab() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-[#2A2A2A]">
-                    <th className="text-left py-2 pr-4 text-[#888888] font-medium">Pair</th>
-                    <th className="text-right py-2 pl-4 text-[#888888] font-medium">Times sold together</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2 pr-4 text-muted font-medium">Pair</th>
+                    <th className="text-right py-2 pl-4 text-muted font-medium">Times sold together</th>
                   </tr>
                 </thead>
                 <tbody>
                   {combos.map((combo, idx) => (
                     <tr key={idx} className="border-b border-[#1F1F1F] last:border-0">
-                      <td className="py-2.5 pr-4 text-[#F0F0F0]">
+                      <td className="py-2.5 pr-4 text-text">
                         {combo.pair[0]} + {combo.pair[1]}
                       </td>
-                      <td className="py-2.5 pl-4 text-right text-[#F0F0F0] tabular-nums font-medium">
+                      <td className="py-2.5 pl-4 text-right text-text tabular-nums font-medium">
                         {combo.count}
                       </td>
                     </tr>
@@ -813,8 +813,8 @@ function KpiCard({
       <CardContent className="pt-5 pb-5">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-[#888888] text-xs font-medium uppercase tracking-wider mb-1">{label}</p>
-            <p className="text-[#F0F0F0] text-2xl font-bold tracking-tight">{value}</p>
+            <p className="text-muted text-xs font-medium uppercase tracking-wider mb-1">{label}</p>
+            <p className="text-text text-2xl font-bold tracking-tight">{value}</p>
             {sub && <p className="text-[#555555] text-xs mt-1">{sub}</p>}
           </div>
           <div
@@ -837,7 +837,7 @@ export default function Analytics() {
   return (
     <AppLayout title="Analytics">
       {/* Tab Selector */}
-      <div className="flex items-center gap-1 mb-6 border-b border-[#2A2A2A] pb-px">
+      <div className="flex items-center gap-1 mb-6 border-b border-border pb-px">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -845,13 +845,13 @@ export default function Analytics() {
             className={cn(
               'px-4 py-2.5 text-sm font-medium transition-colors relative',
               activeTab === tab.id
-                ? 'text-[#D43D3D]'
-                : 'text-[#888888] hover:text-[#F0F0F0]'
+                ? 'text-guava-red'
+                : 'text-muted hover:text-text'
             )}
           >
             {tab.label}
             {activeTab === tab.id && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#D43D3D] rounded-full" />
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-guava-red rounded-full" />
             )}
           </button>
         ))}

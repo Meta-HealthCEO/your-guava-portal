@@ -8,7 +8,7 @@ describe('Button', () => {
     render(<Button>Click me</Button>)
     const button = screen.getByRole('button', { name: /click me/i })
     expect(button).toBeInTheDocument()
-    expect(button.className).toContain('bg-[#D43D3D]')
+    expect(button.className).toContain('bg-guava-red')
   })
 
   it('renders with destructive variant', () => {
@@ -27,13 +27,13 @@ describe('Button', () => {
   it('renders with ghost variant', () => {
     render(<Button variant="ghost">Ghost</Button>)
     const button = screen.getByRole('button', { name: /ghost/i })
-    expect(button.className).toContain('text-[#888888]')
+    expect(button.className).toContain('text-muted')
   })
 
   it('renders with success variant', () => {
     render(<Button variant="success">Save</Button>)
     const button = screen.getByRole('button', { name: /save/i })
-    expect(button.className).toContain('bg-[#4DA63B]')
+    expect(button.className).toContain('bg-guava-green')
   })
 
   it('renders with sm size', () => {

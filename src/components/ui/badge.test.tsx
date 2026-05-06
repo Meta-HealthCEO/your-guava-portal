@@ -7,19 +7,19 @@ describe('Badge', () => {
     render(<Badge>Default</Badge>)
     const badge = screen.getByText('Default')
     expect(badge).toBeInTheDocument()
-    expect(badge.className).toContain('bg-[#D43D3D]/20')
+    expect(badge.className).toContain('bg-guava-red/20')
   })
 
   it('renders with success variant', () => {
     render(<Badge variant="success">Success</Badge>)
     const badge = screen.getByText('Success')
-    expect(badge.className).toContain('bg-[#4DA63B]/20')
+    expect(badge.className).toContain('bg-guava-green/20')
   })
 
   it('renders with warning variant', () => {
     render(<Badge variant="warning">Warning</Badge>)
     const badge = screen.getByText('Warning')
-    expect(badge.className).toContain('bg-[#FFD166]/20')
+    expect(badge.className).toContain('bg-guava-yellow/20')
   })
 
   it('renders with destructive variant', () => {
@@ -31,20 +31,20 @@ describe('Badge', () => {
   it('renders with outline variant', () => {
     render(<Badge variant="outline">Outline</Badge>)
     const badge = screen.getByText('Outline')
-    expect(badge.className).toContain('border-[#2A2A2A]')
+    expect(badge.className).toContain('border-border')
   })
 
   it('renders with pro variant', () => {
     render(<Badge variant="pro">Pro</Badge>)
     const badge = screen.getByText('Pro')
     expect(badge.className).toContain('uppercase')
-    expect(badge.className).toContain('bg-[#D43D3D]/20')
+    expect(badge.className).toContain('bg-guava-red/20')
   })
 
   it('renders with basic variant', () => {
     render(<Badge variant="basic">Basic</Badge>)
     const badge = screen.getByText('Basic')
     expect(badge.className).toContain('uppercase')
-    expect(badge.className).toContain('bg-[#2A2A2A]')
+    expect(badge.className).toContain('bg-border')
   })
 })

@@ -28,7 +28,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
     return (
       <div className="min-h-screen bg-[#0F0F0F] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-[#D43D3D]/30 border-t-[#D43D3D] rounded-full animate-spin" />
+          <div className="w-8 h-8 border-2 border-guava-red/30 border-t-guava-red rounded-full animate-spin" />
           <p className="text-[#555555] text-sm">Loading...</p>
         </div>
       </div>

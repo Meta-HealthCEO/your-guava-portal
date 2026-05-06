@@ -48,19 +48,27 @@ interface CustomTooltipProps {
 function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null
   return (
-    <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg p-3 text-xs">
-      <p className="text-[#888888] mb-2 font-medium">{label}</p>
+    <div className="bg-surface border border-border rounded-lg p-3 text-xs">
+      <p className="text-muted mb-2 font-medium">{label}</p>
       {payload.map((p) => (
         <div key={p.name} className="flex items-center gap-2 mb-1">
           <span
             className="w-2 h-2 rounded-full inline-block"
             style={{ backgroundColor: p.color }}
           />
-          <span className="text-[#888888]">{p.name}:</span>
-          <span className="text-[#F0F0F0] font-semibold">{fmtRevenue(p.value)}</span>
+          <span className="text-muted">{p.name}:</span>
+          <span className="text-text font-semibold">{fmtRevenue(p.value)}</span>
         </div>
       ))}
     </div>
+  )
+}
+
+function hasMatchedActuals(forecast: Forecast): boolean {
+  return Boolean(
+    forecast.actualsUpdatedAt ||
+    (forecast.actualTransactionCount != null && forecast.actualTransactionCount > 0) ||
+    (forecast.accuracy != null && forecast.items.some((item) => item.actualQty != null))
   )
 }
 
@@ -70,13 +78,11 @@ interface Props {
 }
 
 export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
-  // Build map from past forecasts: date string → actual revenue proxy
-  // We use totalPredictedRevenue from past forecasts as the "predicted" value,
-  // and derive actual from accuracy if available.
+  // Build map from past forecasts: date string to predicted and matched actual revenue.
   const pastMap = new Map<string, { predicted: number; actual?: number }>()
   pastForecasts.forEach((f) => {
     const actualRevenue =
-      f.accuracy != null ? f.totalPredictedRevenue * (f.accuracy / 100) : undefined
+      hasMatchedActuals(f) && f.actualRevenue != null ? f.actualRevenue : undefined
     pastMap.set(f.date.slice(0, 10), {
       predicted: f.totalPredictedRevenue,
       actual: actualRevenue,
@@ -115,8 +121,8 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
   const hasActual = data.some((d) => d.actual !== undefined)
 
   return (
-    <div className="rounded-xl border border-[#2A2A2A] bg-[#1A1A1A] p-5">
-      <p className="text-[#F0F0F0] text-sm font-semibold mb-4">Revenue trajectory</p>
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <p className="text-text text-sm font-semibold mb-4">Revenue trajectory</p>
       <ResponsiveContainer width="100%" height={280}>
         <LineChart data={data} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1F1F1F" />

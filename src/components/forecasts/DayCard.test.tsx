@@ -39,6 +39,9 @@ describe('DayCard', () => {
       _id: 'f-past',
       date: '2026-03-20',
       accuracy: 90,
+      actualRevenue: 18000,
+      actualTransactionCount: 12,
+      actualsUpdatedAt: '2026-03-21T00:00:00.000Z',
       items: [
         { itemName: 'Flat White (Blend)', predictedQty: 30, actualQty: 24 },
         { itemName: 'Long White (Blend)', predictedQty: 31, actualQty: 36 },
@@ -67,5 +70,29 @@ describe('DayCard', () => {
 
     // Should show a delta (negative for Flat White: 24 vs 30 → -20%)
     expect(screen.getByText(/-20%/)).toBeInTheDocument()
+  })
+
+  it('review mode does not treat default zero quantities as matched actuals', () => {
+    const forecastWithoutActuals = {
+      ...mockForecast,
+      _id: 'f-no-actuals',
+      date: '2026-03-20',
+      items: [
+        { itemName: 'Flat White (Blend)', predictedQty: 30, actualQty: 0 },
+        { itemName: 'Long White (Blend)', predictedQty: 31, actualQty: 0 },
+      ],
+    }
+
+    render(
+      <DayCard
+        forecast={forecastWithoutActuals}
+        weekAvg={20000}
+        mode="review"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/Awaiting sales data/i)).toBeInTheDocument()
+    expect(screen.queryByText(/actual: 0/)).not.toBeInTheDocument()
   })
 })

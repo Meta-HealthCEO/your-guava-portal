@@ -39,6 +39,12 @@ export default function IntegrationCallback() {
 
     const body: Record<string, string> = { code }
     if (state) body.state = state
+    const realmId = searchParams.get('realmId')
+    const tenantId = searchParams.get('tenantId')
+    const businessId = searchParams.get('businessId') || searchParams.get('business_id')
+    if (realmId) body.realmId = realmId
+    if (tenantId) body.tenantId = tenantId
+    if (businessId) body.businessId = businessId
 
     api
       .post(`/integrations/${provider}/callback`, body)
@@ -61,11 +67,11 @@ export default function IntegrationCallback() {
 
   return (
     <div className="min-h-screen bg-[#0F0F0F] flex items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-xl bg-[#111111] border border-[#2A2A2A] p-8 text-center shadow-2xl">
+      <div className="w-full max-w-sm rounded-xl bg-[#111111] border border-border p-8 text-center shadow-2xl">
         {phase === 'exchanging' && (
           <>
-            <div className="w-12 h-12 border-2 border-[#D43D3D]/30 border-t-[#D43D3D] rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-[#F0F0F0] font-semibold text-base">
+            <div className="w-12 h-12 border-2 border-guava-red/30 border-t-guava-red rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-text font-semibold text-base">
               Connecting to {providerName}…
             </p>
             <p className="text-[#555555] text-sm mt-1">Exchanging authorisation code</p>
@@ -74,10 +80,10 @@ export default function IntegrationCallback() {
 
         {phase === 'success' && (
           <>
-            <div className="w-12 h-12 rounded-full bg-[#4DA63B]/10 border border-[#4DA63B]/20 flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-6 h-6 text-[#4DA63B]" />
+            <div className="w-12 h-12 rounded-full bg-guava-green/10 border border-guava-green/20 flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-6 h-6 text-guava-green" />
             </div>
-            <p className="text-[#F0F0F0] font-semibold text-base">Connected</p>
+            <p className="text-text font-semibold text-base">Connected</p>
             <p className="text-[#555555] text-sm mt-1">
               {providerName} connected successfully. Redirecting…
             </p>
@@ -89,13 +95,13 @@ export default function IntegrationCallback() {
             <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-4">
               <AlertCircle className="w-6 h-6 text-red-400" />
             </div>
-            <p className="text-[#F0F0F0] font-semibold text-base">Connection failed</p>
+            <p className="text-text font-semibold text-base">Connection failed</p>
             {errorMsg && (
               <p className="text-red-400 text-sm mt-2 break-words">{errorMsg}</p>
             )}
             <Link
               to="/integrations"
-              className="inline-block mt-5 text-sm text-[#D43D3D] hover:underline"
+              className="inline-block mt-5 text-sm text-guava-red hover:underline"
             >
               Back to Integrations
             </Link>

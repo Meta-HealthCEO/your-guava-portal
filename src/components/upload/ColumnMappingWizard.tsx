@@ -53,7 +53,7 @@ export function ColumnMappingWizard({
       <Card className="max-w-3xl w-full">
         <CardHeader>
           <CardTitle>Map your CSV columns</CardTitle>
-          <p className="text-sm text-[#888888]">
+          <p className="text-sm text-muted">
             We couldn't auto-detect your file format. Match each canonical field on the left to the
             column from your CSV on the right. Required fields are marked with *.
           </p>
@@ -62,11 +62,11 @@ export function ColumnMappingWizard({
           <div className="grid grid-cols-2 gap-3">
             {CANONICAL_FIELDS.map(({ key, label, required }) => (
               <div key={key} className="contents">
-                <label className="text-sm text-[#F0F0F0] self-center">
-                  {label}{required && <span className="text-[#D43D3D]"> *</span>}
+                <label className="text-sm text-text self-center">
+                  {label}{required && <span className="text-guava-red"> *</span>}
                 </label>
                 <select
-                  className="bg-[#111111] border border-[#2A2A2A] rounded-lg px-2 py-1 text-sm"
+                  className="bg-[#111111] border border-border rounded-lg px-2 py-1 text-sm"
                   value={mapping[key] || ''}
                   onChange={(e) => setField(key, e.target.value)}
                 >
@@ -80,9 +80,9 @@ export function ColumnMappingWizard({
           </div>
 
           <div>
-            <label className="text-sm text-[#F0F0F0] mr-3">Items mode:</label>
+            <label className="text-sm text-text mr-3">Items mode:</label>
             <select
-              className="bg-[#111111] border border-[#2A2A2A] rounded-lg px-2 py-1 text-sm"
+              className="bg-[#111111] border border-border rounded-lg px-2 py-1 text-sm"
               value={itemsMode}
               onChange={(e) => setItemsMode(e.target.value as ItemsMode)}
             >
@@ -94,14 +94,14 @@ export function ColumnMappingWizard({
           {preview.length > 0 && (
             <div className="text-xs text-[#777777]">
               <p className="mb-2">Preview (first {preview.length} rows):</p>
-              <div className="overflow-auto max-h-48 border border-[#2A2A2A] rounded-lg">
+              <div className="overflow-auto max-h-48 border border-border rounded-lg">
                 <table className="text-xs w-full">
                   <thead className="bg-[#111111]">
                     <tr>{headers.map((h) => <th key={h} className="px-2 py-1 text-left">{h}</th>)}</tr>
                   </thead>
                   <tbody>
                     {preview.map((row, i) => (
-                      <tr key={i} className="border-t border-[#2A2A2A]">
+                      <tr key={i} className="border-t border-border">
                         {headers.map((h) => <td key={h} className="px-2 py-1">{row[h]}</td>)}
                       </tr>
                     ))}

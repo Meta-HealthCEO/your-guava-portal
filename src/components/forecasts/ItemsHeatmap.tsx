@@ -44,9 +44,9 @@ export function ItemsHeatmap({ forecasts }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-[#2A2A2A] bg-[#1A1A1A] overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#2A2A2A]">
-        <p className="text-[#F0F0F0] text-sm font-semibold">Items × days heatmap</p>
+    <div className="rounded-xl border border-border bg-surface overflow-hidden">
+      <div className="px-5 py-4 border-b border-border">
+        <p className="text-text text-sm font-semibold">Items × days heatmap</p>
         <p className="text-[#555555] text-xs mt-0.5">Top 12 items by weekly predicted quantity</p>
       </div>
       <div className="overflow-x-auto">
@@ -54,13 +54,13 @@ export function ItemsHeatmap({ forecasts }: Props) {
           <thead>
             <tr>
               {/* Sticky first header cell */}
-              <th className="sticky left-0 bg-[#1A1A1A] text-left px-4 py-2.5 text-[#555555] font-medium w-36 min-w-[9rem] border-b border-[#2A2A2A] border-r border-[#2A2A2A]">
+              <th className="sticky left-0 bg-surface text-left px-4 py-2.5 text-[#555555] font-medium w-36 min-w-36 border-b border-border border-r border-border">
                 Item
               </th>
               {dayLabels.map((day, i) => (
                 <th
                   key={i}
-                  className="text-center px-3 py-2.5 text-[#555555] font-medium min-w-[3.5rem] border-b border-[#2A2A2A]"
+                  className="text-center px-3 py-2.5 text-[#555555] font-medium min-w-14 border-b border-border"
                 >
                   {day}
                 </th>
@@ -70,7 +70,7 @@ export function ItemsHeatmap({ forecasts }: Props) {
           <tbody>
             {topItems.map((itemName, rowIdx) => (
               <tr key={itemName} className="border-b border-[#1F1F1F] last:border-0">
-                <td className="sticky left-0 bg-[#1A1A1A] px-4 py-2 text-[#888888] truncate max-w-[9rem] border-r border-[#2A2A2A]">
+                <td className="sticky left-0 bg-surface px-4 py-2 text-muted truncate max-w-36 border-r border-border">
                   {itemName}
                 </td>
                 {matrix[rowIdx].map((val, colIdx) => (
@@ -79,7 +79,7 @@ export function ItemsHeatmap({ forecasts }: Props) {
                     className="text-center px-3 py-2"
                     style={{ backgroundColor: cellBg(val) }}
                   >
-                    <span className={val === 0 ? 'text-[#333333]' : 'text-[#F0F0F0]'}>
+                    <span className={val === 0 ? 'text-[#333333]' : 'text-text'}>
                       {val === 0 ? '—' : val}
                     </span>
                   </td>

@@ -3,26 +3,26 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-[#D43D3D] focus:ring-offset-2',
+  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-guava-red focus:ring-offset-2',
   {
     variants: {
       variant: {
         default:
-          'border-transparent bg-[#D43D3D]/20 text-[#D43D3D]',
+          'border-transparent bg-guava-red/20 text-guava-red',
         secondary:
-          'border-transparent bg-[#222222] text-[#888888]',
+          'border-transparent bg-surface-2 text-muted',
         destructive:
           'border-transparent bg-red-900/30 text-red-400',
         outline:
-          'border-[#2A2A2A] text-[#888888]',
+          'border-border text-muted',
         success:
-          'border-transparent bg-[#4DA63B]/20 text-[#4DA63B]',
+          'border-transparent bg-guava-green/20 text-guava-green',
         warning:
-          'border-transparent bg-[#FFD166]/20 text-[#FFD166]',
+          'border-transparent bg-guava-yellow/20 text-guava-yellow',
         pro:
-          'border-transparent bg-[#D43D3D]/20 text-[#D43D3D] uppercase tracking-wide',
+          'border-transparent bg-guava-red/20 text-guava-red uppercase tracking-wide',
         basic:
-          'border-transparent bg-[#2A2A2A] text-[#888888] uppercase tracking-wide',
+          'border-transparent bg-border text-muted uppercase tracking-wide',
       },
     },
     defaultVariants: {

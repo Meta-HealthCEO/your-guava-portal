@@ -151,7 +151,7 @@ describe('Staff', () => {
 
     // Click the edit button (h-7 w-7 icon button that is NOT the red deactivate one)
     const editButton = Array.from(document.querySelectorAll('button')).find(
-      (btn) => btn.className.includes('h-7') && btn.className.includes('w-7') && !btn.className.includes('text-[#D43D3D]')
+      (btn) => btn.className.includes('h-7') && btn.className.includes('w-7') && !btn.className.includes('text-guava-red')
     )
     if (editButton) {
       await userEvent.click(editButton)

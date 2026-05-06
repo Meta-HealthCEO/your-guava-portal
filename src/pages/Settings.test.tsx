@@ -19,6 +19,7 @@ vi.mock('@/lib/api', () => {
       get: (...args: unknown[]) => mockGet(...args),
       post: vi.fn(),
       put: (...args: unknown[]) => mockPut(...args),
+      patch: vi.fn(),
       delete: vi.fn(),
       interceptors: {
         request: { use: vi.fn() },
@@ -86,6 +87,9 @@ describe('Settings', () => {
     await waitFor(() => {
       expect(screen.getByText('Cafe Details')).toBeInTheDocument()
     })
+
+    expect(screen.queryByText('My Account')).not.toBeInTheDocument()
+    expect(screen.queryByText('Plans and mock checkout')).not.toBeInTheDocument()
 
     expect(screen.getByDisplayValue('Blouberg Coffee')).toBeInTheDocument()
     expect(screen.getByDisplayValue('123 Main St')).toBeInTheDocument()

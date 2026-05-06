@@ -86,7 +86,7 @@ export default function UploadDetail() {
           <CardHeader className="flex flex-row items-start justify-between">
             <div>
               <CardTitle>{upload.fileName}</CardTitle>
-              <p className="text-sm text-[#888888] mt-1">
+              <p className="text-sm text-muted mt-1">
                 Uploaded {new Date(upload.createdAt).toLocaleString('en-ZA')} • {upload.posType}
               </p>
             </div>
@@ -100,7 +100,7 @@ export default function UploadDetail() {
               <Stat label="Total rows" value={upload.stats.totalRows} />
             </div>
             {upload.dateRange?.firstDate && (
-              <p className="text-sm text-[#888888] mt-3">
+              <p className="text-sm text-muted mt-3">
                 Date range: {new Date(upload.dateRange.firstDate).toLocaleDateString('en-ZA')}
                 {' → '}
                 {new Date(upload.dateRange.lastDate!).toLocaleDateString('en-ZA')}
@@ -141,7 +141,7 @@ export default function UploadDetail() {
                 </thead>
                 <tbody>
                   {rows.map((r) => (
-                    <tr key={r._id} className="border-t border-[#2A2A2A]">
+                    <tr key={r._id} className="border-t border-border">
                       <td className="py-2">{new Date(r.date).toLocaleString('en-ZA')}</td>
                       <td>{r.receiptId || '—'}</td>
                       <td>{(r.items ?? []).map((i) => `${i.quantity} × ${i.name}`).join(', ')}</td>
@@ -157,7 +157,7 @@ export default function UploadDetail() {
         {tab === 'file' && (
           <Card>
             <CardContent className="space-y-3">
-              <p className="text-sm text-[#888888]">Download the original file you uploaded.</p>
+              <p className="text-sm text-muted">Download the original file you uploaded.</p>
               <a href={downloadUrl} target="_blank" rel="noreferrer">
                 <Button variant="success">
                   <Download className="w-4 h-4" /> Download {upload.fileName}
@@ -167,12 +167,12 @@ export default function UploadDetail() {
           </Card>
         )}
 
-        <div className="pt-4 border-t border-[#2A2A2A]">
+        <div className="pt-4 border-t border-border">
           <Button variant="outline" size="sm" className="mr-2" onClick={() => setRemapping(true)}>
             Re-map columns
           </Button>
           {user?.role === 'owner' && (
-            <Button variant="ghost" size="sm" className="text-[#D43D3D]" onClick={handleDelete} disabled={deleting}>
+            <Button variant="ghost" size="sm" className="text-guava-red" onClick={handleDelete} disabled={deleting}>
               <Trash2 className="w-4 h-4" /> Delete this upload
             </Button>
           )}
@@ -204,8 +204,8 @@ export default function UploadDetail() {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="bg-[#111111] border border-[#2A2A2A] rounded-lg p-3 text-center">
-      <p className="text-[#F0F0F0] text-xl font-bold">{value}</p>
+    <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
+      <p className="text-text text-xl font-bold">{value}</p>
       <p className="text-[#555555] text-xs">{label}</p>
     </div>
   )

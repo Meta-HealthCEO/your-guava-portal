@@ -87,11 +87,11 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
       <CardContent>
         <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <Label className="text-xs text-[#888888]">Staff *</Label>
+            <Label className="text-xs text-muted">Staff *</Label>
             <select
               value={staffId}
               onChange={(e) => setStaffId(e.target.value)}
-              className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-[#F0F0F0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D43D3D]"
+              className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
             >
               <option value="">Select staff</option>
               {staffList.filter((s) => s.isActive).map((s) => (
@@ -102,11 +102,11 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
             </select>
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Leave Type</Label>
+            <Label className="text-xs text-muted">Leave Type</Label>
             <select
               value={type}
               onChange={(e) => setType(e.target.value)}
-              className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-[#F0F0F0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D43D3D]"
+              className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
             >
               {LEAVE_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -116,15 +116,15 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
             </select>
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">Start Date *</Label>
+            <Label className="text-xs text-muted">Start Date *</Label>
             <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
           <div>
-            <Label className="text-xs text-[#888888]">End Date *</Label>
+            <Label className="text-xs text-muted">End Date *</Label>
             <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </div>
           <div className="sm:col-span-2">
-            <Label className="text-xs text-[#888888]">Reason (optional)</Label>
+            <Label className="text-xs text-muted">Reason (optional)</Label>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason for leave..." />
           </div>
           <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
@@ -190,7 +190,7 @@ function LeaveCalendar() {
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
-            <span className="text-[#F0F0F0] text-xs font-medium min-w-[120px] text-center">{monthLabel}</span>
+            <span className="text-text text-xs font-medium min-w-30 text-center">{monthLabel}</span>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
               <ChevronRight className="w-4 h-4" />
             </Button>
@@ -199,7 +199,7 @@ function LeaveCalendar() {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <Skeleton className="h-[300px] rounded-lg" />
+          <Skeleton className="h-75 rounded-lg" />
         ) : (
           <>
             {/* Header */}
@@ -216,7 +216,7 @@ function LeaveCalendar() {
                 const dayNum = idx - startOffset + 1
                 const isValid = dayNum >= 1 && dayNum <= daysInMonth
                 if (!isValid) {
-                  return <div key={idx} className="h-16 border border-[#1A1A1A]" />
+                  return <div key={idx} className="h-16 border border-surface" />
                 }
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`
                 const calDay = calendarMap.get(dateStr)
@@ -227,10 +227,10 @@ function LeaveCalendar() {
                     key={idx}
                     className={cn(
                       'h-16 border border-[#1F1F1F] p-1 overflow-hidden',
-                      isToday && 'bg-[#D43D3D]/5 border-[#D43D3D]/20'
+                      isToday && 'bg-guava-red/5 border-guava-red/20'
                     )}
                   >
-                    <p className={cn('text-[10px] mb-0.5', isToday ? 'text-[#D43D3D] font-bold' : 'text-[#888888]')}>
+                    <p className={cn('text-[10px] mb-0.5', isToday ? 'text-guava-red font-bold' : 'text-muted')}>
                       {dayNum}
                     </p>
                     {calDay?.staff.map((s, i) => (
@@ -254,7 +254,7 @@ function LeaveCalendar() {
               {LEAVE_TYPES.map((t) => (
                 <div key={t} className="flex items-center gap-1">
                   <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: LEAVE_TYPE_COLORS[t] }} />
-                  <span className="text-[10px] text-[#888888] capitalize">{t}</span>
+                  <span className="text-[10px] text-muted capitalize">{t}</span>
                 </div>
               ))}
             </div>
@@ -338,7 +338,7 @@ export default function Leave() {
         {/* Leave Requests */}
         <div>
           {/* Filter Tabs */}
-          <div className="flex items-center gap-1 mb-4 border-b border-[#2A2A2A] pb-px">
+          <div className="flex items-center gap-1 mb-4 border-b border-border pb-px">
             {FILTER_TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -346,13 +346,13 @@ export default function Leave() {
                 className={cn(
                   'px-4 py-2.5 text-sm font-medium transition-colors relative',
                   filter === tab.id
-                    ? 'text-[#D43D3D]'
-                    : 'text-[#888888] hover:text-[#F0F0F0]'
+                    ? 'text-guava-red'
+                    : 'text-muted hover:text-text'
                 )}
               >
                 {tab.label}
                 {filter === tab.id && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#D43D3D] rounded-full" />
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-guava-red rounded-full" />
                 )}
               </button>
             ))}
@@ -371,19 +371,19 @@ export default function Leave() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-[#2A2A2A]">
-                        <th className="text-left py-2 pr-4 text-[#888888] font-medium">Staff</th>
-                        <th className="text-left py-2 px-4 text-[#888888] font-medium">Type</th>
-                        <th className="text-left py-2 px-4 text-[#888888] font-medium">Dates</th>
-                        <th className="text-right py-2 px-4 text-[#888888] font-medium">Days</th>
-                        <th className="text-center py-2 px-4 text-[#888888] font-medium">Status</th>
-                        {isOwner && <th className="text-right py-2 pl-4 text-[#888888] font-medium">Actions</th>}
+                      <tr className="border-b border-border">
+                        <th className="text-left py-2 pr-4 text-muted font-medium">Staff</th>
+                        <th className="text-left py-2 px-4 text-muted font-medium">Type</th>
+                        <th className="text-left py-2 px-4 text-muted font-medium">Dates</th>
+                        <th className="text-right py-2 px-4 text-muted font-medium">Days</th>
+                        <th className="text-center py-2 px-4 text-muted font-medium">Status</th>
+                        {isOwner && <th className="text-right py-2 pl-4 text-muted font-medium">Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {requests.map((req) => (
                         <tr key={req._id} className="border-b border-[#1F1F1F] last:border-0">
-                          <td className="py-2.5 pr-4 text-[#F0F0F0]">{getStaffName(req.staffId)}</td>
+                          <td className="py-2.5 pr-4 text-text">{getStaffName(req.staffId)}</td>
                           <td className="py-2.5 px-4">
                             <Badge
                               variant="secondary"
@@ -396,10 +396,10 @@ export default function Leave() {
                               {req.type}
                             </Badge>
                           </td>
-                          <td className="py-2.5 px-4 text-[#888888] text-xs">
+                          <td className="py-2.5 px-4 text-muted text-xs">
                             {formatDate(req.startDate)} — {formatDate(req.endDate)}
                           </td>
-                          <td className="py-2.5 px-4 text-right text-[#F0F0F0] tabular-nums">{req.days}</td>
+                          <td className="py-2.5 px-4 text-right text-text tabular-nums">{req.days}</td>
                           <td className="py-2.5 px-4 text-center">
                             <Badge variant={STATUS_VARIANT[req.status] ?? 'secondary'} className="text-[10px]">
                               {req.status}
@@ -412,7 +412,7 @@ export default function Leave() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 text-[#4DA63B] hover:text-[#4DA63B] hover:bg-[#4DA63B]/10"
+                                    className="h-7 w-7 text-guava-green hover:text-guava-green hover:bg-guava-green/10"
                                     onClick={() => handleApprove(req._id)}
                                   >
                                     <Check className="w-3.5 h-3.5" />
@@ -420,7 +420,7 @@ export default function Leave() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 text-[#D43D3D] hover:text-[#D43D3D] hover:bg-[#D43D3D]/10"
+                                    className="h-7 w-7 text-guava-red hover:text-guava-red hover:bg-guava-red/10"
                                     onClick={() => handleReject(req._id)}
                                   >
                                     <X className="w-3.5 h-3.5" />
@@ -437,7 +437,7 @@ export default function Leave() {
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <CalendarOff className="w-8 h-8 text-[#555555] mb-3" />
-                  <p className="text-[#888888] text-sm">No leave requests</p>
+                  <p className="text-muted text-sm">No leave requests</p>
                   <p className="text-[#555555] text-xs mt-1">
                     {filter !== 'all' ? 'Try changing the filter' : 'Submit a leave request to get started'}
                   </p>

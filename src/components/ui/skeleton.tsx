@@ -5,7 +5,7 @@ function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>)
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-md bg-[#2A2A2A] animate-[skeleton-shimmer_1.5s_infinite_linear]',
+        'relative overflow-hidden rounded-md bg-border animate-[skeleton-shimmer_1.5s_infinite_linear]',
         className
       )}
       style={{

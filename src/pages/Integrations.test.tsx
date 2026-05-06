@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@/test/test-utils'
+import userEvent from '@testing-library/user-event'
 import Integrations from './Integrations'
 
 // Mock assets required by Sidebar
@@ -58,5 +59,51 @@ describe('Integrations page', () => {
     expect(screen.getByRole('button', { name: /connect xero/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /connect quickbooks/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /connect sage/i })).toBeInTheDocument()
+  })
+
+  it('uses provider hover styling instead of the default red button hover', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/integrations') {
+        return Promise.resolve({ data: disconnectedData })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      }
+      return Promise.reject(new Error(`Unexpected GET: ${url}`))
+    })
+
+    render(<Integrations />)
+
+    const xeroButton = await screen.findByRole('button', { name: /connect xero/i })
+    expect(xeroButton.className).toContain('hover:bg-[#13B5EA]/15')
+    expect(xeroButton.className).not.toContain('hover:bg-[#BF3636]')
+  })
+
+  it('shows an inline setup error when connect cannot start', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/integrations') {
+        return Promise.resolve({ data: disconnectedData })
+      }
+      if (url === '/integrations/xero/auth') {
+        return Promise.reject({
+          response: {
+            data: {
+              message: 'XERO_CLIENT_ID is not set — see docs/integrations.md',
+            },
+          },
+        })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      }
+      return Promise.reject(new Error(`Unexpected GET: ${url}`))
+    })
+
+    render(<Integrations />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /connect xero/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/xero is not configured on the backend yet/i)
+    expect(mockGet).toHaveBeenCalledWith('/integrations/xero/auth')
   })
 })

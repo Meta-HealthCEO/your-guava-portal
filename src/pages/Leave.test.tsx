@@ -175,8 +175,8 @@ describe('Leave', () => {
     })
 
     // Approve and reject action buttons
-    const approveButtons = document.querySelectorAll('button[class*="text-[#4DA63B]"]')
-    const rejectButtons = document.querySelectorAll('button[class*="text-[#D43D3D]"]')
+    const approveButtons = document.querySelectorAll('button[class*="text-guava-green"]')
+    const rejectButtons = document.querySelectorAll('button[class*="text-guava-red"]')
     expect(approveButtons.length).toBeGreaterThanOrEqual(1)
     expect(rejectButtons.length).toBeGreaterThanOrEqual(1)
   })

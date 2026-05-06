@@ -23,9 +23,17 @@ function formatDate(dateStr: string): string {
 
 function deltaColor(pct: number): string {
   const abs = Math.abs(pct)
-  if (abs <= 5) return 'text-[#4DA63B]'
-  if (abs <= 15) return 'text-[#FFD166]'
-  return 'text-[#D43D3D]'
+  if (abs <= 5) return 'text-guava-green'
+  if (abs <= 15) return 'text-guava-yellow'
+  return 'text-guava-red'
+}
+
+function hasMatchedActuals(forecast: Forecast): boolean {
+  return Boolean(
+    forecast.actualsUpdatedAt ||
+    (forecast.actualTransactionCount != null && forecast.actualTransactionCount > 0) ||
+    (forecast.accuracy != null && forecast.items.some((item) => item.actualQty != null))
+  )
 }
 
 interface Props {
@@ -37,14 +45,16 @@ interface Props {
 
 export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
   const { signals, items, totalPredictedRevenue, date } = forecast
+  const hasActuals = hasMatchedActuals(forecast)
+  const actualRevenue = hasActuals && forecast.actualRevenue != null ? forecast.actualRevenue : null
 
   const delta = weekAvg > 0 ? ((totalPredictedRevenue - weekAvg) / weekAvg) * 100 : 0
   const isNeutral = Math.abs(delta) <= 5
   const revDeltaColor = isNeutral
-    ? 'text-[#888888]'
+    ? 'text-muted'
     : delta > 0
-    ? 'text-[#4DA63B]'
-    : 'text-[#D43D3D]'
+    ? 'text-guava-green'
+    : 'text-guava-red'
   const deltaPrefix = delta > 0 ? '+' : ''
 
   // ── Plan mode ──────────────────────────────────────────────────────────────
@@ -52,7 +62,6 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
   const maxQtyPlan = top5Plan.length > 0 ? top5Plan[0].predictedQty : 1
 
   // ── Review mode ────────────────────────────────────────────────────────────
-  const hasActuals = items.some((it) => it.actualQty != null)
   const top5Review = [...items]
     .sort((a, b) => b.predictedQty - a.predictedQty)
     .slice(0, 5)
@@ -61,12 +70,12 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
   const acc = forecast.accuracy ?? null
   const accColor =
     acc === null
-      ? 'text-[#888888]'
+      ? 'text-muted'
       : acc >= 85
-      ? 'text-[#4DA63B]'
+      ? 'text-guava-green'
       : acc >= 70
-      ? 'text-[#FFD166]'
-      : 'text-[#D43D3D]'
+      ? 'text-guava-yellow'
+      : 'text-guava-red'
 
   return (
     <Card
@@ -77,13 +86,33 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         {/* Header row */}
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-[#F0F0F0] font-semibold text-sm">{getDayLabel(date)}</p>
+            <p className="text-text font-semibold text-sm">{getDayLabel(date)}</p>
             <p className="text-[#555555] text-xs">{formatDate(date)}</p>
           </div>
           <div className="text-right">
-            <p className="text-[#F0F0F0] font-bold text-lg leading-tight">
-              R {totalPredictedRevenue.toLocaleString('en-ZA')}
-            </p>
+            {mode === 'review' && hasActuals && actualRevenue != null ? (
+              <>
+                <p className="text-text font-bold text-lg leading-tight">
+                  R {actualRevenue.toLocaleString('en-ZA')}
+                </p>
+                <p className="text-xs text-[#555555]">
+                  pred R {totalPredictedRevenue.toLocaleString('en-ZA')}
+                </p>
+              </>
+            ) : mode === 'review' && !hasActuals ? (
+              <>
+                <p className="text-muted font-semibold text-sm leading-tight">
+                  Awaiting sales data
+                </p>
+                <p className="text-xs text-[#555555]">
+                  pred R {totalPredictedRevenue.toLocaleString('en-ZA')}
+                </p>
+              </>
+            ) : (
+              <p className="text-text font-bold text-lg leading-tight">
+                R {totalPredictedRevenue.toLocaleString('en-ZA')}
+              </p>
+            )}
             {mode === 'plan' && !isNeutral && (
               <p className={`text-xs ${revDeltaColor}`}>
                 {deltaPrefix}{delta.toFixed(0)}% vs avg
@@ -92,7 +121,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
             {mode === 'plan' && isNeutral && weekAvg > 0 && (
               <p className="text-xs text-[#555555]">avg</p>
             )}
-            {mode === 'review' && acc !== null && (
+            {mode === 'review' && hasActuals && acc !== null && (
               <p className={`text-xs font-medium ${accColor}`}>
                 Accuracy: {Math.round(acc)}%
               </p>
@@ -110,12 +139,12 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                   : Math.ceil(item.predictedQty * 1.1)
               return (
                 <div key={item.itemName} className="flex items-center gap-2">
-                  <span className="text-[#888888] text-[10px] w-28 truncate flex-shrink-0">
+                  <span className="text-muted text-[10px] w-28 truncate shrink-0">
                     {item.itemName}
                   </span>
                   <div className="flex-1 flex items-center gap-1.5">
                     <div
-                      className="h-1.5 rounded-full bg-[#D43D3D]/60"
+                      className="h-1.5 rounded-full bg-guava-red/60"
                       style={{ width: `${Math.max(8, (item.predictedQty / maxQtyPlan) * 100)}%` }}
                     />
                     <div className="flex flex-col leading-none">
@@ -141,9 +170,9 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               const maxBar = actual != null ? Math.max(pred, actual) : pred
               const barFill = actual != null
                 ? actual >= pred
-                  ? 'bg-[#4DA63B]/60'
-                  : 'bg-[#D43D3D]/60'
-                : 'bg-[#D43D3D]/60'
+                  ? 'bg-guava-green/60'
+                  : 'bg-guava-red/60'
+                : 'bg-guava-red/60'
               const barWidth = actual != null
                 ? Math.max(8, (actual / maxBar) * 100)
                 : Math.max(8, (pred / (top5Review[0].predictedQty || 1)) * 100)
@@ -162,7 +191,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
 
               return (
                 <div key={item.itemName} className="flex items-center gap-2">
-                  <span className="text-[#888888] text-[10px] w-28 truncate flex-shrink-0">
+                  <span className="text-muted text-[10px] w-28 truncate shrink-0">
                     {item.itemName}
                   </span>
                   <div className="flex-1 flex items-center gap-1.5">
@@ -174,7 +203,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                     )}
                     {!hasActuals && (
                       <div
-                        className="h-1.5 rounded-full bg-[#D43D3D]/60"
+                        className="h-1.5 rounded-full bg-guava-red/60"
                         style={{ width: `${Math.max(8, (pred / (top5Review[0].predictedQty || 1)) * 100)}%` }}
                       />
                     )}
@@ -185,7 +214,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                             pred: {pred}
                           </span>
                           {actual != null && (
-                            <span className="text-[#888888] text-[10px]">
+                            <span className="text-muted text-[10px]">
                               actual: {actual} {deltaLabel}
                             </span>
                           )}
@@ -204,7 +233,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         {/* Signal chips — only in plan mode (review is in the past, signals are historical context) */}
         {mode === 'plan' && (
           <div className="flex flex-wrap gap-1.5 pt-1">
-            <Badge variant="outline" className="text-[10px] py-0 h-5 px-1.5 gap-1 border-[#2A2A2A]">
+            <Badge variant="outline" className="text-[10px] py-0 h-5 px-1.5 gap-1 border-border">
               <Cloud className="w-2.5 h-2.5" />
               {signals.weather.temp}°C · {signals.weather.condition}
             </Badge>
@@ -252,7 +281,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         {/* In review mode show a minimal weather chip so context isn't totally lost */}
         {mode === 'review' && (
           <div className="flex flex-wrap gap-1.5 pt-1">
-            <Badge variant="outline" className="text-[10px] py-0 h-5 px-1.5 gap-1 border-[#2A2A2A]">
+            <Badge variant="outline" className="text-[10px] py-0 h-5 px-1.5 gap-1 border-border">
               <Cloud className="w-2.5 h-2.5" />
               {signals.weather.temp}°C · {signals.weather.condition}
             </Badge>

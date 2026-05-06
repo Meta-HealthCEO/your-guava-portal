@@ -35,6 +35,14 @@ function matchesAny(name: string, keywords: string[]): boolean {
   return keywords.some((k) => lower.includes(k))
 }
 
+function hasMatchedActuals(forecast: Forecast): boolean {
+  return Boolean(
+    forecast.actualsUpdatedAt ||
+    (forecast.actualTransactionCount != null && forecast.actualTransactionCount > 0) ||
+    (forecast.accuracy != null && forecast.items.some((item) => item.actualQty != null))
+  )
+}
+
 interface InventoryRollup {
   coffee: number
   cold: number
@@ -87,18 +95,12 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
   const delta = weekAvg > 0 ? ((totalPredictedRevenue - weekAvg) / weekAvg) * 100 : 0
   const isNeutral = Math.abs(delta) <= 5
-  const deltaColor = isNeutral ? 'text-[#888888]' : delta > 0 ? 'text-[#4DA63B]' : 'text-[#D43D3D]'
+  const deltaColor = isNeutral ? 'text-muted' : delta > 0 ? 'text-guava-green' : 'text-guava-red'
   const deltaPrefix = delta > 0 ? '+' : ''
 
   // ── Past (review) mode helpers ─────────────────────────────────────────────
-  const hasActuals = items.some((it) => it.actualQty != null)
-
-  // Actual revenue estimate: sum(actualQty / predictedQty * predictedRevenue)
-  // We don't have per-item revenue, so use accuracy proxy if available
-  const actualRevenue =
-    forecast.accuracy != null
-      ? Math.round(totalPredictedRevenue * (forecast.accuracy / 100))
-      : null
+  const hasActuals = hasMatchedActuals(forecast)
+  const actualRevenue = hasActuals && forecast.actualRevenue != null ? forecast.actualRevenue : null
 
   const revDelta =
     actualRevenue != null && totalPredictedRevenue > 0
@@ -109,7 +111,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
   const sortedForReview = [...items]
     .map((it) => {
       const pct =
-        it.actualQty != null && it.predictedQty > 0
+        hasActuals && it.actualQty != null && it.predictedQty > 0
           ? Math.abs((it.actualQty - it.predictedQty) / it.predictedQty)
           : 0
       return { ...it, absDeltaPct: pct }
@@ -118,7 +120,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
   // Worst-miss items: >15% off
   const worstMiss = sortedForReview.filter(
-    (it) => it.actualQty != null && it.absDeltaPct > 0.15
+    (it) => hasActuals && it.actualQty != null && it.absDeltaPct > 0.15
   ).slice(0, 3)
 
   // ── Plan mode helpers ──────────────────────────────────────────────────────
@@ -136,22 +138,22 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
       {/* Drawer panel */}
       <div
-        className="fixed right-0 top-0 h-full bg-[#1A1A1A] border-l border-[#2A2A2A] z-50 overflow-y-auto
-                   w-full sm:w-[520px]"
+        className="fixed right-0 top-0 h-full bg-surface border-l border-border z-50 overflow-y-auto
+                   w-full sm:w-130"
         role="dialog"
         aria-modal="true"
       >
         {/* Header */}
-        <div className="sticky top-0 bg-[#1A1A1A] border-b border-[#2A2A2A] px-5 py-4 flex items-start justify-between gap-4 z-10">
+        <div className="sticky top-0 bg-surface border-b border-border px-5 py-4 flex items-start justify-between gap-4 z-10">
           <div>
-            <p className="text-[#F0F0F0] font-semibold text-base">
+            <p className="text-text font-semibold text-base">
               {isPast ? 'Day review' : 'Day forecast'} — {getDayLabel(date)}
             </p>
-            <p className="text-[#888888] text-xs mt-0.5">{fullDate(date)}</p>
+            <p className="text-muted text-xs mt-0.5">{fullDate(date)}</p>
           </div>
           <button
             onClick={onClose}
-            className="text-[#888888] hover:text-[#F0F0F0] p-1 -mr-1 flex-shrink-0"
+            className="text-muted hover:text-text p-1 -mr-1 shrink-0"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
@@ -160,19 +162,19 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
         <div className="px-5 py-4 space-y-5">
           {/* Revenue tile */}
-          <div className="rounded-lg bg-[#111111] border border-[#2A2A2A] p-4">
-            {isPast && actualRevenue != null ? (
+          <div className="rounded-lg bg-[#111111] border border-border p-4">
+            {isPast && hasActuals && actualRevenue != null ? (
               <>
                 <div className="flex items-end justify-between gap-4">
                   <div>
-                    <p className="text-[#888888] text-xs mb-1">Predicted revenue</p>
-                    <p className="text-[#888888] text-2xl font-bold">
+                    <p className="text-muted text-xs mb-1">Predicted revenue</p>
+                    <p className="text-muted text-2xl font-bold">
                       R {totalPredictedRevenue.toLocaleString('en-ZA')}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[#888888] text-xs mb-1">Actual (estimated)</p>
-                    <p className="text-[#F0F0F0] text-2xl font-bold">
+                    <p className="text-muted text-xs mb-1">Actual revenue</p>
+                    <p className="text-text text-2xl font-bold">
                       R {actualRevenue.toLocaleString('en-ZA')}
                     </p>
                   </div>
@@ -181,20 +183,40 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                   <p
                     className={`text-sm mt-2 ${
                       Math.abs(revDelta) <= 5
-                        ? 'text-[#4DA63B]'
+                        ? 'text-guava-green'
                         : Math.abs(revDelta) <= 15
-                        ? 'text-[#FFD166]'
-                        : 'text-[#D43D3D]'
+                        ? 'text-guava-yellow'
+                        : 'text-guava-red'
                     }`}
                   >
                     {revDelta >= 0 ? '+' : ''}{revDelta.toFixed(0)}% vs predicted
                   </p>
                 )}
               </>
+            ) : isPast && !hasActuals ? (
+              <>
+                <p className="text-muted text-xs mb-1">Predicted revenue</p>
+                <p className="text-text text-3xl font-bold">
+                  R {totalPredictedRevenue.toLocaleString('en-ZA')}
+                </p>
+                <p className="text-muted text-sm mt-2">
+                  Awaiting matched sales data for this day.
+                </p>
+              </>
+            ) : isPast && hasActuals ? (
+              <>
+                <p className="text-muted text-xs mb-1">Predicted revenue</p>
+                <p className="text-text text-3xl font-bold">
+                  R {totalPredictedRevenue.toLocaleString('en-ZA')}
+                </p>
+                <p className="text-muted text-sm mt-2">
+                  Actual item counts are available, but actual revenue was not stored for this day.
+                </p>
+              </>
             ) : (
               <>
-                <p className="text-[#888888] text-xs mb-1">Predicted revenue</p>
-                <p className="text-[#F0F0F0] text-3xl font-bold">
+                <p className="text-muted text-xs mb-1">Predicted revenue</p>
+                <p className="text-text text-3xl font-bold">
                   R {totalPredictedRevenue.toLocaleString('en-ZA')}
                 </p>
                 {weekAvg > 0 && (
@@ -209,7 +231,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           {/* ── PAST: What we missed ────────────────────────────────────────── */}
           {isPast && worstMiss.length > 0 && (
             <div>
-              <p className="text-[#F0F0F0] text-xs font-semibold uppercase tracking-wider mb-3">
+              <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 What we missed
               </p>
               <div className="space-y-2">
@@ -218,10 +240,10 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                   const direction = diff > 0 ? 'over by' : 'under by'
                   const absDiff = Math.abs(diff)
                   return (
-                    <div key={item.itemName} className="text-xs text-[#888888]">
-                      <span className="text-[#F0F0F0]">{item.itemName}</span>
+                    <div key={item.itemName} className="text-xs text-muted">
+                      <span className="text-text">{item.itemName}</span>
                       {' — '}predicted {item.predictedQty}, actual {item.actualQty},{' '}
-                      <span className={diff > 0 ? 'text-[#4DA63B]' : 'text-[#D43D3D]'}>
+                      <span className={diff > 0 ? 'text-guava-green' : 'text-guava-red'}>
                         {direction} {absDiff} units
                       </span>
                     </div>
@@ -234,25 +256,25 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           {/* ── FUTURE: Why this prediction ────────────────────────────────── */}
           {!isPast && (
             <div>
-              <p className="text-[#F0F0F0] text-xs font-semibold uppercase tracking-wider mb-3">
+              <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 Why this prediction?
               </p>
               <ModifierBreakdown signals={signals} />
             </div>
           )}
 
-          <Separator className="bg-[#2A2A2A]" />
+          <Separator className="bg-border" />
 
           {/* Item breakdown */}
           <div>
-            <p className="text-[#F0F0F0] text-xs font-semibold uppercase tracking-wider mb-3">
+            <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
               Item breakdown
             </p>
 
             {isPast ? (
               // Review mode: Item · Predicted · Actual · Δ%
               <div className="space-y-0">
-                <div className="grid grid-cols-4 pb-2 border-b border-[#2A2A2A]">
+                <div className="grid grid-cols-4 pb-2 border-b border-border">
                   <span className="text-[#555555] text-[10px] uppercase tracking-wider">Item</span>
                   <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Predicted</span>
                   <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Actual</span>
@@ -260,29 +282,29 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                 </div>
                 {(hasActuals ? sortedForReview : sortedItems).map((item) => {
                   const pct =
-                    item.actualQty != null && item.predictedQty > 0
+                    hasActuals && item.actualQty != null && item.predictedQty > 0
                       ? ((item.actualQty - item.predictedQty) / item.predictedQty) * 100
                       : null
                   const pctColor =
                     pct == null
                       ? 'text-[#555555]'
                       : Math.abs(pct) <= 5
-                      ? 'text-[#4DA63B]'
+                      ? 'text-guava-green'
                       : Math.abs(pct) <= 15
-                      ? 'text-[#FFD166]'
-                      : 'text-[#D43D3D]'
+                      ? 'text-guava-yellow'
+                      : 'text-guava-red'
                   return (
                     <div
                       key={item.itemName}
                       className="grid grid-cols-4 py-2 border-b border-[#1F1F1F] last:border-0"
                     >
-                      <span className="text-[#F0F0F0] text-xs truncate pr-1">{item.itemName}</span>
-                      <span className="text-[#888888] text-xs text-right">{item.predictedQty}</span>
-                      <span className="text-[#888888] text-xs text-right">
-                        {item.actualQty != null ? item.actualQty : '—'}
+                      <span className="text-text text-xs truncate pr-1">{item.itemName}</span>
+                      <span className="text-muted text-xs text-right">{item.predictedQty}</span>
+                      <span className="text-muted text-xs text-right">
+                        {hasActuals && item.actualQty != null ? item.actualQty : '---'}
                       </span>
                       <span className={`text-xs text-right ${pctColor}`}>
-                        {pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%` : '—'}
+                        {pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%` : '---'}
                       </span>
                     </div>
                   )
@@ -291,7 +313,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
             ) : (
               // Plan mode: Item · Predicted · Suggested stock · Revenue est.
               <div className="space-y-0">
-                <div className="grid grid-cols-3 pb-2 border-b border-[#2A2A2A]">
+                <div className="grid grid-cols-3 pb-2 border-b border-border">
                   <span className="text-[#555555] text-[10px] uppercase tracking-wider">Item</span>
                   <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Predicted</span>
                   <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Suggested stock</span>
@@ -306,8 +328,8 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                       key={item.itemName}
                       className="grid grid-cols-3 py-2 border-b border-[#1F1F1F] last:border-0"
                     >
-                      <span className="text-[#F0F0F0] text-xs truncate pr-1">{item.itemName}</span>
-                      <span className="text-[#888888] text-xs text-right">{item.predictedQty}</span>
+                      <span className="text-text text-xs truncate pr-1">{item.itemName}</span>
+                      <span className="text-muted text-xs text-right">{item.predictedQty}</span>
                       <span className="text-[#555555] text-xs text-right">{stock}</span>
                     </div>
                   )
@@ -319,38 +341,38 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           {/* ── FUTURE only: Inventory rollup + AI insight ─────────────────── */}
           {!isPast && (
             <>
-              <Separator className="bg-[#2A2A2A]" />
+              <Separator className="bg-border" />
 
               <div>
-                <p className="text-[#F0F0F0] text-xs font-semibold uppercase tracking-wider mb-3">
+                <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                   Rough inventory hint
                 </p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-lg bg-[#111111] border border-[#2A2A2A] p-3 flex items-center gap-2">
-                    <Coffee className="w-4 h-4 text-[#D43D3D] flex-shrink-0" />
+                  <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
+                    <Coffee className="w-4 h-4 text-guava-red shrink-0" />
                     <div>
-                      <p className="text-[#F0F0F0] text-sm font-semibold">≈ {inventory.coffee}</p>
+                      <p className="text-text text-sm font-semibold">≈ {inventory.coffee}</p>
                       <p className="text-[#555555] text-[10px]">coffee drinks</p>
                     </div>
                   </div>
-                  <div className="rounded-lg bg-[#111111] border border-[#2A2A2A] p-3 flex items-center gap-2">
-                    <Droplets className="w-4 h-4 text-[#4DA63B] flex-shrink-0" />
+                  <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
+                    <Droplets className="w-4 h-4 text-guava-green shrink-0" />
                     <div>
-                      <p className="text-[#F0F0F0] text-sm font-semibold">≈ {inventory.cold}</p>
+                      <p className="text-text text-sm font-semibold">≈ {inventory.cold}</p>
                       <p className="text-[#555555] text-[10px]">cold drinks</p>
                     </div>
                   </div>
-                  <div className="rounded-lg bg-[#111111] border border-[#2A2A2A] p-3 flex items-center gap-2">
-                    <UtensilsCrossed className="w-4 h-4 text-[#FFD166] flex-shrink-0" />
+                  <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
+                    <UtensilsCrossed className="w-4 h-4 text-guava-yellow shrink-0" />
                     <div>
-                      <p className="text-[#F0F0F0] text-sm font-semibold">≈ {inventory.food}</p>
+                      <p className="text-text text-sm font-semibold">≈ {inventory.food}</p>
                       <p className="text-[#555555] text-[10px]">food items</p>
                     </div>
                   </div>
-                  <div className="rounded-lg bg-[#111111] border border-[#2A2A2A] p-3 flex items-center gap-2">
-                    <Waves className="w-4 h-4 text-[#888888] flex-shrink-0" />
+                  <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
+                    <Waves className="w-4 h-4 text-muted shrink-0" />
                     <div>
-                      <p className="text-[#F0F0F0] text-sm font-semibold">≈ {inventory.water}</p>
+                      <p className="text-text text-sm font-semibold">≈ {inventory.water}</p>
                       <p className="text-[#555555] text-[10px]">waters</p>
                     </div>
                   </div>
@@ -360,13 +382,13 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                 </p>
               </div>
 
-              <Separator className="bg-[#2A2A2A]" />
+              <Separator className="bg-border" />
 
-              <div className="rounded-lg bg-[#111111] border border-[#2A2A2A] p-4 flex items-start gap-3">
-                <Sparkles className="w-4 h-4 text-[#D43D3D] flex-shrink-0 mt-0.5" />
-                <p className="text-[#888888] text-xs leading-relaxed">
+              <div className="rounded-lg bg-[#111111] border border-border p-4 flex items-start gap-3">
+                <Sparkles className="w-4 h-4 text-guava-red shrink-0 mt-0.5" />
+                <p className="text-muted text-xs leading-relaxed">
                   AI insights load globally — see the{' '}
-                  <span className="text-[#D43D3D]">Insights page</span> for the full list powered by Claude.
+                  <span className="text-guava-red">Insights page</span> for the full list powered by Claude.
                 </p>
               </div>
             </>

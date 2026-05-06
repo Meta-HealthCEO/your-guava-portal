@@ -131,20 +131,20 @@ export function ModifierBreakdown({ signals }: Props) {
       {modifiers.map((m) => {
         const iconColor = m.active
           ? m.positive === false
-            ? 'text-[#D43D3D]'
-            : 'text-[#4DA63B]'
+            ? 'text-guava-red'
+            : 'text-guava-green'
           : 'text-[#444444]'
         const effectColor = m.active
           ? m.positive === false
-            ? 'text-[#D43D3D]'
-            : 'text-[#4DA63B]'
+            ? 'text-guava-red'
+            : 'text-guava-green'
           : 'text-[#555555]'
-        const labelColor = m.active ? 'text-[#F0F0F0]' : 'text-[#555555]'
+        const labelColor = m.active ? 'text-text' : 'text-[#555555]'
 
         return (
           <div key={m.label} className="flex items-center gap-3 py-1.5">
             <span className={iconColor}>{m.icon}</span>
-            <span className={`text-xs font-medium w-24 flex-shrink-0 ${labelColor}`}>
+            <span className={`text-xs font-medium w-24 shrink-0 ${labelColor}`}>
               {m.label}
             </span>
             <span className={`text-xs ${effectColor}`}>{m.effect}</span>

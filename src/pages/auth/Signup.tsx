@@ -64,7 +64,7 @@ export default function Signup() {
       {/* Center container — logo left, form right */}
       <div className="relative z-10 flex items-center justify-center gap-16 w-full max-w-4xl mx-auto px-6 min-h-screen">
         {/* Left — branding */}
-        <div className="hidden lg:block w-[340px] shrink-0">
+        <div className="hidden lg:block w-85 shrink-0">
           <img src={logo} alt="Your Guava" className="w-48 mx-auto mb-6" />
           <p className="text-white/40 text-center leading-relaxed">
             Know what your customers want<br />before they walk in.
@@ -96,7 +96,7 @@ export default function Signup() {
           </div>
 
           <div className="bg-[#111111]/60 backdrop-blur-xl border border-white/8 rounded-2xl p-8">
-            <h1 className="text-[#F0F0F0] text-xl font-bold tracking-tight mb-1">Welcome to Your Guava</h1>
+            <h1 className="text-text text-xl font-bold tracking-tight mb-1">Welcome to Your Guava</h1>
             <p className="text-[#555555] text-sm mb-6">Create your portal account</p>
 
             {error && (

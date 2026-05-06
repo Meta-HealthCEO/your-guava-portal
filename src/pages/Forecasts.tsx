@@ -12,7 +12,22 @@ import { ItemsHeatmap } from '@/components/forecasts/ItemsHeatmap'
 
 interface AccuracyPayload {
   avgAccuracy: number | null
-  forecasts: { date: string; accuracy: number; totalPredictedRevenue: number }[]
+  forecasts: {
+    date: string
+    accuracy: number
+    totalPredictedRevenue: number
+    actualRevenue?: number | null
+    actualTransactionCount?: number | null
+    actualsUpdatedAt?: string | null
+  }[]
+}
+
+function formatTrainingDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-ZA', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 export default function Forecasts() {
@@ -42,6 +57,15 @@ export default function Forecasts() {
     null as Forecast | null
   )
   const weekAvg = futureForecasts.length > 0 ? weekTotal / futureForecasts.length : 0
+  const latestTrainingDate = futureForecasts
+    .map((f) => f.trainingData?.lastTransactionDate)
+    .filter((date): date is string => Boolean(date))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
+  const freshestStaleDays = futureForecasts
+    .map((f) => f.trainingData?.staleDays)
+    .filter((days): days is number => typeof days === 'number')
+    .sort((a, b) => a - b)[0]
+  const showStaleDataNotice = latestTrainingDate != null && freshestStaleDays != null && freshestStaleDays > 30
 
   // Look up selected forecast from either array
   const selectedForecast =
@@ -53,7 +77,7 @@ export default function Forecasts() {
     <AppLayout title="Forecasts">
       <div className="space-y-6">
         <div className="flex items-center gap-2 text-[#555555] text-sm">
-          <TrendingUp className="w-4 h-4 text-[#D43D3D]" />
+          <TrendingUp className="w-4 h-4 text-guava-red" />
           7-day rolling sales forecast · Updated daily
         </div>
 
@@ -71,7 +95,7 @@ export default function Forecasts() {
 
         {!loading && futureForecasts.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-[#888888]">
+            <p className="text-muted">
               No forecast data yet. Upload sales data on the Connect page to get started.
             </p>
           </div>
@@ -84,13 +108,22 @@ export default function Forecasts() {
               peakDay={peakDay}
               accuracy={accuracy?.avgAccuracy ?? null}
             />
+            {showStaleDataNotice && latestTrainingDate && (
+              <div className="rounded-lg border border-guava-yellow/30 bg-guava-yellow/10 px-4 py-3">
+                <p className="text-guava-yellow text-sm font-medium">Forecast data is getting stale</p>
+                <p className="text-muted text-xs mt-1">
+                  This week is based on sales history ending {formatTrainingDate(latestTrainingDate)}.
+                  Upload newer transactions before relying on these numbers for ordering or staffing.
+                </p>
+              </div>
+            )}
             <WeekTrajectoryChart futureForecasts={futureForecasts} pastForecasts={pastForecasts} />
 
             {/* This week's plan */}
             <div className="space-y-3">
               <div>
-                <h2 className="text-[#F0F0F0] text-base font-semibold">This week's plan</h2>
-                <p className="text-[#888888] text-xs mt-0.5">
+                <h2 className="text-text text-base font-semibold">This week's plan</h2>
+                <p className="text-muted text-xs mt-0.5">
                   Predicted output and suggested stock for the next 7 days
                 </p>
               </div>
@@ -110,8 +143,8 @@ export default function Forecasts() {
             {/* Last week's results */}
             <div className="space-y-3">
               <div>
-                <h2 className="text-[#F0F0F0] text-base font-semibold">Last week's results</h2>
-                <p className="text-[#888888] text-xs mt-0.5">
+                <h2 className="text-text text-base font-semibold">Last week's results</h2>
+                <p className="text-muted text-xs mt-0.5">
                   Predicted vs actual — see where we missed
                 </p>
               </div>

@@ -81,7 +81,7 @@ function DataStatusCard({
 
   if (!loading && status && status.latestDataDate) {
     if (daysSince !== null && daysSince < 2) {
-      pillColor = 'bg-[#4DA63B]/20 text-[#4DA63B] border-[#4DA63B]/30'
+      pillColor = 'bg-guava-green/20 text-guava-green border-guava-green/30'
       statusLabel = 'Data is up to date'
     } else if (daysSince !== null && daysSince <= 7) {
       pillColor = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
@@ -104,7 +104,7 @@ function DataStatusCard({
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-[#D43D3D]" />
+          <TrendingUp className="w-4 h-4 text-guava-red" />
           <CardTitle>Data Status</CardTitle>
         </div>
         <CardDescription>How fresh is your uploaded transaction data?</CardDescription>
@@ -326,7 +326,7 @@ export default function Connect() {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
-              <Upload className="w-4 h-4 text-[#D43D3D]" />
+              <Upload className="w-4 h-4 text-guava-red" />
               <CardTitle>Upload Sales Data</CardTitle>
             </div>
             <CardDescription>
@@ -345,19 +345,19 @@ export default function Connect() {
                 className={cn(
                   'border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors',
                   isDragging
-                    ? 'border-[#D43D3D] bg-[#D43D3D]/5'
-                    : 'border-[#2A2A2A] hover:border-[#3A3A3A] hover:bg-white/[0.02]'
+                    ? 'border-guava-red bg-guava-red/5'
+                    : 'border-border hover:border-[#3A3A3A] hover:bg-white/[0.02]'
                 )}
               >
-                <div className="w-12 h-12 rounded-xl bg-[#111111] border border-[#2A2A2A] flex items-center justify-center mx-auto mb-4">
+                <div className="w-12 h-12 rounded-xl bg-[#111111] border border-border flex items-center justify-center mx-auto mb-4">
                   <Upload className="w-6 h-6 text-[#555555]" />
                 </div>
-                <p className="text-[#F0F0F0] font-medium mb-1">
+                <p className="text-text font-medium mb-1">
                   Drop your sales CSV or XLSX here
                 </p>
                 <p className="text-[#555555] text-sm">
                   or{' '}
-                  <span className="text-[#D43D3D] hover:underline">click to browse</span>
+                  <span className="text-guava-red hover:underline">click to browse</span>
                 </p>
                 <div className="flex items-center justify-center gap-2 mt-4">
                   <Badge variant="secondary">.csv</Badge>
@@ -368,15 +368,15 @@ export default function Connect() {
 
             {/* Upload progress */}
             {uploadState === 'uploading' && (
-              <div className="bg-[#111111] border border-[#2A2A2A] rounded-xl p-6 text-center">
-                <div className="w-12 h-12 rounded-xl bg-[#D43D3D]/10 flex items-center justify-center mx-auto mb-4">
-                  <Upload className="w-6 h-6 text-[#D43D3D] animate-bounce" />
+              <div className="bg-[#111111] border border-border rounded-xl p-6 text-center">
+                <div className="w-12 h-12 rounded-xl bg-guava-red/10 flex items-center justify-center mx-auto mb-4">
+                  <Upload className="w-6 h-6 text-guava-red animate-bounce" />
                 </div>
-                <p className="text-[#F0F0F0] font-medium mb-1">Uploading...</p>
+                <p className="text-text font-medium mb-1">Uploading...</p>
                 <p className="text-[#555555] text-sm mb-4">Processing your transaction data</p>
-                <div className="h-2 bg-[#2A2A2A] rounded-full overflow-hidden">
+                <div className="h-2 bg-border rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#D43D3D] rounded-full transition-all duration-300"
+                    className="h-full bg-guava-red rounded-full transition-all duration-300"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
@@ -386,25 +386,25 @@ export default function Connect() {
 
             {/* Success */}
             {uploadState === 'success' && result && (
-              <div className="bg-[#4DA63B]/5 border border-[#4DA63B]/20 rounded-xl p-6">
+              <div className="bg-guava-green/5 border border-guava-green/20 rounded-xl p-6">
                 <div className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-[#4DA63B] flex-shrink-0 mt-0.5" />
+                  <CheckCircle className="w-5 h-5 text-guava-green shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <p className="text-[#F0F0F0] font-medium mb-1">Import successful</p>
-                    <p className="text-[#888888] text-sm mb-4">
+                    <p className="text-text font-medium mb-1">Import successful</p>
+                    <p className="text-muted text-sm mb-4">
                       Your transaction data has been processed and forecasts are being generated.
                     </p>
                     <div className="grid grid-cols-3 gap-3 mb-4">
-                      <div className="bg-[#111111] border border-[#2A2A2A] rounded-lg p-3 text-center">
-                        <p className="text-[#4DA63B] text-xl font-bold">{result.imported.toLocaleString()}</p>
+                      <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
+                        <p className="text-guava-green text-xl font-bold">{result.imported.toLocaleString()}</p>
                         <p className="text-[#555555] text-xs">imported</p>
                       </div>
-                      <div className="bg-[#111111] border border-[#2A2A2A] rounded-lg p-3 text-center">
-                        <p className="text-[#888888] text-xl font-bold">{result.skipped.toLocaleString()}</p>
+                      <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
+                        <p className="text-muted text-xl font-bold">{result.skipped.toLocaleString()}</p>
                         <p className="text-[#555555] text-xs">skipped</p>
                       </div>
-                      <div className="bg-[#111111] border border-[#2A2A2A] rounded-lg p-3 text-center">
-                        <p className="text-[#F0F0F0] text-xl font-bold">{result.total.toLocaleString()}</p>
+                      <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
+                        <p className="text-text text-xl font-bold">{result.total.toLocaleString()}</p>
                         <p className="text-[#555555] text-xs">total rows</p>
                       </div>
                     </div>
@@ -456,9 +456,9 @@ export default function Connect() {
             {uploadState === 'error' && (
               <div className="bg-red-900/10 border border-red-900/30 rounded-xl p-6">
                 <div className="flex items-start gap-3 mb-4">
-                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                  <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-[#F0F0F0] font-medium mb-1">Upload failed</p>
+                    <p className="text-text font-medium mb-1">Upload failed</p>
                     <p className="text-red-400 text-sm">{errorMsg}</p>
                   </div>
                 </div>
