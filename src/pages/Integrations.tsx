@@ -43,6 +43,7 @@ const PROVIDER_CONFIG: Record<
     accentBg: string
     accentHoverBg: string
     accentBorder: string
+    comingSoon: boolean
     bullets: string[]
   }
 > = {
@@ -53,6 +54,7 @@ const PROVIDER_CONFIG: Record<
     accentBg: 'bg-[#13B5EA]/10',
     accentHoverBg: 'hover:bg-[#13B5EA]/15',
     accentBorder: 'border-[#13B5EA]/25',
+    comingSoon: true,
     bullets: [
       'Automatic bank transaction entries per sales period',
       'Reconcile coffee-shop revenue without manual exports',
@@ -66,6 +68,7 @@ const PROVIDER_CONFIG: Record<
     accentBg: 'bg-[#2CA01C]/10',
     accentHoverBg: 'hover:bg-[#2CA01C]/15',
     accentBorder: 'border-[#2CA01C]/25',
+    comingSoon: true,
     bullets: [
       'Map sales to QuickBooks income accounts automatically',
       'Daily or weekly summary entries with tax lines',
@@ -79,6 +82,7 @@ const PROVIDER_CONFIG: Record<
     accentBg: 'bg-[#00C853]/10',
     accentHoverBg: 'hover:bg-[#00C853]/15',
     accentBorder: 'border-[#00C853]/25',
+    comingSoon: true,
     bullets: [
       'Create journal entries from your daily revenue totals',
       'Keep your Sage ledger up to date without manual entry',
@@ -118,17 +122,26 @@ function extractError(err: unknown, fallback: string): string {
   return fallback
 }
 
-function connectErrorMessage(err: unknown, providerName: string): string {
-  const message = extractError(err, 'Could not start the connection.')
-  if (/CLIENT_ID|CLIENT_SECRET|REDIRECT_URI|not set/i.test(message)) {
-    return `${providerName} is not configured on the backend yet. Add the OAuth client ID, secret, and redirect URI, then restart the backend.`
-  }
-  return message
-}
-
 // ── StatusPill ────────────────────────────────────────────────────────────────
 
-function StatusPill({ connected, syncStatus }: { connected: boolean; syncStatus: SyncStatus }) {
+function StatusPill({
+  connected,
+  syncStatus,
+  comingSoon = false,
+}: {
+  connected: boolean
+  syncStatus: SyncStatus
+  comingSoon?: boolean
+}) {
+  if (comingSoon) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />
+        Coming soon
+      </span>
+    )
+  }
+
   if (!connected) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-[#3A3A3A] bg-border px-2.5 py-0.5 text-xs font-medium text-muted">
@@ -208,27 +221,11 @@ function ProviderCard({
 }) {
   const cfg = PROVIDER_CONFIG[provider]
 
-  const [connecting, setConnecting] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
-  const [connectError, setConnectError] = useState<string | null>(null)
-
-  const handleConnect = async () => {
-    setConnecting(true)
-    setConnectError(null)
-    setSyncError(null)
-    try {
-      const { data } = await api.get<{ url: string }>(`/integrations/${provider}/auth`)
-      if (!data?.url) throw new Error('The backend did not return a connection URL.')
-      window.location.href = data.url
-    } catch (err) {
-      setConnecting(false)
-      setConnectError(connectErrorMessage(err, cfg.name))
-    }
-  }
 
   const handleSync = async () => {
     setSyncing(true)
@@ -292,11 +289,34 @@ function ProviderCard({
             </div>
             <p className="text-[#777777] text-sm leading-relaxed">{cfg.description}</p>
           </div>
-          <StatusPill connected={state.connected} syncStatus={state.lastSyncStatus} />
+          <StatusPill connected={state.connected} syncStatus={state.lastSyncStatus} comingSoon={cfg.comingSoon} />
         </div>
 
         {/* Connected state */}
-        {state.connected ? (
+        {cfg.comingSoon ? (
+          <div className="space-y-3">
+            <ul className="space-y-1.5">
+              {cfg.bullets.map((bullet) => (
+                <li key={bullet} className="flex items-start gap-2 text-sm text-[#666666]">
+                  <span className={cn('mt-0.5 text-base leading-none', cfg.accentColor)}>•</span>
+                  <span>{bullet}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="rounded-lg border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-100/90">
+              Accounting integrations are planned after the MVP. This connection is not available yet.
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-lg gap-1.5 bg-transparent text-muted"
+              disabled
+            >
+              <Plug className="w-3.5 h-3.5" />
+              Coming soon
+            </Button>
+          </div>
+        ) : state.connected ? (
           <div className="space-y-3">
             {/* Meta info */}
             <div className="rounded-lg bg-[#0F0F0F] border border-[#1E1E1E] px-3 py-2.5 text-xs space-y-1.5">
@@ -393,16 +413,6 @@ function ProviderCard({
               ))}
             </ul>
 
-            {connectError && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200"
-              >
-                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{connectError}</span>
-              </div>
-            )}
-
             {/* Connect button */}
             <Button
               variant="outline"
@@ -415,11 +425,9 @@ function ProviderCard({
                 cfg.accentHoverBg,
                 'hover:text-current hover:border-current'
               )}
-              onClick={handleConnect}
-              disabled={connecting}
             >
               <Plug className="w-3.5 h-3.5" />
-              {connecting ? `Connecting to ${cfg.name}…` : `Connect ${cfg.name}`}
+              Connect {cfg.name}
             </Button>
           </div>
         )}
