@@ -18,7 +18,9 @@ const apiMock = api as unknown as { get: ReturnType<typeof vi.fn>; delete: Retur
 
 function mockUploadDetail() {
   apiMock.get.mockImplementation((url: string) => {
-    if (url.endsWith('/rows')) return Promise.resolve({ data: { transactions: [], pagination: { total: 0 } } })
+    if (url.endsWith('/rows')) {
+      return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+    }
     return Promise.resolve({
       data: {
         upload: {
@@ -58,7 +60,7 @@ describe('UploadDetail', () => {
     mockUploadDetail()
     renderUploadDetail()
     await waitFor(() => expect(screen.getByText('export.csv')).toBeInTheDocument())
-    expect(screen.getByText(/imported/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/imported/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('link', { name: /download/i })).toHaveAttribute('href', 'https://test.r2.local/foo')
   })
 
@@ -83,5 +85,63 @@ describe('UploadDetail', () => {
     await waitFor(() => expect(screen.getByText('Data Health page')).toBeInTheDocument())
 
     confirmSpy.mockRestore()
+  })
+
+  it('pages through imported transactions', async () => {
+    apiMock.get.mockImplementation((url: string, config?: { params?: { page?: number; limit?: number } }) => {
+      if (url.endsWith('/rows')) {
+        const page = config?.params?.page || 1
+        const transaction = page === 1
+          ? {
+              _id: 'r1',
+              date: '2026-05-24T08:00:00.000Z',
+              receiptId: '001',
+              total: 42,
+              items: [{ name: 'Flat White', quantity: 1 }],
+            }
+          : {
+              _id: 'r2',
+              date: '2026-05-23T09:00:00.000Z',
+              receiptId: '051',
+              total: 55,
+              items: [{ name: 'Long White', quantity: 1 }],
+            }
+
+        return Promise.resolve({
+          data: {
+            transactions: [transaction],
+            pagination: { total: 101, page, limit: 50, pages: 3 },
+          },
+        })
+      }
+
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'export.csv',
+            status: 'completed',
+            stats: { imported: 101, skipped: 0, errors: 0, totalRows: 101 },
+            posType: 'yoco',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            dateRange: { firstDate: '2026-04-01', lastDate: '2026-04-02' },
+          },
+          downloadUrl: 'https://test.r2.local/foo',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    await waitFor(() => expect(screen.getByText(/Flat White/)).toBeInTheDocument())
+    expect(screen.getByText(/Showing 1-50 of 101/i)).toBeInTheDocument()
+    expect(screen.getByText(/Page 1 of 3/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }))
+
+    await waitFor(() => expect(screen.getByText(/Long White/)).toBeInTheDocument())
+    expect(screen.getByText(/Showing 51-100 of 101/i)).toBeInTheDocument()
+    expect(apiMock.get).toHaveBeenCalledWith('/uploads/u1/rows', { params: { page: 2, limit: 50 } })
   })
 })
