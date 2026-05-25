@@ -43,7 +43,7 @@ describe('Dashboard', () => {
 
   it('shows KPI cards with forecast data after load', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/forecasts/tomorrow')) {
+      if (url.includes('/forecasts/today')) {
         return Promise.resolve({ data: { forecast: mockForecast } })
       }
       if (url.includes('/forecasts/week')) {
@@ -69,6 +69,7 @@ describe('Dashboard', () => {
     expect(screen.getByText((text) => text.includes('20') && text.includes('100') && text.startsWith('R'))).toBeInTheDocument()
     // Should show top item
     expect(screen.getByText('Top Item')).toBeInTheDocument()
+    expect(mockGet).not.toHaveBeenCalledWith('/forecasts/tomorrow')
   })
 
   it('shows empty state when no data uploaded', async () => {
@@ -96,7 +97,7 @@ describe('Dashboard', () => {
     ]
 
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/forecasts/tomorrow')) {
+      if (url.includes('/forecasts/today')) {
         return Promise.resolve({ data: { forecast: mockForecast } })
       }
       if (url.includes('/forecasts/week')) {
@@ -122,9 +123,138 @@ describe('Dashboard', () => {
     expect(dayButtons.length).toBeGreaterThan(2)
   })
 
+  it('uses the selected week forecast instead of briefly swapping from the today fallback', async () => {
+    const todayFallbackForecast = {
+      ...mockForecast,
+      _id: 'today-fallback',
+      date: '2026-03-28',
+      signals: {
+        ...mockForecast.signals,
+        weather: { temp: 31, condition: 'Rain', humidity: 80 },
+      },
+    }
+    const selectedWeekForecast = {
+      ...mockForecast,
+      _id: 'today',
+      date: '2026-03-28',
+      signals: {
+        ...mockForecast.signals,
+        weather: { temp: 18, condition: 'Cloudy', humidity: 55 },
+      },
+    }
+
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/today')) {
+        return Promise.resolve({ data: { forecast: todayFallbackForecast } })
+      }
+      if (url.includes('/forecasts/week')) {
+        return Promise.resolve({ data: { forecasts: [selectedWeekForecast] } })
+      }
+      if (url.includes('/transactions/stats')) {
+        return Promise.resolve({ data: { stats: mockStats } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Cloudy')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('Rain')).not.toBeInTheDocument()
+  })
+
+  it('uses the today forecast as fallback when week forecasts fail', async () => {
+    const todayForecast = {
+      ...mockForecast,
+      _id: 'today-only',
+      signals: {
+        ...mockForecast.signals,
+        weather: { temp: 21, condition: 'Partly cloudy', humidity: 58 },
+      },
+    }
+
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/today')) {
+        return Promise.resolve({ data: { forecast: todayForecast } })
+      }
+      if (url.includes('/forecasts/week')) {
+        return Promise.reject(new Error('week failed'))
+      }
+      if (url.includes('/transactions/stats')) {
+        return Promise.resolve({ data: { stats: mockStats } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test', location: { city: 'Cape Town' } } } })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Partly cloudy')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('Forecast unavailable')).not.toBeInTheDocument()
+  })
+
+  it('shows a forecast unavailable state when sales exist but forecast calls fail', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/today') || url.includes('/forecasts/week')) {
+        return Promise.reject(new Error('forecast failed'))
+      }
+      if (url.includes('/transactions/stats')) {
+        return Promise.resolve({ data: { stats: mockStats } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Forecast unavailable')).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('shows a clear no-predictions state when a forecast has no items', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/today')) {
+        return Promise.resolve({ data: { forecast: { ...mockForecast, items: [] } } })
+      }
+      if (url.includes('/forecasts/week')) {
+        return Promise.resolve({ data: { forecasts: [] } })
+      }
+      if (url.includes('/transactions/stats')) {
+        return Promise.resolve({ data: { stats: mockStats } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('No item predictions for this day')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('No time-of-day item forecast available for this day.')).toBeInTheDocument()
+  })
+
   it('shows weather card with temperature', async () => {
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/forecasts/tomorrow')) {
+      if (url.includes('/forecasts/today')) {
         return Promise.resolve({ data: { forecast: mockForecast } })
       }
       if (url.includes('/forecasts/week')) {
@@ -134,7 +264,7 @@ describe('Dashboard', () => {
         return Promise.resolve({ data: { stats: mockStats } })
       }
       if (url.includes('/cafe/me')) {
-        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+        return Promise.resolve({ data: { cafe: { name: 'Test', location: { address: '123 Test St', city: 'Cape Town' } } } })
       }
       return Promise.reject(new Error('Unknown URL'))
     })
@@ -149,5 +279,6 @@ describe('Dashboard', () => {
 
     expect(screen.getByText('Sunny')).toBeInTheDocument()
     expect(screen.getByText('60% humidity')).toBeInTheDocument()
+    expect(screen.getByText('123 Test St, Cape Town')).toBeInTheDocument()
   })
 })

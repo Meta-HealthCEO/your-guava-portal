@@ -626,7 +626,8 @@ export default function Insights() {
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef(new Map<string, HTMLDivElement>())
   const assistantTypingRef = useRef(new Map<string, AssistantTypingState>())
-  const scrollTargetMessageIdRef = useRef<string | null>(null)
+  const scrollToBottomBehaviorRef = useRef<ScrollBehavior | null>(null)
+  const scrollFrameRef = useRef<number | null>(null)
   const activeChatIdRef = useRef<string | null>(activeChatId)
   const messagesRef = useRef<ChatMessage[]>(messages)
   const contextStatsRef = useRef<ChatContextStats | null>(contextStats)
@@ -638,6 +639,7 @@ export default function Insights() {
   const [renameTitle, setRenameTitle] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<InsightChat | null>(null)
   const [chatNotice, setChatNotice] = useState<string | null>(null)
+  const [scrollRevision, setScrollRevision] = useState(0)
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId
@@ -677,6 +679,27 @@ export default function Insights() {
     else messageRefs.current.delete(messageId)
   }, [])
 
+  const requestScrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    scrollToBottomBehaviorRef.current = behavior
+    setScrollRevision((current) => current + 1)
+  }, [])
+
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior) => {
+    const scrollEl = chatScrollRef.current
+    if (!scrollEl) return
+
+    const top = scrollEl.scrollHeight
+    if (typeof scrollEl.scrollTo === 'function') {
+      scrollEl.scrollTo({ top, behavior })
+    } else {
+      scrollEl.scrollTop = top
+    }
+
+    if (messagesEndRef.current && typeof messagesEndRef.current.scrollIntoView === 'function') {
+      messagesEndRef.current.scrollIntoView({ behavior, block: 'end' })
+    }
+  }, [])
+
   const cancelAssistantTyping = useCallback((messageId?: string) => {
     const targets = messageId
       ? [[messageId, assistantTypingRef.current.get(messageId)] as const]
@@ -695,7 +718,8 @@ export default function Insights() {
     setTrackedMessages(normalized.messages.length ? normalized.messages : [WELCOME_MESSAGE])
     setContextStats(normalized.contextStats || null)
     setInput('')
-  }, [cancelAssistantTyping, setActiveChat, setTrackedMessages])
+    requestScrollToBottom('auto')
+  }, [cancelAssistantTyping, requestScrollToBottom, setActiveChat, setTrackedMessages])
 
   const loadInsights = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setIsRefreshing(true)
@@ -761,15 +785,39 @@ export default function Insights() {
   }, [loadChats])
 
   useEffect(() => {
-    const targetId = scrollTargetMessageIdRef.current
-    if (!targetId) return
+    if (hasConversation) requestScrollToBottom('auto')
+  }, [hasConversation, requestScrollToBottom])
 
-    const node = messageRefs.current.get(targetId)
-    if (node && typeof node.scrollIntoView === 'function') {
-      node.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      scrollTargetMessageIdRef.current = null
+  useEffect(() => {
+    const behavior = scrollToBottomBehaviorRef.current
+    if (!behavior || !hasConversation) return
+
+    if (scrollFrameRef.current != null) {
+      window.cancelAnimationFrame(scrollFrameRef.current)
+      scrollFrameRef.current = null
     }
-  }, [messages.length])
+
+    let secondFrame: number | null = null
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollChatToBottom(behavior)
+      secondFrame = window.requestAnimationFrame(() => {
+        scrollChatToBottom(behavior)
+        scrollToBottomBehaviorRef.current = null
+        scrollFrameRef.current = null
+      })
+      scrollFrameRef.current = secondFrame
+    })
+
+    scrollFrameRef.current = firstFrame
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame)
+      if (secondFrame != null) window.cancelAnimationFrame(secondFrame)
+      if (scrollFrameRef.current === firstFrame || scrollFrameRef.current === secondFrame) {
+        scrollFrameRef.current = null
+      }
+    }
+  }, [hasConversation, messages.length, scrollChatToBottom, scrollRevision])
 
   useEffect(() => {
     if (messages.some((message) => message.pending)) return
@@ -805,6 +853,10 @@ export default function Insights() {
 
   useEffect(() => () => {
     cancelAssistantTyping()
+    if (scrollFrameRef.current != null) {
+      window.cancelAnimationFrame(scrollFrameRef.current)
+      scrollFrameRef.current = null
+    }
   }, [cancelAssistantTyping])
 
   useEffect(() => {
@@ -1093,7 +1145,7 @@ export default function Insights() {
     setTrackedMessages([WELCOME_MESSAGE])
     setContextStats(null)
     setInput('')
-    scrollTargetMessageIdRef.current = null
+    scrollToBottomBehaviorRef.current = null
   }
 
   const startNewChat = async ({ preserve = true }: { preserve?: boolean } = {}) => {
@@ -1204,7 +1256,7 @@ export default function Insights() {
     const currentMessages = messagesRef.current
     const nextMessages = [...currentMessages, userMessage]
 
-    scrollTargetMessageIdRef.current = userMessage.id
+    requestScrollToBottom('smooth')
     setTrackedMessages([...nextMessages, assistantMessage])
     setInput('')
     isChatLoadingRef.current = true
@@ -1280,7 +1332,7 @@ export default function Insights() {
       <AppLayout
         title={
           <div className="flex items-center gap-2">
-            <span>AI Insights</span>
+            <span>Ask Guava</span>
             <Sparkles className="w-4 h-4 text-guava-red" />
           </div>
         }
@@ -1413,7 +1465,7 @@ export default function Insights() {
                     <p className="text-[#555555] text-sm mb-5 max-w-xs">
                       Upload your transaction data to unlock AI-powered sales insights tailored to your cafe.
                     </p>
-                    <Link to="/connect">
+                    <Link to="/data-health">
                       <Button>
                         <Upload className="w-4 h-4" />
                         Upload Sales Data

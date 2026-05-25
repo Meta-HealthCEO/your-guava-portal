@@ -26,7 +26,7 @@ export default function Signup() {
 
     try {
       await register(email, password, name, cafeName, orgName.trim() || undefined)
-      navigate('/dashboard')
+      navigate('/today')
     } catch (err: unknown) {
       if (
         err &&

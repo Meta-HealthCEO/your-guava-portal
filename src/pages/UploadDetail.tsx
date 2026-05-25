@@ -28,8 +28,18 @@ export default function UploadDetail() {
   const [tab, setTab] = useState<'rows' | 'file'>('rows')
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [remapping, setRemapping] = useState(false)
+  const [remapError, setRemapError] = useState<string | null>(null)
+
+  const extractApiError = (err: unknown, fallback: string) => {
+    if (err && typeof err === 'object' && 'response' in err) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      if (msg) return msg
+    }
+    return fallback
+  }
 
   useEffect(() => {
     if (!id) return
@@ -46,19 +56,13 @@ export default function UploadDetail() {
   }, [id])
 
   const handleDelete = async () => {
-    if (!confirm('Delete this upload? Linked transactions will be removed.')) return
     setDeleting(true)
     setDeleteError(null)
     try {
       await api.delete(`/uploads/${id}`)
-      navigate('/connect')
+      navigate('/data-health')
     } catch (err: unknown) {
-      let msg = 'Delete failed.'
-      if (err && typeof err === 'object' && 'response' in err) {
-        const m = (err as { response?: { data?: { message?: string } } }).response?.data?.message
-        if (m) msg = m
-      }
-      setDeleteError(msg)
+      setDeleteError(extractApiError(err, 'Delete failed.'))
       setDeleting(false)
     }
   }
@@ -78,8 +82,8 @@ export default function UploadDetail() {
   return (
     <AppLayout title={upload.fileName}>
       <div className="space-y-4">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/connect')}>
-          <ArrowLeft className="w-4 h-4" /> Back to Connect
+        <Button variant="ghost" size="sm" onClick={() => navigate('/data-health')}>
+          <ArrowLeft className="w-4 h-4" /> Back to Data Health
         </Button>
 
         <Card>
@@ -172,11 +176,21 @@ export default function UploadDetail() {
             Re-map columns
           </Button>
           {user?.role === 'owner' && (
-            <Button variant="ghost" size="sm" className="text-guava-red" onClick={handleDelete} disabled={deleting}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-guava-red"
+              onClick={() => {
+                setDeleteError(null)
+                setShowDeleteConfirm(true)
+              }}
+              disabled={deleting}
+            >
               <Trash2 className="w-4 h-4" /> Delete this upload
             </Button>
           )}
           {deleteError && <p className="text-red-400 text-xs mt-2">{deleteError}</p>}
+          {remapError && <p className="text-red-400 text-xs mt-2">{remapError}</p>}
         </div>
       </div>
 
@@ -187,16 +201,66 @@ export default function UploadDetail() {
           preview={upload.sampleRows || []}
           initialMapping={upload.columnMapping}
           initialItemsMode={upload.itemsMode}
-          onCancel={() => setRemapping(false)}
+          onCancel={() => {
+            setRemapError(null)
+            setRemapping(false)
+          }}
           onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
             try {
+              setRemapError(null)
               await api.patch(`/uploads/${id}/mapping`, { columnMapping: mapping, itemsMode })
               window.location.reload()
-            } catch {
+            } catch (err: unknown) {
+              setRemapError(extractApiError(err, 'Re-map failed. Check the column choices and try again.'))
               setRemapping(false)
             }
           }}
         />
+      )}
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-upload-title"
+            className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-lg border border-red-900/40 bg-red-900/20 p-2 text-guava-red">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-upload-title" className="text-lg font-semibold text-text">
+                  Delete upload?
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  This will remove the linked transactions from {upload.fileName} and refresh the affected forecasts.
+                  This cannot be undone.
+                </p>
+                {deleteError && (
+                  <p className="mt-3 rounded-lg border border-red-900/30 bg-red-900/10 px-3 py-2 text-sm text-red-400">
+                    {deleteError}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleDelete} disabled={deleting}>
+                {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Delete upload
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </AppLayout>
   )

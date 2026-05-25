@@ -182,6 +182,36 @@ describe('Insights', () => {
     expect(screen.getByText('Bold result')).toBeInTheDocument()
   })
 
+  it('opens a restored chat at the latest message', async () => {
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
+
+    localStorage.setItem(
+      CHAT_STORAGE_KEY,
+      JSON.stringify({
+        activeChatId: 'saved-chat',
+        messages: [
+          { id: 'user-saved-1', role: 'user', content: 'First saved question' },
+          { id: 'assistant-saved-1', role: 'assistant', content: 'First saved answer' },
+          { id: 'user-saved-2', role: 'user', content: 'Latest saved question' },
+          { id: 'assistant-saved-2', role: 'assistant', content: 'Latest saved answer' },
+        ],
+        contextStats,
+      })
+    )
+    mockBaseRequests()
+
+    render(<Insights />)
+
+    expect(await screen.findByText('Latest saved answer')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
+    })
+  })
+
   it('sends the first prompt in a fresh chat and renders the assistant response', async () => {
     mockBaseRequests()
     mockPost.mockImplementation((url: string, payload: { title?: string; messages?: unknown[] }) => {

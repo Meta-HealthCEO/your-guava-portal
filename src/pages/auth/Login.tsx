@@ -23,7 +23,7 @@ export default function Login() {
 
     try {
       await login(email, password)
-      navigate('/dashboard')
+      navigate('/today')
     } catch (err: unknown) {
       if (
         err &&

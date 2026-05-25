@@ -39,7 +39,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
           <CardTitle>Upload history</CardTitle>
         </div>
         <CardDescription>
-          Every CSV/XLSX you've imported. Click an entry to view the imported rows or download the original file.
+          Every CSV/XLS/XLSX you've imported. Click an entry to view the imported rows or download the original file.
         </CardDescription>
       </CardHeader>
       <CardContent>

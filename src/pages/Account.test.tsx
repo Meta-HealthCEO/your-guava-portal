@@ -55,6 +55,23 @@ function accountPayload() {
       seats: { used: 3, included: 6, remaining: 3 },
       locations: { used: 2, included: 3, remaining: 1 },
       aiCredits: { included: 600, bonus: 250, used: 100, available: 750, resetAt: null },
+      guavaCredits: { included: 1800, bonus: 250, used: 100, available: 1950, resetAt: '2026-06-01T00:00:00.000Z' },
+      creditLedger: {
+        byFeature: [
+          { featureKey: 'ask_guava_chat', label: 'Ask Guava answer', credits: 12, count: 4 },
+        ],
+        recent: [
+          {
+            id: 'usage1',
+            featureKey: 'ask_guava_chat',
+            label: 'Ask Guava answer',
+            credits: 3,
+            status: 'committed',
+            provider: 'anthropic',
+            createdAt: '2026-05-20T00:00:00.000Z',
+          },
+        ],
+      },
     },
     plans: [
       {
@@ -64,6 +81,7 @@ function accountPayload() {
         priceAnnual: 3990,
         includedSeats: 2,
         includedAiCredits: 150,
+        includedGuavaCredits: 400,
         includedLocations: 2,
         overagePerSeat: 120,
         aiCreditPackPrice: 99,
@@ -76,6 +94,7 @@ function accountPayload() {
         priceAnnual: 8990,
         includedSeats: 6,
         includedAiCredits: 600,
+        includedGuavaCredits: 1800,
         includedLocations: 3,
         overagePerSeat: 100,
         aiCreditPackPrice: 89,
@@ -139,9 +158,45 @@ describe('Account', () => {
     })
 
     expect(screen.getByText('growth plan')).toBeInTheDocument()
-    expect(screen.getByText('750')).toBeInTheDocument()
-    expect(screen.getByText('Plans and mock checkout')).toBeInTheDocument()
+    expect(screen.getByText('1950')).toBeInTheDocument()
+    expect(screen.getAllByText('Ask Guava answer').length).toBeGreaterThan(0)
+    expect(screen.getByText('Plans and card checkout')).toBeInTheDocument()
   })
+
+  it('defaults the account details section to view mode', async () => {
+    renderWithAuth(<Account />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Test Org')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Test Owner')).not.toBeInTheDocument()
+    expect(screen.queryByText('Save Account')).not.toBeInTheDocument()
+  })
+
+  it('enters edit mode and cancels back without saving', async () => {
+    renderWithAuth(<Account />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }))
+
+    const nameInput = await screen.findByDisplayValue('Test Owner')
+    await userEvent.clear(nameInput)
+    await userEvent.type(nameInput, 'Discarded Name')
+
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('Discarded Name')).not.toBeInTheDocument()
+    })
+    expect(mockPatch).not.toHaveBeenCalled()
+    expect(screen.queryByText('Save Account')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument()
+  }, 10000)
 
   it('saves profile and organisation details', async () => {
     mockPatch.mockResolvedValueOnce({ data: { success: true, account: accountPayload() } })
@@ -149,10 +204,12 @@ describe('Account', () => {
     renderWithAuth(<Account />)
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Test Owner')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument()
     })
 
-    const nameInput = screen.getByDisplayValue('Test Owner')
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }))
+
+    const nameInput = await screen.findByDisplayValue('Test Owner')
     await userEvent.clear(nameInput)
     await userEvent.type(nameInput, 'Updated Owner')
     await userEvent.click(screen.getByText('Save Account'))

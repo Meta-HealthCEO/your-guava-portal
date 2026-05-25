@@ -64,9 +64,10 @@ describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    window.history.pushState({}, '', '/settings')
   })
 
-  it('renders cafe details form', async () => {
+  it('renders cafe details in view mode by default', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) {
         return Promise.resolve({
@@ -85,31 +86,25 @@ describe('Settings', () => {
     renderWithAuth(<Settings />)
 
     await waitFor(() => {
-      expect(screen.getByText('Cafe Details')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
     })
 
     expect(screen.queryByText('My Account')).not.toBeInTheDocument()
     expect(screen.queryByText('Plans and mock checkout')).not.toBeInTheDocument()
 
-    expect(screen.getByDisplayValue('Blouberg Coffee')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('123 Main St')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Cape Town')).toBeInTheDocument()
+    expect(screen.getAllByText('Blouberg Coffee').length).toBeGreaterThan(0)
+    expect(screen.getByText('123 Main St')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Blouberg Coffee')).not.toBeInTheDocument()
+    expect(screen.queryByText('Save Cafe Details')).not.toBeInTheDocument()
   })
 
-  it('shows events list', async () => {
+  it('keeps the settings section menu fixed on desktop', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) {
         return Promise.resolve({
-          data: { success: true, cafe: { name: 'Test Cafe', location: { address: '', city: 'Cape Town' } } },
-        })
-      }
-      if (url.includes('/events')) {
-        return Promise.resolve({
           data: {
-            events: [
-              { _id: 'e1', name: 'Blouberg Market', date: '2026-04-05', impact: 'high', recurring: false },
-              { _id: 'e2', name: 'Jazz Festival', date: '2026-04-10', impact: 'medium', recurring: false },
-            ],
+            success: true,
+            cafe: { name: 'Pinned Cafe', location: { address: '', city: 'Cape Town' } },
           },
         })
       }
@@ -119,10 +114,209 @@ describe('Settings', () => {
     renderWithAuth(<Settings />)
 
     await waitFor(() => {
-      expect(screen.getByText('Blouberg Market')).toBeInTheDocument()
+      expect(screen.getByRole('navigation', { name: /settings sections/i })).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Jazz Festival')).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: /settings sections/i }).closest('aside')).toHaveClass(
+      'xl:fixed',
+      'xl:top-20',
+      'xl:w-[220px]'
+    )
+  })
+
+  it('renders the expanded address block and timezone in view mode', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            cafe: {
+              name: 'Sea Point Roastery',
+              location: {
+                address: '12 Beach Road',
+                addressLine2: 'Shop 4',
+                suburb: 'Sea Point',
+                city: 'Cape Town',
+                postalCode: '8005',
+                province: 'Western Cape',
+                country: 'South Africa',
+              },
+              timezone: 'Africa/Johannesburg',
+            },
+          },
+        })
+      }
+      if (url.includes('/events')) {
+        return Promise.resolve({ data: { events: [] } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Settings />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('12 Beach Road')).toBeInTheDocument()
+    expect(screen.getByText('Shop 4')).toBeInTheDocument()
+    expect(screen.getByText(/Sea Point, Cape Town, 8005/)).toBeInTheDocument()
+    expect(screen.getByText(/Western Cape, South Africa/)).toBeInTheDocument()
+    expect(screen.getByText('Africa/Johannesburg')).toBeInTheDocument()
+  })
+
+  it('saves the expanded location payload', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            cafe: {
+              name: 'Cafe X',
+              location: { address: '', city: 'Cape Town', country: 'South Africa' },
+              timezone: 'Africa/Johannesburg',
+            },
+          },
+        })
+      }
+      if (url.includes('/events')) {
+        return Promise.resolve({ data: { events: [] } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    mockPut.mockResolvedValueOnce({ data: { success: true } })
+
+    renderWithAuth(<Settings />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /edit cafe details/i }))
+
+    const suburb = await screen.findByLabelText(/^Suburb$/i)
+    await userEvent.type(suburb, 'Sea Point')
+
+    const postal = screen.getByLabelText(/^Postal Code$/i)
+    await userEvent.type(postal, '8005')
+
+    const province = screen.getByLabelText(/^Province$/i) as HTMLSelectElement
+    await userEvent.selectOptions(province, 'Western Cape')
+
+    await userEvent.click(screen.getByText('Save Cafe Details'))
+
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith(
+        '/cafe/me',
+        expect.objectContaining({
+          location: expect.objectContaining({
+            suburb: 'Sea Point',
+            postalCode: '8005',
+            province: 'Western Cape',
+            country: 'South Africa',
+          }),
+        })
+      )
+    })
+  })
+
+  it('exposes all 9 ZA provinces in the dropdown', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            cafe: { name: 'X', location: { address: '', city: 'Cape Town' } },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Settings />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /edit cafe details/i }))
+
+    const province = (await screen.findByLabelText(/^Province$/i)) as HTMLSelectElement
+    const optionValues = Array.from(province.options).map((opt) => opt.value)
+    for (const expected of [
+      'Eastern Cape',
+      'Free State',
+      'Gauteng',
+      'KwaZulu-Natal',
+      'Limpopo',
+      'Mpumalanga',
+      'Northern Cape',
+      'North West',
+      'Western Cape',
+    ]) {
+      expect(optionValues).toContain(expected)
+    }
+  })
+
+  it('cancels cafe details edits without saving', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            cafe: { name: 'Original Cafe', location: { address: '1 Loop St', city: 'Cape Town' } },
+          },
+        })
+      }
+      if (url.includes('/events')) {
+        return Promise.resolve({ data: { events: [] } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Settings />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /edit cafe details/i }))
+
+    const nameInput = await screen.findByDisplayValue('Original Cafe')
+    await userEvent.clear(nameInput)
+    await userEvent.type(nameInput, 'Throwaway Name')
+
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('Throwaway Name')).not.toBeInTheDocument()
+    })
+    expect(mockPut).not.toHaveBeenCalled()
+    expect(screen.getAllByText('Original Cafe').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
+  })
+
+  it('points factor configuration to the planning workspace', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: { success: true, cafe: { name: 'Test Cafe', location: { address: '', city: 'Cape Town' } } },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Settings />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /prediction/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Forecast Factors')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/one dedicated workspace/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open forecast factors/i })).toHaveAttribute('href', '/planning/factors')
   })
 
   it('handles cafe name update', async () => {
@@ -143,10 +337,12 @@ describe('Settings', () => {
     renderWithAuth(<Settings />)
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Old Name')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
     })
 
-    const nameInput = screen.getByDisplayValue('Old Name')
+    await userEvent.click(screen.getByRole('button', { name: /edit cafe details/i }))
+
+    const nameInput = await screen.findByDisplayValue('Old Name')
     await userEvent.clear(nameInput)
     await userEvent.type(nameInput, 'New Name')
 
@@ -156,6 +352,129 @@ describe('Settings', () => {
       expect(mockPut).toHaveBeenCalledWith('/cafe/me', expect.objectContaining({
         name: 'New Name',
       }))
+    })
+  })
+
+  describe('Trading Hours card', () => {
+    const cafeWithHours = {
+      name: 'Hours Cafe',
+      location: { address: '', city: 'Cape Town' },
+      tradingHours: [
+        { dayOfWeek: 0, isOpen: false, openTime: '08:00', closeTime: '14:00' },
+        { dayOfWeek: 1, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+        { dayOfWeek: 2, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+        { dayOfWeek: 3, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+        { dayOfWeek: 4, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+        { dayOfWeek: 5, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+        { dayOfWeek: 6, isOpen: true, openTime: '08:00', closeTime: '15:00' },
+      ],
+    }
+
+    beforeEach(() => {
+      mockGet.mockImplementation((url: string) => {
+        if (url.includes('/cafe/me')) {
+          return Promise.resolve({ data: { success: true, cafe: cafeWithHours } })
+        }
+        if (url.includes('/events')) {
+          return Promise.resolve({ data: { events: [] } })
+        }
+        return Promise.resolve({ data: {} })
+      })
+    })
+
+    const enterEditMode = async () => {
+      const editButton = await screen.findByRole('button', { name: /edit trading hours/i })
+      await userEvent.click(editButton)
+    }
+
+    it('defaults the trading hours card to view mode', async () => {
+      renderWithAuth(<Settings />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /edit trading hours/i })).toBeInTheDocument()
+      })
+
+      expect(screen.queryByText('Save Trading Hours')).not.toBeInTheDocument()
+      expect(screen.queryByRole('switch', { name: /Monday/i })).not.toBeInTheDocument()
+      // Weekdays render 07:00 – 17:00 (5 days); Sunday renders "Closed".
+      expect(screen.getAllByText(/07:00\s*–\s*17:00/).length).toBeGreaterThanOrEqual(5)
+      expect(screen.getAllByText(/Closed/i).length).toBeGreaterThan(0)
+    })
+
+    it('renders a row for each day of the week in view mode', async () => {
+      renderWithAuth(<Settings />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Trading Hours')).toBeInTheDocument()
+      })
+
+      for (const day of ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']) {
+        expect(screen.getByText(day)).toBeInTheDocument()
+      }
+    })
+
+    it('toggles a day from open to closed after entering edit mode', async () => {
+      renderWithAuth(<Settings />)
+      await enterEditMode()
+
+      const mondayToggle = await screen.findByRole('switch', { name: /^Monday open$/i })
+      expect(mondayToggle).toHaveAttribute('aria-checked', 'true')
+      await userEvent.click(mondayToggle)
+
+      await waitFor(() => {
+        expect(screen.getByRole('switch', { name: /^Monday closed$/i })).toHaveAttribute('aria-checked', 'false')
+      })
+    })
+
+    it('submits the trading hours payload to PUT /cafe/me', async () => {
+      mockPut.mockResolvedValueOnce({ data: { success: true } })
+
+      renderWithAuth(<Settings />)
+      await enterEditMode()
+
+      await userEvent.click(await screen.findByText('Save Trading Hours'))
+
+      await waitFor(() => {
+        expect(mockPut).toHaveBeenCalledWith(
+          '/cafe/me',
+          expect.objectContaining({ tradingHours: expect.any(Array) })
+        )
+      })
+      const call = mockPut.mock.calls.find((c) => c[0] === '/cafe/me' && c[1]?.tradingHours)
+      expect(call?.[1].tradingHours).toHaveLength(7)
+    })
+
+    it('blocks save when an open day has closeTime <= openTime', async () => {
+      renderWithAuth(<Settings />)
+      await enterEditMode()
+
+      const mondayClose = (await screen.findByLabelText(/Monday closing time/i)) as HTMLInputElement
+      await userEvent.clear(mondayClose)
+      await userEvent.type(mondayClose, '06:00')
+
+      await userEvent.click(screen.getByText('Save Trading Hours'))
+
+      await waitFor(() => {
+        expect(screen.getByText(/closing time must be after opening time/i)).toBeInTheDocument()
+      })
+      expect(mockPut).not.toHaveBeenCalledWith('/cafe/me', expect.objectContaining({ tradingHours: expect.any(Array) }))
+    })
+
+    it('cancels trading hours edits without saving', async () => {
+      renderWithAuth(<Settings />)
+      await enterEditMode()
+
+      const mondayToggle = await screen.findByRole('switch', { name: /^Monday open$/i })
+      await userEvent.click(mondayToggle)
+      expect(screen.getByRole('switch', { name: /^Monday closed$/i })).toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole('button', { name: /cancel/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /edit trading hours/i })).toBeInTheDocument()
+      })
+      expect(mockPut).not.toHaveBeenCalledWith('/cafe/me', expect.objectContaining({ tradingHours: expect.any(Array) }))
+      expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     })
   })
 })

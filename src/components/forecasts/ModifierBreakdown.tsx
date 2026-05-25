@@ -1,50 +1,70 @@
-import { Cloud, Zap, Calendar, Banknote, Megaphone } from 'lucide-react'
-import type { Forecast } from '@/types'
+import { Cloud, Zap, Calendar, Banknote, Megaphone, Sparkles } from 'lucide-react'
+import type { ReactNode } from 'react'
+import type { Forecast, ForecastFactor } from '@/types'
 
 interface Modifier {
-  icon: React.ReactNode
+  icon: ReactNode
   label: string
   effect: string
   active: boolean
-  positive: boolean | null // null = neutral / no effect
+  positive: boolean | null
+  reason?: string
 }
 
-function computeModifiers(signals: Forecast['signals']): Modifier[] {
+const ICONS: Record<string, ReactNode> = {
+  weather: <Cloud className="w-3.5 h-3.5" />,
+  loadShedding: <Zap className="w-3.5 h-3.5" />,
+  holiday: <Calendar className="w-3.5 h-3.5" />,
+  payday: <Banknote className="w-3.5 h-3.5" />,
+  events: <Megaphone className="w-3.5 h-3.5" />,
+  learning: <Sparkles className="w-3.5 h-3.5" />,
+}
+
+function modifierFromAppliedFactor(factor: ForecastFactor): Modifier {
+  const pct = factor.adjustmentPct
+  return {
+    icon: ICONS[factor.key] ?? <Megaphone className="w-3.5 h-3.5" />,
+    label: factor.label,
+    effect: factor.effect ?? 'no effect',
+    active: factor.active,
+    positive: pct == null ? null : pct > 0 ? true : pct < 0 ? false : null,
+    reason: factor.reason,
+  }
+}
+
+function computeFallbackModifiers(signals: Forecast['signals']): Modifier[] {
   const { weather, loadSheddingStage, isPublicHoliday, isSchoolHoliday, isPayday, events } = signals
 
-  // Weather modifier
   let weatherEffect = 'no effect'
   let weatherActive = false
   let weatherPositive: boolean | null = null
   if (weather.condition?.toLowerCase().includes('rain')) {
-    weatherEffect = '−10% across the board'
+    weatherEffect = '-10% across the board'
     weatherActive = true
     weatherPositive = false
   } else if (weather.temp > 27) {
-    weatherEffect = '+30% cold drinks, −10% coffee'
+    weatherEffect = '+30% cold drinks, -10% coffee'
     weatherActive = true
     weatherPositive = true
   } else if (weather.temp < 18) {
-    weatherEffect = '+15% coffee, −20% cold drinks'
+    weatherEffect = '+15% coffee, -20% cold drinks'
     weatherActive = true
     weatherPositive = true
   }
 
-  // Load shedding modifier
   let loadEffect = 'no effect'
   let loadActive = false
   if (loadSheddingStage >= 5) {
-    loadEffect = '−40%'
+    loadEffect = '-40%'
     loadActive = true
   } else if (loadSheddingStage >= 3) {
-    loadEffect = '−22%'
+    loadEffect = '-22%'
     loadActive = true
   } else if (loadSheddingStage >= 1) {
-    loadEffect = '−8%'
+    loadEffect = '-8%'
     loadActive = true
   }
 
-  // Holiday modifier
   let holidayEffect = 'no effect'
   let holidayActive = false
   let holidayPositive: boolean | null = null
@@ -62,69 +82,64 @@ function computeModifiers(signals: Forecast['signals']): Modifier[] {
     holidayPositive = true
   }
 
-  // Payday modifier
-  const paydayEffect = isPayday ? '+20%' : 'no effect'
-
-  // Events modifier — max impact
   const evList = events ?? []
   let eventEffect = 'no effect'
   let eventActive = false
   if (evList.length > 0) {
-    const impacts = evList.map((e) => {
-      if (e.impact === 'high') return 35
-      if (e.impact === 'medium') return 20
-      return 10
-    })
-    const maxImpact = Math.max(...impacts)
-    eventEffect = `+${maxImpact}%`
-    eventActive = true
+    const impacts = evList.map((e) => e.impactPct ?? (e.impact === 'high' ? 35 : e.impact === 'medium' ? 20 : 10))
+    const maxImpact = impacts.sort((a, b) => Math.abs(b) - Math.abs(a))[0]
+    eventEffect = `${maxImpact > 0 ? '+' : ''}${maxImpact}%`
+    eventActive = maxImpact !== 0
   }
 
   return [
     {
-      icon: <Cloud className="w-3.5 h-3.5" />,
+      icon: ICONS.weather,
       label: 'Weather',
       effect: weatherEffect,
       active: weatherActive,
       positive: weatherPositive,
     },
     {
-      icon: <Zap className="w-3.5 h-3.5" />,
+      icon: ICONS.loadShedding,
       label: 'Load shedding',
       effect: loadEffect,
       active: loadActive,
       positive: loadActive ? false : null,
     },
     {
-      icon: <Calendar className="w-3.5 h-3.5" />,
+      icon: ICONS.holiday,
       label: 'Holiday',
       effect: holidayEffect,
       active: holidayActive,
       positive: holidayPositive,
     },
     {
-      icon: <Banknote className="w-3.5 h-3.5" />,
+      icon: ICONS.payday,
       label: 'Payday',
-      effect: paydayEffect,
+      effect: isPayday ? '+20%' : 'no effect',
       active: isPayday,
       positive: isPayday ? true : null,
     },
     {
-      icon: <Megaphone className="w-3.5 h-3.5" />,
+      icon: ICONS.events,
       label: 'Events',
       effect: eventEffect,
       active: eventActive,
-      positive: eventActive ? true : null,
+      positive: eventActive && !eventEffect.startsWith('-') ? true : eventActive ? false : null,
     },
   ]
 }
 
 interface Props {
   signals: Forecast['signals']
+  factors?: ForecastFactor[]
 }
 
-export function ModifierBreakdown({ signals }: Props) {
-  const modifiers = computeModifiers(signals)
+export function ModifierBreakdown({ signals, factors }: Props) {
+  const modifiers = factors && factors.length > 0
+    ? factors.map(modifierFromAppliedFactor)
+    : computeFallbackModifiers(signals)
 
   return (
     <div className="space-y-2">
@@ -147,7 +162,10 @@ export function ModifierBreakdown({ signals }: Props) {
             <span className={`text-xs font-medium w-24 shrink-0 ${labelColor}`}>
               {m.label}
             </span>
-            <span className={`text-xs ${effectColor}`}>{m.effect}</span>
+            <span className={`text-xs ${effectColor}`}>
+              {m.effect}
+              {m.reason ? <span className="text-[#555555]"> - {m.reason}</span> : null}
+            </span>
           </div>
         )
       })}

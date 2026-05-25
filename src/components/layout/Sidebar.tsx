@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useState, useEffect, type ComponentType } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   TrendingUp,
@@ -12,9 +12,11 @@ import {
   ChevronDown,
   Store,
   BarChart3,
-  CircleUserRound,
   Cable,
-  // Workforce module icons — re-import alongside the nav entries below when re-enabling
+  Coffee,
+  SlidersHorizontal,
+  History,
+  // Workforce module icons - re-import alongside the nav entries below when re-enabling
   // UserCircle,
   // CalendarDays,
   // CalendarOff,
@@ -27,19 +29,55 @@ import api from '@/lib/api'
 interface NavItem {
   label: string
   to: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: ComponentType<{ className?: string }>
+  activePaths?: { path: string; exact?: boolean }[]
+  exact?: boolean
+  badge?: string
 }
 
-const navItems: NavItem[] = [
-  { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
-  { label: 'Forecasts', to: '/forecasts', icon: TrendingUp },
-  { label: 'Connect Data', to: '/connect', icon: Upload },
-  { label: 'Insights', to: '/insights', icon: Sparkles },
-  { label: 'Analytics', to: '/analytics', icon: BarChart3 },
-  { label: 'Integrations', to: '/integrations', icon: Cable },
-  { label: 'Account', to: '/account', icon: CircleUserRound },
-  { label: 'Settings', to: '/settings', icon: Settings },
-  // Workforce module — temporarily hidden until ready for production
+interface NavSection {
+  label: string
+  items: NavItem[]
+}
+
+const navSections: NavSection[] = [
+  {
+    label: 'Operate',
+    items: [
+      { label: 'Today', to: '/today', icon: LayoutDashboard, exact: true, activePaths: [{ path: '/dashboard', exact: true }] },
+      { label: 'Planning', to: '/planning', icon: TrendingUp, exact: true, activePaths: [{ path: '/forecasts', exact: true }] },
+      { label: 'Factors', to: '/planning/factors', icon: SlidersHorizontal, activePaths: [{ path: '/factors', exact: true }] },
+    ],
+  },
+  {
+    label: 'Learn',
+    items: [
+      { label: 'Performance', to: '/performance', icon: BarChart3, exact: true, activePaths: [{ path: '/analytics', exact: true }] },
+      { label: 'History', to: '/history', icon: History, exact: true },
+      { label: 'Ask Guava', to: '/ask-guava', icon: Sparkles, exact: true, activePaths: [{ path: '/insights', exact: true }] },
+    ],
+  },
+  {
+    label: 'Data',
+    items: [
+      {
+        label: 'Data Health',
+        to: '/data-health',
+        icon: Upload,
+        exact: true,
+        activePaths: [{ path: '/connect', exact: true }, { path: '/uploads' }],
+      },
+      { label: 'Menu Items', to: '/data-health/menu-items', icon: Coffee, exact: true, activePaths: [{ path: '/menu-items', exact: true }] },
+      { label: 'Integrations', to: '/integrations', icon: Cable, badge: 'Soon' },
+    ],
+  },
+  {
+    label: 'Setup',
+    items: [
+      { label: 'Settings', to: '/settings', icon: Settings, exact: true, activePaths: [{ path: '/account', exact: true }] },
+    ],
+  },
+  // Workforce module - temporarily hidden until ready for production
   // { label: 'Staff', to: '/staff', icon: UserCircle },
   // { label: 'Roster', to: '/roster', icon: CalendarDays },
   // { label: 'Leave', to: '/leave', icon: CalendarOff },
@@ -58,6 +96,7 @@ interface CafeOption {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { user, logout, switchCafe, isOwner } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [cafeName, setCafeName] = useState('')
   const [cafeList, setCafeList] = useState<CafeOption[]>([])
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -68,7 +107,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       setCafeName(data?.cafe?.name || '')
     }).catch(() => {})
 
-    // Fetch list of accessible cafes for the switcher
     if (user.cafeIds && user.cafeIds.length > 1) {
       api.get<{ success: boolean; cafes: CafeOption[] }>('/cafe/list').then(({ data }) => {
         setCafeList(data.cafes || [])
@@ -82,13 +120,32 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   }
 
   const handleNavClick = () => {
-    // Close mobile sidebar on navigation
     onClose?.()
   }
 
+  const isPathActive = (path: string, exact?: boolean) => {
+    if (exact) return location.pathname === path
+    return location.pathname === path || location.pathname.startsWith(`${path}/`)
+  }
+
+  const isItemActive = (item: NavItem) => {
+    const paths = [{ path: item.to, exact: item.exact }, ...(item.activePaths ?? [])]
+    return paths.some(({ path, exact }) => isPathActive(path, exact))
+  }
+
+  const visibleSections: NavSection[] = navSections.map((section) => {
+    if (section.label !== 'Setup' || !isOwner) return section
+    return {
+      ...section,
+      items: [
+        { label: 'Team', to: '/team', icon: Users, exact: true },
+        ...section.items,
+      ],
+    }
+  })
+
   return (
     <>
-      {/* Mobile overlay */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-40 xl:hidden"
@@ -99,14 +156,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <aside
         className={cn(
           'fixed left-0 top-0 h-full w-60 bg-[#111111] border-r border-border flex flex-col z-50 transition-transform duration-200',
-          // Mobile: hidden by default, shown when isOpen
           'max-xl:-translate-x-full',
           isOpen && 'max-xl:translate-x-0',
-          // Desktop: always visible
           'xl:translate-x-0'
         )}
       >
-        {/* Logo — aligned with top bar height */}
         <div className="h-12.25 px-4 flex items-center justify-between border-b border-border shrink-0">
           <div className="flex items-center gap-2.5">
             <img src={guavaIcon} alt="" className="w-8 h-8 object-contain shrink-0" />
@@ -123,7 +177,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           </button>
         </div>
 
-        {/* Cafe Switcher — only show if user has multiple cafes */}
         {user && user.cafeIds && user.cafeIds.length > 1 && (
           <div className="px-3 pt-3 pb-1">
             <div className="relative">
@@ -164,70 +217,55 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           </div>
         )}
 
-        {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {navItems.map(({ label, to, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={handleNavClick}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group relative',
-                  isActive
-                    ? 'bg-guava-red/10 text-guava-red border-l-2 border-guava-red pl-2.5'
-                    : 'text-muted hover:text-text hover:bg-white/5 border-l-2 border-transparent'
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Icon
-                    className={cn(
-                      'w-4 h-4 shrink-0',
-                      isActive ? 'text-guava-red' : 'text-muted group-hover:text-text'
-                    )}
-                  />
-                  <span>{label}</span>
-                </>
-              )}
-            </NavLink>
-          ))}
+        <nav className="flex-1 px-3 py-4 overflow-y-auto">
+          {visibleSections.map((section) => (
+            <div key={section.label} className="mb-3 last:mb-0">
+              <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-[#555555]">
+                {section.label}
+              </p>
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const { label, to, icon: Icon, badge } = item
+                  const active = isItemActive(item)
 
-          {/* Team nav item — owner only */}
-          {isOwner && (
-            <NavLink
-              to="/team"
-              onClick={handleNavClick}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group relative',
-                  isActive
-                    ? 'bg-guava-red/10 text-guava-red border-l-2 border-guava-red pl-2.5'
-                    : 'text-muted hover:text-text hover:bg-white/5 border-l-2 border-transparent'
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Users
-                    className={cn(
-                      'w-4 h-4 shrink-0',
-                      isActive ? 'text-guava-red' : 'text-muted group-hover:text-text'
-                    )}
-                  />
-                  <span>Team</span>
-                </>
-              )}
-            </NavLink>
-          )}
+                  return (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      end={item.exact}
+                      onClick={handleNavClick}
+                      aria-current={active ? 'page' : undefined}
+                      className={cn(
+                        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group relative',
+                        active
+                          ? 'bg-guava-red/10 text-guava-red border-l-2 border-guava-red pl-2.5'
+                          : 'text-muted hover:text-text hover:bg-white/5 border-l-2 border-transparent'
+                      )}
+                    >
+                      <Icon
+                        className={cn(
+                          'w-4 h-4 shrink-0',
+                          active ? 'text-guava-red' : 'text-muted group-hover:text-text'
+                        )}
+                      />
+                      <span>{label}</span>
+                      {badge && (
+                        <span className="ml-auto rounded-full border border-border bg-[#1B1B1B] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#777777]">
+                          {badge}
+                        </span>
+                      )}
+                    </NavLink>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
-        {/* User / Logout */}
         <div className="px-3 pb-4 pt-3 border-t border-border">
           <div className="px-3 py-2 mb-1">
-            <p className="text-text text-sm font-medium truncate">{user?.name ?? '—'}</p>
-            <p className="text-[#555555] text-xs truncate">{user?.email ?? '—'}</p>
+            <p className="text-text text-sm font-medium truncate">{user?.name ?? '-'}</p>
+            <p className="text-[#555555] text-xs truncate">{user?.email ?? '-'}</p>
           </div>
           <button
             onClick={handleLogout}

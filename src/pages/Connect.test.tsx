@@ -63,7 +63,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
     })
   })
 
@@ -71,7 +71,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
     })
 
     // Create an invalid file and use fireEvent for the hidden input
@@ -86,13 +86,72 @@ describe('Connect', () => {
     })
   })
 
+  it('accepts uppercase CSV and legacy XLS extensions', async () => {
+    mockPost.mockImplementation((url: string) => {
+      if (url.includes('/transactions/upload')) {
+        return Promise.resolve({
+          data: {
+            uploadId: 'mock-id',
+            posType: 'yoco',
+            columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+            itemsMode: 'packed',
+            headers: ['Date', 'Items', 'Total'],
+            preview: [],
+            needsConfirmation: false,
+          },
+        })
+      }
+      if (url.includes('/uploads/mock-id/confirm')) {
+        return Promise.resolve({
+          data: { stats: { imported: 1, skipped: 0, errors: 0, totalRows: 1 } },
+        })
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Connect />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
+    })
+
+    const file = new File(['col1,col2\n1,2'], 'SALES.XLS', { type: '' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        '/transactions/upload',
+        expect.any(FormData),
+        expect.any(Object)
+      )
+    })
+  })
+
+  it('shows size validation error for files over 10 MB', async () => {
+    render(<Connect />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
+    })
+
+    const oversized = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'big.csv', { type: 'text/csv' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [oversized] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/too large/i)).toBeInTheDocument()
+    })
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
   it('shows upload progress during upload', async () => {
     mockPost.mockImplementation(() => new Promise(() => {})) // Hang to stay in uploading state
 
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
     })
 
     const file = new File(['col1,col2\n1,2'], 'data.csv', { type: 'text/csv' })
@@ -101,7 +160,7 @@ describe('Connect', () => {
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => {
-      expect(screen.getByText(/uploading/i)).toBeInTheDocument()
+      expect(screen.getAllByText(/uploading/i).length).toBeGreaterThan(0)
     })
   })
 
@@ -131,7 +190,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
     })
 
     const file = new File(['col1,col2\n1,2'], 'data.csv', { type: 'text/csv' })
@@ -169,7 +228,7 @@ describe('Connect', () => {
     render(<Connect />)
 
     await waitFor(() => {
-      expect(screen.getByText(/drop your sales csv or xlsx here/i)).toBeInTheDocument()
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
     })
 
     const file = new File(['When,Items,Total\n2026-01-01,Coffee,50'], 'data.csv', { type: 'text/csv' })

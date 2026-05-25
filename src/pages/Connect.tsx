@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type DragEvent, type ChangeEvent } from 'react'
-import { Upload, CheckCircle, AlertCircle, Clock, TrendingUp } from 'lucide-react'
+import { Upload, CheckCircle, AlertCircle, Clock, TrendingUp, LoaderCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import { UploadHistoryCard } from '@/components/upload/UploadHistoryCard'
@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 function extractErrorMsg(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
@@ -34,6 +36,84 @@ interface DataStatus {
   daysSinceLatest: number | null
   totalTransactions: number
   coverage30d: { date: string; count: number }[]
+}
+
+type UploadPhase = 'uploading' | 'importing' | 'validating' | 'forecasting'
+
+const uploadPhaseText: Record<UploadPhase, { title: string; detail: string; progress: number }> = {
+  uploading: {
+    title: 'Uploading file',
+    detail: 'Sending your spreadsheet to Your Guava.',
+    progress: 20,
+  },
+  importing: {
+    title: 'Importing transactions',
+    detail: 'Reading rows, skipping declined payments, and checking for duplicates.',
+    progress: 55,
+  },
+  validating: {
+    title: 'Validating menu items',
+    detail: 'Matching POS item names and prices to your Menu Items.',
+    progress: 75,
+  },
+  forecasting: {
+    title: 'Refreshing forecasts',
+    detail: 'Updating actuals and regenerating the next 7 days.',
+    progress: 92,
+  },
+}
+
+function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: number }) {
+  const current = uploadPhaseText[phase]
+  const pct = Math.max(current.progress, progress)
+  const steps: UploadPhase[] = ['uploading', 'importing', 'validating', 'forecasting']
+  const activeIndex = steps.indexOf(phase)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-2xl">
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-guava-red/10">
+            <LoaderCircle className="h-5 w-5 animate-spin text-guava-red" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-text">{current.title}</p>
+            <p className="mt-1 text-sm text-muted">{current.detail}</p>
+          </div>
+          <span className="text-xs font-semibold text-muted">{pct}%</span>
+        </div>
+
+        <div className="mt-5 h-2 overflow-hidden rounded-full bg-border">
+          <div className="h-full rounded-full bg-guava-red transition-all duration-500" style={{ width: `${pct}%` }} />
+        </div>
+
+        <div className="mt-5 space-y-2">
+          {steps.map((step, index) => {
+            const done = index < activeIndex
+            const active = index === activeIndex
+            return (
+              <div key={step} className="flex items-center gap-2 text-sm">
+                {done ? (
+                  <CheckCircle className="h-4 w-4 text-guava-green" />
+                ) : active ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin text-guava-red" />
+                ) : (
+                  <span className="h-4 w-4 rounded-full border border-border" />
+                )}
+                <span className={cn(done || active ? 'text-text' : 'text-muted')}>
+                  {uploadPhaseText[step].title}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+
+        <p className="mt-5 text-xs text-muted">
+          Large spreadsheets can take a little while. Keep this tab open until the import finishes.
+        </p>
+      </div>
+    </div>
+  )
 }
 
 // Build an array of 30 dates: [today-29, ..., today] as YYYY-MM-DD strings
@@ -182,11 +262,13 @@ export default function Connect() {
   const [isDragging, setIsDragging] = useState(false)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
   const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
+  const [uploadPhase, setUploadPhase] = useState<UploadPhase>('uploading')
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [lastUpload, setLastUpload] = useState<string | null>(null)
   const [stageResponse, setStageResponse] = useState<StageUploadResponse | null>(null)
+  const [stageErrorMsg, setStageErrorMsg] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Fetch data status ────────────────────────────────────────────
@@ -213,18 +295,27 @@ export default function Connect() {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'application/vnd.ms-excel',
     ]
-    const validExt = file.name.endsWith('.csv') || file.name.endsWith('.xlsx')
+    const lowerName = file.name.toLowerCase()
+    const validExt = lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')
 
     if (!validTypes.includes(file.type) && !validExt) {
-      setErrorMsg('Invalid file type. Please upload a .csv or .xlsx file.')
+      setErrorMsg('Invalid file type. Please upload a .csv, .xls, or .xlsx file.')
+      setUploadState('error')
+      return
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setErrorMsg('File is too large. Please upload a file under 10 MB.')
       setUploadState('error')
       return
     }
 
     setUploadState('uploading')
+    setUploadPhase('uploading')
     setProgress(0)
     setErrorMsg(null)
     setResult(null)
+    setStageErrorMsg(null)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -233,18 +324,27 @@ export default function Connect() {
       const { data } = await api.post<StageUploadResponse>('/transactions/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (e) => {
-          if (e.total) setProgress(Math.round((e.loaded / e.total) * 100))
+          if (e.total) setProgress(Math.min(35, Math.round((e.loaded / e.total) * 35)))
         },
       })
       if (data.needsConfirmation) {
         setStageResponse(data)
+        setStageErrorMsg(null)
         setUploadState('idle')
       } else {
-        // Auto-confirm Yoco or any POS file with a complete saved/AI mapping.
+        // Auto-confirm Yoco or any POS file with a complete saved mapping.
+        setUploadPhase('importing')
+        setProgress(55)
+        setTimeout(() => {
+          setUploadPhase('validating')
+          setProgress(75)
+        }, 600)
         const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
           `/uploads/${data.uploadId}/confirm`,
           { columnMapping: data.columnMapping, itemsMode: data.itemsMode }
         )
+        setUploadPhase('forecasting')
+        setProgress(95)
         setResult({
           imported: confirmRes.data.stats.imported,
           skipped: confirmRes.data.stats.skipped,
@@ -257,8 +357,8 @@ export default function Connect() {
         setLastUpload(new Date().toISOString())
       }
     } catch (err: unknown) {
-      const msg = extractErrorMsg(err, '')
-      setErrorMsg(msg ?? 'Upload failed.')
+      const msg = extractErrorMsg(err, 'Upload failed. Please try again.')
+      setErrorMsg(msg)
       setUploadState('error')
     }
   }
@@ -280,7 +380,9 @@ export default function Connect() {
     setUploadState('idle')
     setResult(null)
     setErrorMsg(null)
+    setStageErrorMsg(null)
     setProgress(0)
+    setUploadPhase('uploading')
   }
 
   const openFilePicker = () => {
@@ -304,13 +406,13 @@ export default function Connect() {
       : null
 
   return (
-    <AppLayout title="Connect Data">
+    <AppLayout title="Data Health">
       <div className="space-y-6">
         {/* Hidden file input (shared between Data Status card CTA and Upload card) */}
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,.xlsx"
+          accept=".csv,.xls,.xlsx"
           className="hidden"
           onChange={onFileChange}
         />
@@ -353,7 +455,7 @@ export default function Connect() {
                   <Upload className="w-6 h-6 text-[#555555]" />
                 </div>
                 <p className="text-text font-medium mb-1">
-                  Drop your sales CSV or XLSX here
+                  Drop your sales CSV, XLS, or XLSX here
                 </p>
                 <p className="text-[#555555] text-sm">
                   or{' '}
@@ -361,6 +463,7 @@ export default function Connect() {
                 </p>
                 <div className="flex items-center justify-center gap-2 mt-4">
                   <Badge variant="secondary">.csv</Badge>
+                  <Badge variant="secondary">.xls</Badge>
                   <Badge variant="secondary">.xlsx</Badge>
                 </div>
               </div>
@@ -370,17 +473,17 @@ export default function Connect() {
             {uploadState === 'uploading' && (
               <div className="bg-[#111111] border border-border rounded-xl p-6 text-center">
                 <div className="w-12 h-12 rounded-xl bg-guava-red/10 flex items-center justify-center mx-auto mb-4">
-                  <Upload className="w-6 h-6 text-guava-red animate-bounce" />
+                  <LoaderCircle className="w-6 h-6 text-guava-red animate-spin" />
                 </div>
-                <p className="text-text font-medium mb-1">Uploading...</p>
-                <p className="text-[#555555] text-sm mb-4">Processing your transaction data</p>
+                <p className="text-text font-medium mb-1">{uploadPhaseText[uploadPhase].title}</p>
+                <p className="text-[#555555] text-sm mb-4">{uploadPhaseText[uploadPhase].detail}</p>
                 <div className="h-2 bg-border rounded-full overflow-hidden">
                   <div
                     className="h-full bg-guava-red rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%` }}
+                    style={{ width: `${Math.max(uploadPhaseText[uploadPhase].progress, progress)}%` }}
                   />
                 </div>
-                <p className="text-[#555555] text-xs mt-2">{progress}%</p>
+                <p className="text-[#555555] text-xs mt-2">{Math.max(uploadPhaseText[uploadPhase].progress, progress)}%</p>
               </div>
             )}
 
@@ -430,8 +533,8 @@ export default function Connect() {
                             <span className="text-guava-red mt-0.5">•</span>
                             <span>
                               Filled actuals for past days — see{' '}
-                              <Link to="/forecasts" className="text-guava-red hover:underline">
-                                Forecasts → Last week's results
+                              <Link to="/planning" className="text-guava-red hover:underline">
+                                Planning - Last week's results
                               </Link>
                             </span>
                           </li>
@@ -488,13 +591,27 @@ export default function Connect() {
           preview={stageResponse.preview}
           initialMapping={stageResponse.columnMapping}
           initialItemsMode={stageResponse.itemsMode}
-          onCancel={() => setStageResponse(null)}
+          errorMessage={stageErrorMsg}
+          onCancel={() => {
+            setStageResponse(null)
+            setStageErrorMsg(null)
+          }}
           onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
             try {
+              setUploadState('uploading')
+              setUploadPhase('importing')
+              setProgress(55)
+              setStageErrorMsg(null)
+              setTimeout(() => {
+                setUploadPhase('validating')
+                setProgress(75)
+              }, 600)
               const res = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
                 `/uploads/${stageResponse.uploadId}/confirm`,
                 { columnMapping: mapping, itemsMode }
               )
+              setUploadPhase('forecasting')
+              setProgress(95)
               setResult({
                 imported: res.data.stats.imported,
                 skipped: res.data.stats.skipped,
@@ -505,15 +622,18 @@ export default function Connect() {
               setUploadState('success')
               setHistoryRefreshKey((k) => k + 1)
               setLastUpload(new Date().toISOString())
-            } catch (err: unknown) {
-              setErrorMsg(extractErrorMsg(err, 'Confirm failed.'))
-              setUploadState('error')
-            } finally {
               setStageResponse(null)
+              setStageErrorMsg(null)
+            } catch (err: unknown) {
+              const msg = extractErrorMsg(err, 'Confirm failed. Check the column choices and try again.')
+              setErrorMsg(msg)
+              setStageErrorMsg(msg)
+              setUploadState('error')
             }
           }}
         />
       )}
+      {uploadState === 'uploading' && <ProcessingOverlay phase={uploadPhase} progress={progress} />}
     </AppLayout>
   )
 }

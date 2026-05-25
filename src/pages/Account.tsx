@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   CheckCircle,
   CreditCard,
+  Pencil,
   Sparkles,
   User as UserIcon,
   WalletCards,
@@ -21,8 +23,24 @@ import type { Account, BillingPlan } from '@/types'
 type SaveState = 'idle' | 'saving' | 'success' | 'error'
 type NoticeState = { type: 'success' | 'error'; message: string } | null
 type BillingCycle = 'monthly' | 'annual'
+type PaymentIntent = {
+  provider: 'mock' | 'onegate'
+  reference?: string
+  redirectUrl?: string
+  amount?: number
+  currency?: string
+  status?: 'pending' | 'paid' | 'failed' | 'cancelled'
+}
+type CheckoutResponse = { success: boolean; account?: Account; checkout: PaymentIntent }
+type CreditPurchaseResponse = {
+  success: boolean
+  account?: Account
+  purchase: PaymentIntent & { credits: number }
+}
 
 const formatRand = (value: number) => `R${value.toLocaleString('en-ZA')}`
+const formatDate = (value?: string | null) =>
+  value ? new Date(value).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'
 
 function StatusBanner({ state }: { state: SaveState }) {
   if (state === 'success') {
@@ -60,6 +78,15 @@ function Notice({ notice }: { notice: NoticeState }) {
   )
 }
 
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[#555555] text-[11px] uppercase tracking-wider font-medium">{label}</p>
+      <p className="text-text text-sm font-medium">{value || '—'}</p>
+    </div>
+  )
+}
+
 function UsageMeter({ label, used, total }: { label: string; used: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
   return (
@@ -91,6 +118,7 @@ function PlanCard({
   disabled: boolean
 }) {
   const price = cycle === 'annual' ? plan.priceAnnual : plan.priceMonthly
+  const includedCredits = plan.includedGuavaCredits ?? plan.includedAiCredits
   return (
     <div
       className={
@@ -106,7 +134,7 @@ function PlanCard({
             {active && <Badge variant="success">Current</Badge>}
           </div>
           <p className="text-muted text-sm mt-1">
-            {plan.includedSeats} seats, {plan.includedLocations} locations, {plan.includedAiCredits} AI credits
+            {plan.includedSeats} seats, {plan.includedLocations} locations, {includedCredits} Guava Credits
           </p>
         </div>
         <div className="text-right">
@@ -129,24 +157,30 @@ function PlanCard({
   )
 }
 
-export default function AccountPage() {
+export type AccountSettingsSection = 'all' | 'account' | 'billing'
+
+export function AccountSettingsContent({ section = 'all' }: { section?: AccountSettingsSection }) {
   const { user, isOwner } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [account, setAccount] = useState<Account | null>(null)
   const [notice, setNotice] = useState<NoticeState>(null)
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly')
   const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null)
+  const [isBuyingCredits, setIsBuyingCredits] = useState(false)
   const [profileName, setProfileName] = useState(user?.name ?? '')
   const [organizationName, setOrganizationName] = useState('')
   const [billingEmail, setBillingEmail] = useState(user?.email ?? '')
   const [profileState, setProfileState] = useState<SaveState>('idle')
+  const [isEditingProfile, setIsEditingProfile] = useState(false)
+  const paymentQuery = searchParams.toString()
 
   const showNotice = (type: 'success' | 'error', message: string) => {
     setNotice({ type, message })
     setTimeout(() => setNotice(null), 4000)
   }
 
-  useEffect(() => {
+  const hydrateAccount = () =>
     api
       .get<{ success: boolean; account: Account }>('/account')
       .then(({ data }) => {
@@ -156,11 +190,36 @@ export default function AccountPage() {
         setOrganizationName(data.account.organization.name)
         setBillingEmail(data.account.organization.billingEmail || data.account.user.email)
       })
+
+  useEffect(() => {
+    hydrateAccount()
       .catch(() => {
         setProfileName(user?.name ?? '')
         setBillingEmail(user?.email ?? '')
       })
   }, [user?.email, user?.name])
+
+  useEffect(() => {
+    const payment = searchParams.get('payment')
+    if (!payment || (section !== 'all' && section !== 'billing')) return
+
+    hydrateAccount().catch(() => undefined)
+
+    if (payment === 'paid') {
+      showNotice('success', 'Card payment confirmed. Billing has been updated.')
+    } else if (payment === 'pending') {
+      showNotice('success', 'Card payment is still pending. Guava will update billing once OneGate confirms it.')
+    } else if (payment === 'cancelled') {
+      showNotice('error', 'Card payment was cancelled. No billing changes were made.')
+    } else {
+      showNotice('error', 'Card payment could not be completed. No billing changes were made.')
+    }
+
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.delete('payment')
+    nextParams.delete('reference')
+    setSearchParams(nextParams, { replace: true })
+  }, [paymentQuery, section, setSearchParams])
 
   const handleProfileSave = async (e: FormEvent) => {
     e.preventDefault()
@@ -173,88 +232,166 @@ export default function AccountPage() {
       })
       setAccount(data.account)
       setProfileState('success')
+      setIsEditingProfile(false)
       setTimeout(() => setProfileState('idle'), 3000)
     } catch {
       setProfileState('error')
     }
   }
 
+  const handleProfileCancel = () => {
+    if (account) {
+      setProfileName(account.user.name)
+      setOrganizationName(account.organization.name)
+      setBillingEmail(account.organization.billingEmail || account.user.email)
+    } else {
+      setProfileName(user?.name ?? '')
+      setOrganizationName('')
+      setBillingEmail(user?.email ?? '')
+    }
+    setProfileState('idle')
+    setIsEditingProfile(false)
+  }
+
+  const displayName = account?.user.name || user?.name || ''
+  const displayEmail = account?.user.email || user?.email || ''
+  const displayOrgName = account?.organization.name || ''
+  const displayBillingEmail = account?.organization.billingEmail || displayEmail
+
   const handlePlanCheckout = async (plan: BillingPlan) => {
     setCheckoutPlan(plan.id)
     try {
-      const { data } = await api.post<{ success: boolean; account: Account }>('/account/checkout', {
+      const { data } = await api.post<CheckoutResponse>('/account/checkout', {
         plan: plan.id,
         billingCycle,
-        paymentMethod: { brand: 'visa', last4: '4242', expiresAt: '12/30' },
       })
-      setAccount(data.account)
-      showNotice('success', `${plan.name} plan activated with mock payment ending 4242.`)
+
+      if (data.checkout.redirectUrl) {
+        showNotice('success', 'Opening secure card checkout...')
+        window.location.assign(data.checkout.redirectUrl)
+        return
+      }
+
+      if (data.account) setAccount(data.account)
+      showNotice('success', `${plan.name} plan activated.`)
     } catch (err: any) {
-      showNotice('error', err?.response?.data?.message || 'Could not update plan.')
+      showNotice('error', err?.response?.data?.message || 'Could not start card checkout.')
     } finally {
       setCheckoutPlan(null)
     }
   }
 
   const handleBuyCredits = async () => {
+    setIsBuyingCredits(true)
     try {
-      const { data } = await api.post<{ success: boolean; account: Account }>('/account/ai-credits', { credits: 250 })
-      setAccount(data.account)
-      showNotice('success', 'Added 250 AI credits to this billing period.')
+      const { data } = await api.post<CreditPurchaseResponse>('/account/ai-credits', { credits: 500 })
+
+      if (data.purchase.redirectUrl) {
+        showNotice('success', 'Opening secure card checkout...')
+        window.location.assign(data.purchase.redirectUrl)
+        return
+      }
+
+      if (data.account) setAccount(data.account)
+      showNotice('success', 'Added 500 Guava Credits to this billing period.')
     } catch (err: any) {
-      showNotice('error', err?.response?.data?.message || 'Could not add AI credits.')
+      showNotice('error', err?.response?.data?.message || 'Could not start card checkout.')
+    } finally {
+      setIsBuyingCredits(false)
     }
   }
 
   const selectedPlan = account?.organization.plan || 'starter'
-  const ai = account?.usage.aiCredits
-  const aiTotal = ai ? ai.included + ai.bonus : 0
+  const credits = account?.usage.guavaCredits ?? account?.usage.aiCredits
+  const creditTotal = credits ? credits.included + credits.bonus : 0
+  const creditLedger = account?.usage.creditLedger
+  const showAccountSection = section === 'all' || section === 'account'
+  const showBillingSection = section === 'all' || section === 'billing'
 
   return (
-    <AppLayout title="Account">
       <div className="space-y-6">
         <Notice notice={notice} />
 
-        <Card>
+        {showAccountSection && <Card>
           <CardHeader>
-            <div className="flex items-center gap-2">
-              <UserIcon className="w-4 h-4 text-guava-red" />
-              <CardTitle>Account Details</CardTitle>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <UserIcon className="w-4 h-4 text-guava-red" />
+                  <CardTitle>Account Details</CardTitle>
+                </div>
+                <CardDescription className="mt-1">
+                  Manage your profile, organisation name, and billing contact.
+                </CardDescription>
+              </div>
+              {!isEditingProfile && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsEditingProfile(true)}
+                  disabled={!account}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
+                </Button>
+              )}
             </div>
-            <CardDescription>Manage your profile, organisation name, and billing contact.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleProfileSave} className="space-y-4 max-w-3xl">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="profile-name">Full Name</Label>
-                  <Input id="profile-name" value={profileName} onChange={(e) => setProfileName(e.target.value)} />
+            {isEditingProfile ? (
+              <form onSubmit={handleProfileSave} className="space-y-4 max-w-3xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="profile-name">Full Name</Label>
+                    <Input id="profile-name" value={profileName} onChange={(e) => setProfileName(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="profile-email">Email Address</Label>
+                    <Input id="profile-email" value={displayEmail} readOnly className="opacity-60 cursor-default" />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="profile-email">Email Address</Label>
-                  <Input id="profile-email" value={user?.email ?? ''} readOnly className="opacity-60 cursor-default" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="organization-name">Organisation Name</Label>
+                    <Input id="organization-name" value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="billing-email">Billing Email</Label>
+                    <Input id="billing-email" type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} />
+                  </div>
                 </div>
+                <StatusBanner state={profileState} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="submit" disabled={profileState === 'saving'}>
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    {profileState === 'saving' ? 'Saving...' : 'Save Account'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={handleProfileCancel}
+                    disabled={profileState === 'saving'}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-5 max-w-3xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                  <ReadOnlyField label="Full Name" value={displayName} />
+                  <ReadOnlyField label="Email Address" value={displayEmail} />
+                  <ReadOnlyField label="Organisation Name" value={displayOrgName} />
+                  <ReadOnlyField label="Billing Email" value={displayBillingEmail} />
+                </div>
+                <StatusBanner state={profileState} />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="organization-name">Organisation Name</Label>
-                  <Input id="organization-name" value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="billing-email">Billing Email</Label>
-                  <Input id="billing-email" type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} />
-                </div>
-              </div>
-              <StatusBanner state={profileState} />
-              <Button type="submit" disabled={profileState === 'saving'}>
-                <UserIcon className="w-3.5 h-3.5" />
-                {profileState === 'saving' ? 'Saving...' : 'Save Account'}
-              </Button>
-            </form>
+            )}
           </CardContent>
-        </Card>
+        </Card>}
 
-        <Card>
+        {showBillingSection && <Card>
           <CardHeader>
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -263,7 +400,7 @@ export default function AccountPage() {
                   <CardTitle>Billing and Usage</CardTitle>
                 </div>
                 <CardDescription className="mt-1">
-                  Plans are priced around organisation seats, cafe locations, and AI credits.
+                  Plans are priced around organisation seats, cafe locations, and Guava Credits.
                 </CardDescription>
               </div>
               {account && (
@@ -296,29 +433,65 @@ export default function AccountPage() {
                 <p className="text-[#555555] text-xs mt-1">Cafe branches</p>
               </div>
               <div className="rounded-lg border border-border bg-[#111111] p-4">
-                <p className="text-muted text-sm">AI Credits</p>
-                <p className="text-text text-2xl font-semibold mt-2">{ai?.available ?? 0}</p>
-                <p className="text-[#555555] text-xs mt-1">1 chat prompt = 1 credit</p>
+                <p className="text-muted text-sm">Guava Credits</p>
+                <p className="text-text text-2xl font-semibold mt-2">{credits?.available ?? 0}</p>
+                <p className="text-[#555555] text-xs mt-1">Power AI and data checks</p>
               </div>
             </div>
 
-            <UsageMeter label="AI credit usage this period" used={ai?.used ?? 0} total={aiTotal || 1} />
+            <UsageMeter label="Guava Credit usage this period" used={credits?.used ?? 0} total={creditTotal || 1} />
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" onClick={handleBuyCredits} disabled={!isOwner}>
+              <Button type="button" variant="secondary" onClick={handleBuyCredits} disabled={!isOwner || isBuyingCredits}>
                 <Sparkles className="w-3.5 h-3.5" />
-                Add 250 mock credits
+                {isBuyingCredits ? 'Opening checkout...' : 'Add 500 Guava Credits'}
               </Button>
               <p className="text-[#555555] text-xs flex items-center">
-                Credits reset monthly. Bonus credits stay until used.
+                Included credits reset on {formatDate(credits?.resetAt)}. Bonus credits stay until used.
               </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="rounded-lg border border-border bg-[#111111] p-4">
+                <h3 className="text-sm font-semibold text-text">Credit usage by feature</h3>
+                <div className="mt-3 space-y-2">
+                  {(creditLedger?.byFeature || []).length === 0 ? (
+                    <p className="text-sm text-muted">No metered usage yet this period.</p>
+                  ) : (
+                    creditLedger?.byFeature.map((row) => (
+                      <div key={row.featureKey} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="truncate text-muted">{row.label}</span>
+                        <span className="font-semibold text-text">{row.credits}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg border border-border bg-[#111111] p-4">
+                <h3 className="text-sm font-semibold text-text">Recent credit activity</h3>
+                <div className="mt-3 space-y-2">
+                  {(creditLedger?.recent || []).length === 0 ? (
+                    <p className="text-sm text-muted">Credit activity will appear here as AI tools run.</p>
+                  ) : (
+                    creditLedger?.recent.slice(0, 5).map((entry) => (
+                      <div key={entry.id} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="min-w-0">
+                          <span className="block truncate text-muted">{entry.label}</span>
+                          <span className="block text-xs text-[#555555]">{formatDate(entry.createdAt)}</span>
+                        </span>
+                        <span className="font-semibold text-text">{entry.credits}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
 
             <Separator />
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h3 className="text-text font-semibold">Plans and mock checkout</h3>
-                <p className="text-muted text-sm">Use the mock gateway locally; no real card is charged.</p>
+                <h3 className="text-text font-semibold">Plans and card checkout</h3>
+                <p className="text-muted text-sm">Pay securely by card through hosted checkout.</p>
               </div>
               <div className="inline-flex rounded-lg border border-border bg-[#111111] p-1 w-fit">
                 {(['monthly', 'annual'] as const).map((cycle) => (
@@ -352,20 +525,27 @@ export default function AccountPage() {
             </div>
             {!isOwner && <p className="text-[#555555] text-xs">Only the account owner can change billing.</p>}
           </CardContent>
-        </Card>
+        </Card>}
 
-        <Card>
+        {showBillingSection && <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
               <CreditCard className="w-4 h-4 text-guava-green" />
               <CardTitle>Payment Gateway</CardTitle>
             </div>
             <CardDescription>
-              Mock billing is enabled for local development. The API stores plan, seat, credit, and card metadata without charging a real card.
+              Card details are captured by OneGate's hosted checkout. Guava stores only the billing status, payment reference, and masked card metadata after confirmation.
             </CardDescription>
           </CardHeader>
-        </Card>
+        </Card>}
       </div>
+  )
+}
+
+export default function AccountPage() {
+  return (
+    <AppLayout title="Account">
+      <AccountSettingsContent />
     </AppLayout>
   )
 }

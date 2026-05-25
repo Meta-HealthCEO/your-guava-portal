@@ -74,7 +74,7 @@ export default function Forecasts() {
       : null
 
   return (
-    <AppLayout title="Forecasts">
+    <AppLayout title="Planning">
       <div className="space-y-6">
         <div className="flex items-center gap-2 text-[#555555] text-sm">
           <TrendingUp className="w-4 h-4 text-guava-red" />
@@ -96,7 +96,7 @@ export default function Forecasts() {
         {!loading && futureForecasts.length === 0 && (
           <div className="text-center py-12">
             <p className="text-muted">
-              No forecast data yet. Upload sales data on the Connect page to get started.
+              No forecast data yet. Upload sales data in Data Health to get started.
             </p>
           </div>
         )}

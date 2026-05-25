@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ColumnMapping, ItemsMode } from '@/types/upload'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,8 @@ interface Props {
   preview: Record<string, string>[]
   initialMapping: ColumnMapping
   initialItemsMode: ItemsMode
-  onConfirm: (mapping: ColumnMapping, itemsMode: ItemsMode) => void
+  errorMessage?: string | null
+  onConfirm: (mapping: ColumnMapping, itemsMode: ItemsMode) => void | Promise<void>
   onCancel: () => void
 }
 
@@ -32,11 +33,21 @@ export function ColumnMappingWizard({
   preview,
   initialMapping,
   initialItemsMode,
+  errorMessage,
   onConfirm,
   onCancel,
 }: Props) {
   const [mapping, setMapping] = useState<ColumnMapping>(initialMapping)
   const [itemsMode, setItemsMode] = useState<ItemsMode>(initialItemsMode)
+  const [isConfirming, setIsConfirming] = useState(false)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const requiredOk = useMemo(
     () => Boolean(mapping.date && mapping.items && mapping.total),
@@ -47,6 +58,16 @@ export function ColumnMappingWizard({
 
   const setField = (key: keyof ColumnMapping, value: string | undefined) =>
     setMapping((m) => ({ ...m, [key]: value || undefined }))
+
+  const handleConfirm = async () => {
+    if (!requiredOk || isConfirming) return
+    setIsConfirming(true)
+    try {
+      await onConfirm(mapping, itemsMode)
+    } finally {
+      if (mountedRef.current) setIsConfirming(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-auto">
@@ -111,14 +132,20 @@ export function ColumnMappingWizard({
             </div>
           )}
 
+          {errorMessage && (
+            <div className="rounded-lg border border-red-900/30 bg-red-900/10 px-3 py-2 text-sm text-red-400">
+              {errorMessage}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onCancel}>Cancel</Button>
             <Button
               variant="success"
-              disabled={!requiredOk}
-              onClick={() => onConfirm(mapping, itemsMode)}
+              disabled={!requiredOk || isConfirming}
+              onClick={handleConfirm}
             >
-              Confirm and import
+              {isConfirming ? 'Importing...' : 'Confirm and import'}
             </Button>
           </div>
         </CardContent>

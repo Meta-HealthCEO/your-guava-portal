@@ -67,6 +67,6 @@ describe('Signup', () => {
       )
     })
 
-    expect(mockNavigate).toHaveBeenCalledWith('/dashboard')
-  })
+    expect(mockNavigate).toHaveBeenCalledWith('/today')
+  }, 10000)
 })

@@ -8,20 +8,29 @@ vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
 // Mock recharts
-vi.mock('recharts', () => ({
-  ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div data-testid="responsive-container">{children}</div>,
-  AreaChart: ({ children }: { children: React.ReactNode }) => <div data-testid="area-chart">{children}</div>,
-  Area: () => <div data-testid="area" />,
-  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
-  Bar: () => <div data-testid="bar" />,
-  PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
-  Pie: ({ children }: { children: React.ReactNode }) => <div data-testid="pie">{children}</div>,
-  Cell: () => <div />,
-  Tooltip: () => <div />,
-  XAxis: () => <div />,
-  YAxis: () => <div />,
-  CartesianGrid: () => <div />,
-}))
+vi.mock('recharts', () => {
+  const fillFrom = (value: unknown) => {
+    if (value && typeof value === 'object' && 'fill' in value) {
+      return String((value as { fill?: unknown }).fill ?? '')
+    }
+    return ''
+  }
+
+  return {
+    ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div data-testid="responsive-container">{children}</div>,
+    AreaChart: ({ children }: { children: React.ReactNode }) => <div data-testid="area-chart">{children}</div>,
+    Area: () => <div data-testid="area" />,
+    BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
+    Bar: ({ activeBar }: { activeBar?: unknown }) => <div data-testid="bar" data-active-fill={fillFrom(activeBar)} />,
+    PieChart: ({ children }: { children: React.ReactNode }) => <div data-testid="pie-chart">{children}</div>,
+    Pie: ({ children }: { children: React.ReactNode }) => <div data-testid="pie">{children}</div>,
+    Cell: () => <div />,
+    Tooltip: ({ cursor }: { cursor?: unknown }) => <div data-testid="tooltip" data-cursor-fill={fillFrom(cursor)} />,
+    XAxis: () => <div />,
+    YAxis: () => <div />,
+    CartesianGrid: () => <div />,
+  }
+})
 
 // Mock the api module
 const mockGet = vi.fn()
@@ -161,6 +170,37 @@ describe('Analytics', () => {
     expect(screen.getAllByText('Long White').length).toBeGreaterThan(0)
   })
 
+  it('uses dark-theme hover styling on the item bar chart', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/items')) {
+        return Promise.resolve({
+          data: {
+            items: [
+              { name: 'Flat White', totalQty: 200, totalRevenue: 8000, avgPerDay: 10, trend: 5.0 },
+              { name: 'Long White', totalQty: 180, totalRevenue: 7200, avgPerDay: 9, trend: -2.0 },
+            ],
+            meta: { startDate: null, endDate: null },
+          },
+        })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Items' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Top 10 Items by Quantity')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('tooltip')).toHaveAttribute('data-cursor-fill', 'rgba(77, 166, 59, 0.08)')
+    expect(screen.getByTestId('bar')).toHaveAttribute('data-active-fill', '#62B84D')
+  })
+
   it('shows combos tab with data', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/analytics/combos')) {
@@ -191,6 +231,34 @@ describe('Analytics', () => {
 
     expect(screen.getByText('Flat White + Brownie')).toBeInTheDocument()
     expect(screen.getByText('Long White + Muffin')).toBeInTheDocument()
+  })
+
+  it('maps heatmap weekday indexes to the correct rows', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/heatmap')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            heatmap: [{ dayOfWeek: 1, hour: 8, revenue: 100, transactions: 3 }],
+          },
+        })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: { data: [], summary: { totalRevenue: 0, avgDailyRevenue: 0, bestDay: null, worstDay: null, trend: 0 } } })
+    })
+
+    render(<Analytics />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Heatmap' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Average Revenue Heatmap')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTitle('Mon 08:00 - R100 avg')).toBeInTheDocument()
+    expect(screen.getByTitle('Sun 08:00 - R0 avg')).toBeInTheDocument()
   })
 
   it('shows tipping rate as percentage (no double-multiply)', async () => {

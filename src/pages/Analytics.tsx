@@ -44,8 +44,19 @@ function formatZAR(amount: number) {
   return `R${amount.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}`
 }
 
+function formatCount(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
+}
+
+function formatDateParam(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 type TabId = 'revenue' | 'items' | 'heatmap' | 'customers' | 'combos'
@@ -57,6 +68,16 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'customers', label: 'Customers' },
   { id: 'combos', label: 'Combos' },
 ]
+
+const CHART_TOOLTIP_STYLE = {
+  background: '#1A1A1A',
+  border: '1px solid #2A2A2A',
+  borderRadius: 8,
+  color: '#F0F0F0',
+}
+
+const BAR_HOVER_CURSOR = { fill: 'rgba(77, 166, 59, 0.08)' }
+const BAR_ACTIVE_STYLE = { fill: '#62B84D' }
 
 type PeriodId = '7d' | '30d' | '90d'
 
@@ -96,15 +117,24 @@ function daysForPeriod(period: PeriodId): number {
 
 function getDateRange(period: PeriodId) {
   const end = new Date()
-  const start = new Date()
-  start.setDate(start.getDate() - daysForPeriod(period))
+  const start = new Date(end)
+  start.setDate(end.getDate() - (daysForPeriod(period) - 1))
   return {
-    startDate: start.toISOString().split('T')[0],
-    endDate: end.toISOString().split('T')[0],
+    startDate: formatDateParam(start),
+    endDate: formatDateParam(end),
   }
 }
 
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const DAY_LABELS_BY_INDEX = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const DAY_ROWS = [
+  { label: 'Mon', value: 1 },
+  { label: 'Tue', value: 2 },
+  { label: 'Wed', value: 3 },
+  { label: 'Thu', value: 4 },
+  { label: 'Fri', value: 5 },
+  { label: 'Sat', value: 6 },
+  { label: 'Sun', value: 0 },
+]
 const HOURS = Array.from({ length: 17 }, (_, i) => i + 6) // 06:00 - 22:00
 
 // ── Period Selector ───────────────────────────────────────────────────────────
@@ -130,6 +160,7 @@ function PeriodSelector({ period, onChange }: { period: PeriodId; onChange: (p: 
 
 function RevenueTab() {
   const [period, setPeriod] = useState<PeriodId>('30d')
+  const [reloadKey, setReloadKey] = useState(0)
   const [data, setData] = useState<RevenueAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -153,13 +184,13 @@ function RevenueTab() {
       })
       .catch(() => setError('Failed to load revenue data'))
       .finally(() => setLoading(false))
-  }, [period])
+  }, [period, reloadKey])
 
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <p className="text-muted text-sm">{error}</p>
-        <Button variant="outline" size="sm" className="mt-4" onClick={() => setPeriod(period)}>
+        <Button variant="outline" size="sm" className="mt-4" onClick={() => setReloadKey((key) => key + 1)}>
           Retry
         </Button>
       </div>
@@ -321,7 +352,7 @@ function ItemsTab() {
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-guava-green text-xs font-semibold uppercase tracking-wider mb-2">Rising 📈</p>
+                <p className="text-guava-green text-xs font-semibold uppercase tracking-wider mb-2">Rising</p>
                 {rising.length === 0 ? (
                   <p className="text-[#555555] text-xs">No rising items</p>
                 ) : (
@@ -338,7 +369,7 @@ function ItemsTab() {
                 )}
               </div>
               <div>
-                <p className="text-guava-red text-xs font-semibold uppercase tracking-wider mb-2">Declining 📉</p>
+                <p className="text-guava-red text-xs font-semibold uppercase tracking-wider mb-2">Declining</p>
                 {declining.length === 0 ? (
                   <p className="text-[#555555] text-xs">No declining items</p>
                 ) : (
@@ -383,10 +414,11 @@ function ItemsTab() {
                   />
                   <YAxis tick={{ fill: '#888888', fontSize: 11 }} stroke="#2A2A2A" />
                   <Tooltip
-                    contentStyle={{ background: '#1A1A1A', border: '1px solid #2A2A2A', borderRadius: 8, color: '#F0F0F0' }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    cursor={BAR_HOVER_CURSOR}
                     formatter={(value: number) => [value, 'Qty Sold']}
                   />
-                  <Bar dataKey="totalQty" fill="#4DA63B" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="totalQty" fill="#4DA63B" radius={[4, 4, 0, 0]} activeBar={BAR_ACTIVE_STYLE} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -514,7 +546,7 @@ function HeatmapTab() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Revenue Heatmap</CardTitle>
+          <CardTitle className="text-sm">Average Revenue Heatmap</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -525,10 +557,13 @@ function HeatmapTab() {
               {hoveredCell && (
                 <div className="absolute top-0 right-0 bg-[#111111] border border-border rounded-lg px-3 py-2 z-10 text-xs">
                   <p className="text-text font-medium">
-                    {DAYS[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
+                    {DAY_LABELS_BY_INDEX[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
                   </p>
                   <p className="text-muted">{formatZAR(hoveredCell.revenue)} avg</p>
-                  <p className="text-[#555555]">{hoveredCell.transactions} transactions</p>
+                  <p className="text-[#555555]">{formatCount(hoveredCell.transactions)} avg transactions</p>
+                  {(hoveredCell.observedDays ?? 0) > 0 && (
+                    <p className="text-[#555555]">{hoveredCell.observedDays} observed days</p>
+                  )}
                 </div>
               )}
               <div className="overflow-x-auto">
@@ -543,19 +578,20 @@ function HeatmapTab() {
                     ))}
                   </div>
                   {/* Grid rows */}
-                  {DAYS.map((day, dayIdx) => (
-                    <div key={day} className="flex items-center mb-0.5">
-                      <div className="w-10 shrink-0 text-[11px] text-muted">{day}</div>
+                  {DAY_ROWS.map((row) => (
+                    <div key={row.value} className="flex items-center mb-0.5">
+                      <div className="w-10 shrink-0 text-[11px] text-muted">{row.label}</div>
                       {HOURS.map((hour) => {
-                        const cell = cellMap.get(`${dayIdx}-${hour}`)
+                        const cell = cellMap.get(`${row.value}-${hour}`)
                         const revenue = cell?.revenue ?? 0
                         return (
                           <div
                             key={hour}
                             className="flex-1 aspect-square rounded-sm mx-0.5 cursor-pointer transition-opacity hover:opacity-80"
                             style={{ backgroundColor: getCellColor(revenue) }}
+                            title={`${row.label} ${String(hour).padStart(2, '0')}:00 - ${formatZAR(revenue)} avg`}
                             onMouseEnter={() =>
-                              setHoveredCell(cell ?? { dayOfWeek: dayIdx, hour, revenue: 0, transactions: 0 })
+                              setHoveredCell(cell ?? { dayOfWeek: row.value, hour, revenue: 0, transactions: 0 })
                             }
                             onMouseLeave={() => setHoveredCell(null)}
                           />
@@ -835,7 +871,7 @@ export default function Analytics() {
   const [activeTab, setActiveTab] = useState<TabId>('revenue')
 
   return (
-    <AppLayout title="Analytics">
+    <AppLayout title="Performance">
       {/* Tab Selector */}
       <div className="flex items-center gap-1 mb-6 border-b border-border pb-px">
         {TABS.map((tab) => (

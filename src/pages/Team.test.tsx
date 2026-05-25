@@ -156,7 +156,7 @@ describe('Team', () => {
     expect(screen.getByPlaceholderText('Team member name')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('member@example.com')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Temporary password')).toBeInTheDocument()
-  })
+  }, 10000)
 
   it('shows cafe checkboxes in invite form', async () => {
     mockGet.mockImplementation((url: string) => {

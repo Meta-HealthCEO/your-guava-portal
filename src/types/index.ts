@@ -16,7 +16,7 @@ export interface Organization {
   billingStatus?: 'trialing' | 'active' | 'past_due' | 'canceled'
   billingCycle?: 'monthly' | 'annual'
   billingEmail?: string
-  paymentMethod?: { brand: string; last4: string; expiresAt: string }
+  paymentMethod?: { brand: string; last4: string; expiresAt: string; provider?: 'mock' | 'onegate' | string }
 }
 
 export interface TeamMember {
@@ -35,16 +35,34 @@ export interface BillingPlan {
   priceAnnual: number
   includedSeats: number
   includedAiCredits: number
+  includedGuavaCredits?: number
   includedLocations: number
   overagePerSeat: number
   aiCreditPackPrice: number
+  guavaCreditPackPrice?: number
+  creditPackOptions?: { credits: number; price: number }[]
   features: string[]
+}
+
+export interface CreditLedgerSummary {
+  byFeature: { featureKey: string; label: string; credits: number; count: number }[]
+  recent: {
+    id: string
+    featureKey: string
+    label: string
+    credits: number
+    status: 'committed' | 'refunded'
+    provider?: string
+    createdAt: string
+  }[]
 }
 
 export interface AccountUsage {
   seats: { used: number; included: number; remaining: number }
   locations: { used: number; included: number; remaining: number }
   aiCredits: { included: number; bonus: number; used: number; available: number; resetAt: string | null }
+  guavaCredits?: { included: number; bonus: number; used: number; available: number; resetAt: string | null }
+  creditLedger?: CreditLedgerSummary
 }
 
 export interface Account {
@@ -59,20 +77,53 @@ export interface CafeBasic {
   name: string
 }
 
+export interface TradingHoursEntry {
+  dayOfWeek: number
+  isOpen: boolean
+  openTime: string
+  closeTime: string
+}
+
+export interface CafeLocation {
+  address?: string
+  addressLine2?: string
+  suburb?: string
+  city?: string
+  postalCode?: string
+  province?: string
+  country?: string
+  lat?: number
+  lng?: number
+}
+
 export interface Cafe {
   _id: string
   name: string
-  location: { address: string; city: string; lat?: number; lng?: number }
+  location: CafeLocation
   yocoConnected: boolean
   dataUploaded: boolean
   lastSyncAt?: string
+  tradingHours?: TradingHoursEntry[]
+  timezone?: string
 }
 
 export interface ForecastItem {
   itemName: string
+  baseQty?: number
   predictedQty: number
   actualQty?: number | null
   suggestedStock?: number
+  factors?: ForecastFactor[]
+}
+
+export interface ForecastFactor {
+  key: string
+  label: string
+  active: boolean
+  adjustmentPct?: number | null
+  multiplier?: number | null
+  effect?: string
+  reason?: string
 }
 
 export interface Forecast {
@@ -80,14 +131,25 @@ export interface Forecast {
   date: string
   items: ForecastItem[]
   signals: {
-    weather: { temp: number; condition: string; humidity: number }
+    weather: {
+      temp: number
+      condition: string
+      humidity: number
+      isRain?: boolean
+      precipMm?: number
+      chanceOfRain?: number
+    }
     loadSheddingStage: number
     isPublicHoliday: boolean
     isSchoolHoliday: boolean
     isPayday: boolean
     dayOfWeek: number
-    events?: { name: string; impact: string }[]
+    events?: { name: string; impact: string; impactPct?: number }[]
   }
+  factors?: ForecastFactor[]
+  factorSettings?: ForecastFactorSettings
+  factorEntitlements?: ForecastFactorEntitlements
+  calibration?: ForecastCalibration
   totalPredictedRevenue: number
   actualRevenue?: number | null
   actualTransactionCount?: number | null
@@ -102,13 +164,174 @@ export interface Forecast {
   }
 }
 
+export interface ForecastCalibrationEntry {
+  key?: string
+  label?: string
+  itemName?: string
+  multiplier: number
+  sampleSize: number
+  averageRatio: number
+}
+
+export interface ForecastCalibration {
+  lookbackDays: number
+  sampleSize: number
+  overallMultiplier: number
+  factorMultipliers: ForecastCalibrationEntry[]
+  itemMultipliers: ForecastCalibrationEntry[]
+  generatedAt: string
+}
+
+export interface ForecastHistoryRow {
+  forecastId: string
+  date: string
+  predictedRevenue: number
+  actualRevenue: number
+  variance: number
+  variancePct: number | null
+  revenueAccuracy: number | null
+  itemAccuracy: number | null
+  transactionCount: number
+  weather: Forecast['signals']['weather'] | null
+  signals: {
+    isPublicHoliday: boolean
+    isSchoolHoliday: boolean
+    isPayday: boolean
+    loadSheddingStage: number
+    events: { name: string; impact: string; impactPct?: number }[]
+  }
+  activeFactors: ForecastFactor[]
+  factorSummary: {
+    key: string
+    label: string
+    effect?: string
+    adjustmentPct?: number | null
+  }[]
+  calibration?: ForecastCalibration
+  trainingData?: Forecast['trainingData']
+  generatedAt?: string
+  actualsUpdatedAt?: string
+}
+
+export interface ForecastHistoryMeta {
+  days: number
+  startDate: string
+  endDate: string
+  totalTradingDays: number
+  totalRows: number
+  generated: number
+  pendingDays: number
+  isPartial: boolean
+  backfill?: {
+    status: 'complete' | 'started' | 'running'
+    pendingDays: number
+    batchSize: number
+  }
+  overallRevenueAccuracy: number | null
+  avgDailyRevenueAccuracy: number | null
+  avgRevenueAccuracy: number | null
+  totalPredictedRevenue: number
+  totalActualRevenue: number
+  variance: number
+  variancePct: number | null
+}
+
+export interface ForecastHistoryResponse {
+  success: boolean
+  history: ForecastHistoryRow[]
+  rows?: ForecastHistoryRow[]
+  meta: ForecastHistoryMeta
+}
+
 export interface LocalEvent {
   _id: string
   name: string
   date: string
   impact: 'low' | 'medium' | 'high'
+  impactPct?: number
   notes?: string
   recurring: boolean
+}
+
+export interface EventSalesEffect {
+  eventId: string
+  name: string
+  date: string
+  impact: 'low' | 'medium' | 'high'
+  expectedImpactPct: number
+  actualRevenue: number
+  actualTransactions: number
+  baselineRevenue: number
+  baselineTransactions: number
+  baselineDayCount: number
+  revenueImpactPct: number | null
+  transactionImpactPct: number | null
+  vsExpectedPct: number | null
+  confidence: 'none' | 'low' | 'medium' | 'high'
+}
+
+export interface ForecastFactorSettings {
+  history: {
+    maxWeeks: number
+    recentWeights: number[]
+    twoWeekWeights: number[]
+  }
+  weather: {
+    enabled: boolean
+    hotTemp: number
+    coldTemp: number
+    hotColdDrinkPct: number
+    hotCoffeePct: number
+    coldCoffeePct: number
+    coldColdDrinkPct: number
+    rainPct: number
+    minimumMultiplier: number
+  }
+  loadShedding: {
+    enabled: boolean
+    stage1To2Pct: number
+    stage3To4Pct: number
+    stage5PlusPct: number
+  }
+  holiday: {
+    enabled: boolean
+    publicPct: number
+    schoolPct: number
+    combinedPct: number
+  }
+  payday: {
+    enabled: boolean
+    pct: number
+  }
+  events: {
+    enabled: boolean
+    lowPct: number
+    mediumPct: number
+    highPct: number
+  }
+  stock: {
+    safetyMarginPct: number
+    maxBiasPct: number
+  }
+  learning: {
+    enabled: boolean
+  }
+}
+
+export interface ForecastFactorEntitlement {
+  key: string
+  label: string
+  section: keyof ForecastFactorSettings
+  requiredPlan: 'starter' | 'growth' | 'pro'
+  summary: string
+  unlocked: boolean
+}
+
+export interface ForecastFactorEntitlements {
+  plan: 'free' | 'starter' | 'growth' | 'pro'
+  factors: ForecastFactorEntitlement[]
+  unlockedKeys: string[]
+  lockedKeys: string[]
 }
 
 export interface YocoStatus {
@@ -124,6 +347,46 @@ export interface TransactionStats {
   topItems: { name: string; qty: number }[]
   firstDate: string
   lastDate: string
+}
+
+export type SalesItemCategory = 'coffee' | 'food' | 'cold_drink' | 'water' | 'retail' | 'other'
+export type SalesItemReviewStatus = 'matched' | 'needs_review' | 'ignored' | 'merged'
+
+export interface SalesItem {
+  _id: string
+  cafeId: string
+  name: string
+  normalizedName?: string
+  aliases?: string[]
+  category: SalesItemCategory
+  expectedPrice?: number
+  priceTolerancePct?: number
+  reviewStatus: SalesItemReviewStatus
+  source?: 'manual' | 'pos' | 'imported' | 'system'
+  avgPrice?: number
+  observedPriceMin?: number
+  observedPriceMax?: number
+  lastObservedPrice?: number
+  totalSold: number
+  isActive: boolean
+  lastSeenAt?: string
+  firstSeenAt?: string
+  lastPriceMismatchAt?: string
+  priceMismatchCount?: number
+  notes?: string
+  candidates?: { item: SalesItem; score: number }[]
+  aiSuggestion?: {
+    action: 'map_to' | 'confirm' | 'ignore'
+    targetItemId?: string
+    targetName?: string
+    category?: SalesItemCategory
+    expectedPrice?: number
+    aliases?: string[]
+    confidence: number
+    reason: string
+    source: 'ai' | 'rules'
+    needsApproval: boolean
+  }
 }
 
 export interface DayForecast {
@@ -181,6 +444,9 @@ export interface HeatmapCell {
   hour: number
   revenue: number
   transactions: number
+  totalRevenue?: number
+  totalTransactions?: number
+  observedDays?: number
 }
 
 export interface CustomerInsights {

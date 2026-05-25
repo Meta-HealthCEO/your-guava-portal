@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../your-guava-backend"
+		}
+	],
+	"settings": {}
+}

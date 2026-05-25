@@ -259,7 +259,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 Why this prediction?
               </p>
-              <ModifierBreakdown signals={signals} />
+              <ModifierBreakdown signals={signals} factors={forecast.factors} />
             </div>
           )}
 
@@ -387,8 +387,8 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               <div className="rounded-lg bg-[#111111] border border-border p-4 flex items-start gap-3">
                 <Sparkles className="w-4 h-4 text-guava-red shrink-0 mt-0.5" />
                 <p className="text-muted text-xs leading-relaxed">
-                  AI insights load globally — see the{' '}
-                  <span className="text-guava-red">Insights page</span> for the full list powered by Claude.
+                  AI insights load globally - see{' '}
+                  <span className="text-guava-red">Ask Guava</span> for the full list powered by Claude.
                 </p>
               </div>
             </>
