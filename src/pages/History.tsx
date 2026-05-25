@@ -5,6 +5,8 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   CloudRain,
   History as HistoryIcon,
   RefreshCw,
@@ -23,6 +25,8 @@ const PERIODS = [
   { label: '180d', days: 180 },
   { label: '365d', days: 365 },
 ]
+
+const HISTORY_PAGE_SIZE = 30
 
 const currency = new Intl.NumberFormat('en-ZA', {
   style: 'currency',
@@ -118,8 +122,10 @@ function LoadingState() {
 
 export default function History() {
   const [days, setDays] = useState(90)
+  const [page, setPage] = useState(1)
   const [history, setHistory] = useState<ForecastHistoryRow[]>([])
   const [meta, setMeta] = useState<ForecastHistoryResponse['meta'] | null>(null)
+  const [pagination, setPagination] = useState<ForecastHistoryResponse['pagination'] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
@@ -130,16 +136,20 @@ export default function History() {
     setError(null)
 
     api
-      .get<ForecastHistoryResponse>(`/forecasts/history?days=${days}`)
+      .get<ForecastHistoryResponse>('/forecasts/history', {
+        params: { days, page, limit: HISTORY_PAGE_SIZE },
+      })
       .then(({ data }) => {
         if (cancelled) return
         setHistory(data.history || data.rows || [])
         setMeta(data.meta)
+        setPagination(data.pagination || null)
       })
       .catch(() => {
         if (cancelled) return
         setHistory([])
         setMeta(null)
+        setPagination(null)
         setError('History could not be loaded.')
       })
       .finally(() => {
@@ -149,7 +159,7 @@ export default function History() {
     return () => {
       cancelled = true
     }
-  }, [days, refreshNonce])
+  }, [days, page, refreshNonce])
 
   useEffect(() => {
     if (loading || error || !meta?.pendingDays) return
@@ -165,6 +175,19 @@ export default function History() {
     if (!meta || meta.variance === 0) return 'neutral'
     return meta.variance > 0 ? 'good' : 'bad'
   }, [meta])
+  const pageInfo = pagination || {
+    total: history.length,
+    page: 1,
+    limit: HISTORY_PAGE_SIZE,
+    pages: 1,
+  }
+  const rowStart = pageInfo.total === 0 ? 0 : (pageInfo.page - 1) * pageInfo.limit + 1
+  const rowEnd = Math.min(pageInfo.page * pageInfo.limit, pageInfo.total)
+  const showPagination = pageInfo.total > pageInfo.limit
+  const selectPeriod = (nextDays: number) => {
+    setDays(nextDays)
+    setPage(1)
+  }
 
   return (
     <AppLayout
@@ -176,7 +199,7 @@ export default function History() {
               key={period.days}
               variant={days === period.days ? 'default' : 'outline'}
               size="sm"
-              onClick={() => setDays(period.days)}
+              onClick={() => selectPeriod(period.days)}
             >
               {period.label}
             </Button>
@@ -255,6 +278,22 @@ export default function History() {
             <ModelLearningPanel sources={history} />
 
             <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-text">Daily prediction history</p>
+                  <p className="mt-0.5 text-xs text-muted">
+                    Showing {rowStart.toLocaleString('en-ZA')}-{rowEnd.toLocaleString('en-ZA')} of {pageInfo.total.toLocaleString('en-ZA')} completed trading days
+                  </p>
+                </div>
+                {showPagination && (
+                  <HistoryPagination
+                    page={pageInfo.page}
+                    pages={pageInfo.pages}
+                    onPrevious={() => setPage(Math.max(1, pageInfo.page - 1))}
+                    onNext={() => setPage(Math.min(pageInfo.pages, pageInfo.page + 1))}
+                  />
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead className="border-b border-border bg-[#151515] text-left text-xs uppercase tracking-wide text-[#777777]">
@@ -334,10 +373,60 @@ export default function History() {
                   </tbody>
                 </table>
               </div>
+              {showPagination && (
+                <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-muted">
+                  <span>
+                    Page {pageInfo.page.toLocaleString('en-ZA')} of {pageInfo.pages.toLocaleString('en-ZA')}
+                  </span>
+                  <HistoryPagination
+                    page={pageInfo.page}
+                    pages={pageInfo.pages}
+                    onPrevious={() => setPage(Math.max(1, pageInfo.page - 1))}
+                    onNext={() => setPage(Math.min(pageInfo.pages, pageInfo.page + 1))}
+                  />
+                </div>
+              )}
             </div>
           </>
         )}
       </div>
     </AppLayout>
+  )
+}
+
+function HistoryPagination({
+  page,
+  pages,
+  onPrevious,
+  onNext,
+}: {
+  page: number
+  pages: number
+  onPrevious: () => void
+  onNext: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label="Previous history page"
+        onClick={onPrevious}
+        disabled={page <= 1}
+      >
+        <ChevronLeft className="h-4 w-4" />
+        Previous
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label="Next history page"
+        onClick={onNext}
+        disabled={page >= pages}
+      >
+        Next
+        <ChevronRight className="h-4 w-4" />
+      </Button>
+    </div>
   )
 }

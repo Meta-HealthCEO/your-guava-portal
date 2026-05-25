@@ -241,6 +241,12 @@ export interface ForecastHistoryResponse {
   history: ForecastHistoryRow[]
   rows?: ForecastHistoryRow[]
   meta: ForecastHistoryMeta
+  pagination?: {
+    total: number
+    page: number
+    limit: number
+    pages: number
+  }
 }
 
 export interface LocalEvent {

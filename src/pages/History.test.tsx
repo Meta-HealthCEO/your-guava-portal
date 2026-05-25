@@ -96,6 +96,12 @@ const historyPayload = {
     variance: 200,
     variancePct: 20,
   },
+  pagination: {
+    total: 1,
+    page: 1,
+    limit: 30,
+    pages: 1,
+  },
 }
 
 function renderHistory() {
@@ -116,7 +122,11 @@ describe('History page', () => {
     renderHistory()
 
     expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
-    await waitFor(() => expect(mockGet).toHaveBeenCalledWith('/forecasts/history?days=90'))
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenCalledWith('/forecasts/history', {
+        params: { days: 90, page: 1, limit: 30 },
+      })
+    )
 
     expect(screen.getByText(/Patchy rain nearby/)).toBeInTheDocument()
     expect(screen.getByText(/Local Market/)).toBeInTheDocument()
@@ -135,7 +145,45 @@ describe('History page', () => {
     await screen.findByText(/Patchy rain nearby/)
     await user.click(screen.getByRole('button', { name: '365d' }))
 
-    await waitFor(() => expect(mockGet).toHaveBeenLastCalledWith('/forecasts/history?days=365'))
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenLastCalledWith('/forecasts/history', {
+        params: { days: 365, page: 1, limit: 30 },
+      })
+    )
+  })
+
+  it('pages through historical rows', async () => {
+    const user = userEvent.setup()
+    mockGet.mockImplementation((_url: string, config?: { params?: { page?: number } }) => {
+      const page = config?.params?.page || 1
+      return Promise.resolve({
+        data: {
+          ...historyPayload,
+          history: [
+            {
+              ...historyPayload.history[0],
+              forecastId: page === 1 ? 'forecast-1' : 'forecast-2',
+              date: page === 1 ? '2026-05-18T00:00:00.000Z' : '2026-05-17T00:00:00.000Z',
+              transactionCount: page === 1 ? 42 : 31,
+            },
+          ],
+          pagination: { total: 61, page, limit: 30, pages: 3 },
+          meta: { ...historyPayload.meta, totalRows: 61, totalTradingDays: 61 },
+        },
+      })
+    })
+
+    renderHistory()
+
+    expect(await screen.findByText(/Showing 1-30 of 61 completed trading days/)).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: /next history page/i })[0])
+
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenLastCalledWith('/forecasts/history', {
+        params: { days: 90, page: 2, limit: 30 },
+      })
+    )
+    expect(await screen.findByText(/Showing 31-60 of 61 completed trading days/)).toBeInTheDocument()
   })
 
   it('shows an empty state when there are no completed trading days', async () => {
@@ -157,6 +205,7 @@ describe('History page', () => {
           variance: 0,
           variancePct: null,
         },
+        pagination: { total: 0, page: 1, limit: 30, pages: 1 },
       },
     })
 
@@ -186,6 +235,7 @@ describe('History page', () => {
           variance: 0,
           variancePct: null,
         },
+        pagination: { total: 0, page: 1, limit: 30, pages: 1 },
       },
     })
 
