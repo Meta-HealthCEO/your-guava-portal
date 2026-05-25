@@ -1307,26 +1307,6 @@ export default function Insights() {
     }
   }
 
-  const actions = (
-    <div className="flex items-center gap-3">
-      {lastUpdated && (
-        <div className="hidden sm:flex items-center gap-1.5 text-[#555555] text-xs">
-          <Clock className="w-3 h-3" />
-          <span>Updated {timeAgo(lastUpdated)}</span>
-        </div>
-      )}
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => loadInsights(true)}
-        disabled={isRefreshing}
-      >
-        <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
-        {isRefreshing ? 'Refreshing...' : 'Refresh'}
-      </Button>
-    </div>
-  )
-
   return (
     <>
       <AppLayout
@@ -1336,7 +1316,6 @@ export default function Insights() {
             <Sparkles className="w-4 h-4 text-guava-red" />
           </div>
         }
-        actions={actions}
       >
         <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[minmax(0,1fr)_420px] 2xl:h-[calc(100vh-113px)] 2xl:min-h-0">
           <Card className="relative flex min-h-140 flex-col overflow-hidden 2xl:h-full 2xl:min-h-0">
@@ -1449,11 +1428,32 @@ export default function Insights() {
 
             <Card className="flex max-h-180 min-h-90 flex-col overflow-hidden 2xl:min-h-0 2xl:flex-1 2xl:max-h-none">
               <CardHeader className="shrink-0 pb-3">
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-guava-red" />
-                  Auto Analysis
-                </CardTitle>
-                <CardDescription>Generated from recent sales and upcoming signals.</CardDescription>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-guava-red" />
+                      Auto Analysis
+                    </CardTitle>
+                    <CardDescription>Generated from recent sales and upcoming signals.</CardDescription>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {lastUpdated && (
+                      <div className="flex items-center gap-1.5 text-[#555555] text-xs">
+                        <Clock className="w-3 h-3" />
+                        <span>Updated {timeAgo(lastUpdated)}</span>
+                      </div>
+                    )}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => loadInsights(true)}
+                      disabled={isRefreshing}
+                    >
+                      <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                      {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                    </Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 overflow-y-auto">
                 {!isLoading && !hasData && (

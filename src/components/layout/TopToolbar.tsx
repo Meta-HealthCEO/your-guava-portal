@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Bell,
@@ -31,10 +31,6 @@ interface CreditBalance {
   }
 }
 
-interface TopToolbarProps {
-  actions?: ReactNode
-}
-
 type OpenMenu = 'notifications' | 'user' | null
 
 const formatCompactNumber = (value?: number) => {
@@ -48,7 +44,7 @@ const initialsFor = (name?: string | null, email?: string | null) => {
   return words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join('')
 }
 
-export function TopToolbar({ actions }: TopToolbarProps) {
+export function TopToolbar() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const toolbarRef = useRef<HTMLDivElement | null>(null)
@@ -113,15 +109,13 @@ export function TopToolbar({ actions }: TopToolbarProps) {
     }
   }
 
-  const availableCredits = credits?.credits.available
+  const availableCredits = credits?.credits?.available
   const lowCredits = typeof availableCredits === 'number' && availableCredits <= 100
   const notificationCount = lowCredits ? 1 : 0
   const initials = initialsFor(user?.name, user?.email)
 
   return (
     <div ref={toolbarRef} className="flex min-w-0 items-center justify-end gap-2">
-      {actions && <div className="hidden items-center gap-2 md:flex">{actions}</div>}
-
       <button
         type="button"
         onClick={() => goTo('/settings?section=billing')}

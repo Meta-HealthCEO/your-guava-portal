@@ -6,10 +6,9 @@ import { TopToolbar } from './TopToolbar'
 interface AppLayoutProps {
   children: ReactNode
   title?: ReactNode
-  actions?: ReactNode
 }
 
-export function AppLayout({ children, title, actions }: AppLayoutProps) {
+export function AppLayout({ children, title }: AppLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
@@ -32,7 +31,7 @@ export function AppLayout({ children, title, actions }: AppLayoutProps) {
               </div>
             )}
           </div>
-          <TopToolbar actions={actions} />
+          <TopToolbar />
         </header>
 
         {/* Main Content */}

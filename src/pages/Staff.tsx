@@ -410,17 +410,16 @@ export default function Staff() {
   }
 
   return (
-    <AppLayout
-      title="Staff"
-      actions={
-        !showAddForm ? (
+    <AppLayout title="Staff">
+      {!showAddForm && (
+        <div className="mb-4 flex justify-end">
           <Button size="sm" variant="success" onClick={() => setShowAddForm(true)}>
             <UserPlus className="w-4 h-4" />
             Add Staff
           </Button>
-        ) : undefined
-      }
-    >
+        </div>
+      )}
+
       {/* Add Staff Form */}
       {showAddForm && <AddStaffForm onSubmit={handleAdd} onCancel={() => setShowAddForm(false)} />}
 

@@ -14,10 +14,9 @@ vi.mock('@/lib/api', () => ({
 }))
 
 vi.mock('@/components/layout/AppLayout', () => ({
-  AppLayout: ({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) => (
+  AppLayout: ({ title, children }: { title: string; children: ReactNode }) => (
     <div>
       <h1>{title}</h1>
-      <div>{actions}</div>
       {children}
     </div>
   ),

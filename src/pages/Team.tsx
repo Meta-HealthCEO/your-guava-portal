@@ -409,23 +409,21 @@ export default function Team() {
     )
   }
 
-  const actions = (
-    <div className="flex items-center gap-2">
-      <Button variant="outline" size="sm" onClick={openLocationDialog}>
-        <Store className="h-3.5 w-3.5" />
-        Add location
-      </Button>
-      <Button variant="success" size="sm" onClick={openInviteDialog} disabled={seatLimitReached}>
-        <UserPlus className="h-3.5 w-3.5" />
-        Add member
-      </Button>
-    </div>
-  )
-
   return (
-    <AppLayout title="Team" actions={actions}>
+    <AppLayout title="Team">
       <div className="space-y-6">
         <Toast toast={toast} />
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={openLocationDialog}>
+            <Store className="h-3.5 w-3.5" />
+            Add location
+          </Button>
+          <Button variant="success" size="sm" onClick={openInviteDialog} disabled={seatLimitReached}>
+            <UserPlus className="h-3.5 w-3.5" />
+            Add member
+          </Button>
+        </div>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <StatTile

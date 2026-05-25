@@ -318,17 +318,16 @@ export default function Leave() {
   ]
 
   return (
-    <AppLayout
-      title="Leave"
-      actions={
-        !showForm ? (
+    <AppLayout title="Leave">
+      {!showForm && (
+        <div className="mb-4 flex justify-end">
           <Button size="sm" variant="success" onClick={() => setShowForm(true)}>
             <Plus className="w-4 h-4" />
             Request Leave
           </Button>
-        ) : undefined
-      }
-    >
+        </div>
+      )}
+
       {/* Submit Leave Form */}
       {showForm && (
         <SubmitLeaveForm staffList={staffList} onSubmit={handleSubmit} onCancel={() => setShowForm(false)} />

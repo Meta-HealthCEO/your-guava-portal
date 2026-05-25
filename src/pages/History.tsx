@@ -190,27 +190,25 @@ export default function History() {
   }
 
   return (
-    <AppLayout
-      title="History"
-      actions={
-        <div className="flex items-center gap-2">
-          {PERIODS.map((period) => (
-            <Button
-              key={period.days}
-              variant={days === period.days ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => selectPeriod(period.days)}
-            >
-              {period.label}
-            </Button>
-          ))}
-        </div>
-      }
-    >
+    <AppLayout title="History">
       <div className="space-y-6">
-        <div className="flex items-center gap-2 text-sm text-[#777777]">
-          <HistoryIcon className="h-4 w-4 text-guava-red" />
-          Prediction history from completed trading days
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2 text-sm text-[#777777]">
+            <HistoryIcon className="h-4 w-4 text-guava-red" />
+            Prediction history from completed trading days
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {PERIODS.map((period) => (
+              <Button
+                key={period.days}
+                variant={days === period.days ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => selectPeriod(period.days)}
+              >
+                {period.label}
+              </Button>
+            ))}
+          </div>
         </div>
 
         {loading && <LoadingState />}
