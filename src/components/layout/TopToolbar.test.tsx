@@ -87,8 +87,14 @@ describe('TopToolbar', () => {
     const logout = vi.fn().mockResolvedValue(undefined)
     renderToolbar({ logout })
 
+    expect(screen.queryByRole('button', { name: /open settings/i })).not.toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: /open user menu/i }))
     expect(screen.getByText('shaun@example.com')).toBeInTheDocument()
+    expect(screen.queryByText('Account')).not.toBeInTheDocument()
+    expect(screen.queryByText('Billing and usage')).not.toBeInTheDocument()
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument()
+    expect(screen.queryByText('Guava Credits')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
 

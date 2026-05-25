@@ -3,12 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import {
   Bell,
   ChevronDown,
-  CreditCard,
   Loader2,
   LogOut,
-  Settings,
-  Sparkles,
-  UserCircle,
   WalletCards,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
@@ -45,9 +41,6 @@ const formatCompactNumber = (value?: number) => {
   if (typeof value !== 'number') return '...'
   return value.toLocaleString('en-ZA')
 }
-
-const formatDate = (value?: string | null) =>
-  value ? new Date(value).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : 'the next billing cycle'
 
 const initialsFor = (name?: string | null, email?: string | null) => {
   const source = (name || email || 'User').trim()
@@ -191,15 +184,6 @@ export function TopToolbar({ actions }: TopToolbarProps) {
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={() => goTo('/settings')}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-[#111111] text-muted transition-colors hover:border-[#3A3A3A] hover:bg-white/5 hover:text-text"
-        aria-label="Open settings"
-      >
-        <Settings className="h-4 w-4" />
-      </button>
-
       <div className="relative">
         <button
           type="button"
@@ -221,34 +205,12 @@ export function TopToolbar({ actions }: TopToolbarProps) {
               <p className="truncate text-xs text-muted">{user?.email}</p>
             </div>
 
-            <div className="border-b border-border p-2">
-              <button
-                type="button"
-                onClick={() => goTo('/settings?section=billing')}
-                className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-white/5"
-              >
-                <span className="flex min-w-0 items-center gap-3">
-                  <Sparkles className="h-4 w-4 shrink-0 text-guava-green" />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-text">Guava Credits</span>
-                    <span className="block truncate text-xs text-muted">
-                      Resets {formatDate(credits?.credits.resetAt)}
-                    </span>
-                  </span>
-                </span>
-                <span className="text-sm font-semibold text-text">{formatCompactNumber(availableCredits)}</span>
-              </button>
-            </div>
-
             <div className="p-2">
-              <MenuButton icon={<UserCircle className="h-4 w-4" />} label="Account" onClick={() => goTo('/settings?section=account')} />
-              <MenuButton icon={<CreditCard className="h-4 w-4" />} label="Billing and usage" onClick={() => goTo('/settings?section=billing')} />
-              <MenuButton icon={<Settings className="h-4 w-4" />} label="Settings" onClick={() => goTo('/settings')} />
               <button
                 type="button"
                 onClick={handleLogout}
                 disabled={loggingOut}
-                className="mt-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-white/5 hover:text-text disabled:opacity-60"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-white/5 hover:text-text disabled:opacity-60"
               >
                 {loggingOut ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
                 Sign out
@@ -258,18 +220,5 @@ export function TopToolbar({ actions }: TopToolbarProps) {
         )}
       </div>
     </div>
-  )
-}
-
-function MenuButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:bg-white/5 hover:text-text"
-    >
-      {icon}
-      {label}
-    </button>
   )
 }
