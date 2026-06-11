@@ -556,10 +556,7 @@ export default function Dashboard() {
       setIsLoading(true)
       setForecastLoadFailed(false)
       try {
-        const [todayRes, weekRes, statsRes, cafeRes] = await Promise.all([
-          api.get('/forecasts/today')
-            .then((res) => ({ res, failed: false }))
-            .catch(() => ({ res: null, failed: true })),
+        const [weekRes, statsRes, cafeRes] = await Promise.all([
           api.get('/forecasts/week')
             .then((res) => ({ res, failed: false }))
             .catch(() => ({ res: null, failed: true })),
@@ -567,24 +564,35 @@ export default function Dashboard() {
           api.get('/cafe/me').catch(() => null),
         ])
 
+        let todayFallback: Forecast | null = null
+        let todayFailed = false
+        const loadedWeek = Array.isArray(weekRes.res?.data?.forecasts) ? weekRes.res.data.forecasts : []
+
+        if (loadedWeek.length === 0) {
+          try {
+            const todayRes = await api.get('/forecasts/today')
+            todayFallback = todayRes.data?.forecast || null
+          } catch {
+            todayFailed = true
+          }
+        }
+
         if (cancelled) return
 
-        const loadedWeek = Array.isArray(weekRes.res?.data?.forecasts) ? weekRes.res.data.forecasts : []
-        const loadedFallback = loadedWeek.length > 0 ? null : todayRes.res?.data?.forecast || null
         const loadedStats = statsRes?.data?.stats || null
         const cafe = cafeRes?.data?.cafe
         const nextLocationLabel = [cafe?.location?.address, cafe?.location?.city].filter(Boolean).join(', ')
 
         setWeekForecasts(loadedWeek)
-        setFallbackForecast(loadedFallback)
-        setForecastLoadFailed(todayRes.failed && weekRes.failed)
+        setFallbackForecast(todayFallback)
+        setForecastLoadFailed(weekRes.failed && todayFailed)
         setSelectedDayIdx((current) => (
           loadedWeek.length === 0 ? 0 : Math.min(current, loadedWeek.length - 1)
         ))
         setStats(loadedStats)
         setLocationLabel(nextLocationLabel || cafe?.name || 'Cafe location')
 
-        const forecastHasItems = (loadedWeek[0]?.items.length || loadedFallback?.items.length || 0) > 0
+        const forecastHasItems = (loadedWeek[0]?.items.length || todayFallback?.items.length || 0) > 0
         setHasData((loadedStats?.totalTransactions || 0) > 0 || forecastHasItems)
       } catch {
         if (!cancelled) {

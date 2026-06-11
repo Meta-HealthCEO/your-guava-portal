@@ -32,6 +32,9 @@ interface CreditBalance {
 }
 
 type OpenMenu = 'notifications' | 'user' | null
+const CREDIT_CACHE_TTL_MS = 30000
+const USE_CREDIT_CACHE = import.meta.env.MODE !== 'test'
+let creditBalanceCache: { orgId: string | null; data: CreditBalance; fetchedAt: number } | null = null
 
 const formatCompactNumber = (value?: number) => {
   if (typeof value !== 'number') return '...'
@@ -54,13 +57,31 @@ export function TopToolbar() {
   const [loggingOut, setLoggingOut] = useState(false)
 
   useEffect(() => {
-    if (!user) return
+    if (!user) {
+      setCredits(null)
+      return
+    }
     let cancelled = false
+    const orgId = user.orgId || null
+
+    if (
+      USE_CREDIT_CACHE &&
+      creditBalanceCache &&
+      creditBalanceCache.orgId === orgId &&
+      Date.now() - creditBalanceCache.fetchedAt < CREDIT_CACHE_TTL_MS
+    ) {
+      setCredits(creditBalanceCache.data)
+      setCreditsLoading(false)
+      return
+    }
 
     setCreditsLoading(true)
     api
       .get<CreditBalance>('/account/credits')
       .then(({ data }) => {
+        if (USE_CREDIT_CACHE) {
+          creditBalanceCache = { orgId, data, fetchedAt: Date.now() }
+        }
         if (!cancelled) setCredits(data)
       })
       .catch(() => {
