@@ -127,7 +127,7 @@ describe('Team', () => {
     })
   })
 
-  it('shows invite form with name, email, password fields', async () => {
+  it('shows invite form with name and email fields and no password input', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/team')) {
         return Promise.resolve({ data: { success: true, members: [] } })
@@ -155,7 +155,9 @@ describe('Team', () => {
     expect(screen.getByRole('dialog', { name: /add team member/i })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Team member name')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('member@example.com')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('Temporary password')).toBeInTheDocument()
+    // Passwords are generated server-side — there must be no client password input
+    expect(screen.queryByPlaceholderText('Temporary password')).not.toBeInTheDocument()
+    expect(screen.getByText(/temporary password is generated automatically/i)).toBeInTheDocument()
   }, 10000)
 
   it('shows cafe checkboxes in invite form', async () => {

@@ -165,33 +165,6 @@ function createLocalChat(messages: ChatMessage[], stats: ChatContextStats | null
   }
 }
 
-const MOCK_INSIGHTS: Insight[] = [
-  {
-    id: '1',
-    category: 'trend',
-    text: 'Your Flat White sales spike 34% on payday Fridays compared to regular Fridays. Consider preparing an extra 25-30 units this Friday given the upcoming month-end.',
-    generatedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '2',
-    category: 'warning',
-    text: 'Croissant sales dropped 18% over the last 3 Sundays. This may indicate a supply consistency issue or changing customer preference on that day.',
-    generatedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '3',
-    category: 'tip',
-    text: 'The 08:00-10:00 morning rush generates 36% of your daily revenue. Full staff coverage and prepared ingredients before 07:45 could reduce wait times.',
-    generatedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-  },
-  {
-    id: '4',
-    category: 'highlight',
-    text: 'Cold Brew sales are trending up 22% month-on-month as Cape Town moves into summer. Increase prep if warm days continue.',
-    generatedAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
-  },
-]
-
 function timeAgo(isoDate: string) {
   const diff = Math.floor((Date.now() - new Date(isoDate).getTime()) / 60000)
   if (diff < 1) return 'just now'
@@ -576,6 +549,7 @@ export default function Insights() {
   const [insights, setInsights] = useState<Insight[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [insightsError, setInsightsError] = useState(false)
   const [hasData, setHasData] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -739,11 +713,11 @@ export default function Insights() {
       } else {
         setHasData(false)
       }
+      setInsightsError(false)
       setLastUpdated(new Date().toISOString())
     } catch {
-      setInsights(MOCK_INSIGHTS)
-      setHasData(true)
-      setLastUpdated(new Date().toISOString())
+      // Keep any previously loaded insights visible, but surface the failure honestly.
+      setInsightsError(true)
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
@@ -985,7 +959,12 @@ export default function Insights() {
 
     if (!eventName || !dataText) return
 
-    const data = JSON.parse(dataText)
+    let data: { text?: string; message?: string; contextStats?: ChatContextStats | null }
+    try {
+      data = JSON.parse(dataText)
+    } catch {
+      return // Malformed/partial SSE frame — skip rather than crash the stream
+    }
     if (eventName === 'delta') {
       appendAssistantDelta(assistantId, data.text || '')
     }
@@ -1041,9 +1020,13 @@ export default function Insights() {
           ?.replace('data:', '')
           .trimStart()
         if (dataLine) {
-          const parsed = JSON.parse(dataLine)
-          if (event.includes('event: delta')) answer += parsed.text || ''
-          if (event.includes('event: done')) streamedContextStats = parsed.contextStats || null
+          try {
+            const parsed = JSON.parse(dataLine)
+            if (event.includes('event: delta')) answer += parsed.text || ''
+            if (event.includes('event: done')) streamedContextStats = parsed.contextStats || null
+          } catch {
+            // Malformed/partial SSE frame — skip rather than abort the stream
+          }
         }
         handleStreamEvent(event, assistantId)
       }
@@ -1456,7 +1439,20 @@ export default function Insights() {
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 overflow-y-auto">
-                {!isLoading && !hasData && (
+                {!isLoading && insightsError && (
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-900/30 bg-red-900/10 px-3.5 py-2.5 text-sm text-red-400">
+                    <span>
+                      {insights.length > 0
+                        ? 'Could not refresh insights — showing the last loaded analysis.'
+                        : 'Insights are unavailable right now. Please try again.'}
+                    </span>
+                    <Button variant="secondary" size="sm" onClick={() => loadInsights(true)} disabled={isRefreshing}>
+                      Retry
+                    </Button>
+                  </div>
+                )}
+
+                {!isLoading && !hasData && !insightsError && (
                   <div className="flex flex-col items-center justify-center min-h-65 text-center">
                     <div className="w-12 h-12 rounded-xl bg-[#111111] border border-border flex items-center justify-center mb-4">
                       <Sparkles className="w-6 h-6 text-[#555555]" />

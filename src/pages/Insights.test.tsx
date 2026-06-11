@@ -96,13 +96,25 @@ describe('Insights', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, body: null }))
   })
 
-  it('renders insight cards', async () => {
-    // Simulate API failure so component falls back to mock insights
+  it('renders insight cards from the API', async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/insights')) {
+        return Promise.resolve({
+          data: {
+            insights: [
+              'Flat White sales spike 34% on payday Fridays.',
+              'Croissant sales dropped 18% over the last 3 Sundays.',
+              'Morning rush generates 36% of your daily revenue.',
+              'Cold Brew sales are trending up 22% month-on-month.',
+            ],
+            generatedAt: new Date().toISOString(),
+          },
+        })
+      }
       if (url.includes('/cafe/me')) {
         return Promise.resolve({ data: { cafe: { name: 'Test' } } })
       }
-      return Promise.reject(new Error('No key'))
+      return Promise.resolve({ data: {} })
     })
 
     render(<Insights />)
@@ -114,6 +126,24 @@ describe('Insights', () => {
     expect(screen.getByText(/croissant sales dropped/i)).toBeInTheDocument()
     expect(screen.getByText(/morning rush generates/i)).toBeInTheDocument()
     expect(screen.getByText(/cold brew sales are trending/i)).toBeInTheDocument()
+  })
+
+  it('shows an honest error state instead of fabricated insights when the API fails', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.reject(new Error('No key'))
+    })
+
+    render(<Insights />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/insights are unavailable right now/i)).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/flat white sales spike/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 
   it('shows loading skeleton', () => {
@@ -142,16 +172,24 @@ describe('Insights', () => {
 
   it('shows category badges on insights', async () => {
     mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/insights')) {
+        return Promise.resolve({
+          data: {
+            insights: ['First insight', 'Second insight', 'Third insight', 'Fourth insight'],
+            generatedAt: new Date().toISOString(),
+          },
+        })
+      }
       if (url.includes('/cafe/me')) {
         return Promise.resolve({ data: { cafe: { name: 'Test' } } })
       }
-      return Promise.reject(new Error('No key'))
+      return Promise.resolve({ data: {} })
     })
 
     render(<Insights />)
 
     await waitFor(() => {
-      // The mock insights have exactly these category labels
+      // Categories cycle trend → warning → tip → highlight
       expect(screen.getAllByText('Trend').length).toBeGreaterThanOrEqual(1)
     })
 

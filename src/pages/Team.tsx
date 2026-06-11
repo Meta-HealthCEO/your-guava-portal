@@ -30,10 +30,6 @@ import type { TeamMember, CafeBasic } from '@/types'
 type ToastState = { type: 'success' | 'error'; message: string } | null
 type SeatSummary = { plan: string; used: number; included: number; remaining: number }
 
-function generateTempPassword() {
-  return `Guava-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
-}
-
 function Toast({ toast }: { toast: ToastState }) {
   if (!toast) return null
   return (
@@ -208,9 +204,9 @@ export default function Team() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [invName, setInvName] = useState('')
   const [invEmail, setInvEmail] = useState('')
-  const [invPassword, setInvPassword] = useState('')
   const [invCafeIds, setInvCafeIds] = useState<string[]>([])
   const [inviting, setInviting] = useState(false)
+  const [inviteCredentials, setInviteCredentials] = useState<{ email: string; password: string } | null>(null)
 
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
   const [editName, setEditName] = useState('')
@@ -265,7 +261,6 @@ export default function Team() {
   const openInviteDialog = () => {
     setInvName('')
     setInvEmail('')
-    setInvPassword(generateTempPassword())
     setInvCafeIds(cafes.length === 1 ? [cafes[0]._id] : [])
     setInviteOpen(true)
   }
@@ -299,22 +294,25 @@ export default function Team() {
     e.preventDefault()
     const name = invName.trim()
     const email = invEmail.trim()
-    const password = invPassword.trim()
 
-    if (!name || !email || !password || invCafeIds.length === 0) {
-      showToast('error', 'Name, email, password, and cafe access are required.')
+    if (!name || !email || invCafeIds.length === 0) {
+      showToast('error', 'Name, email, and cafe access are required.')
       return
     }
 
     setInviting(true)
     try {
-      await api.post('/team/invite', {
+      const { data } = await api.post<{ emailSent?: boolean; temporaryPassword?: string }>('/team/invite', {
         name,
         email,
-        password,
         cafeIds: invCafeIds,
       })
-      showToast('success', `${name} was added to the team.`)
+      if (data.temporaryPassword) {
+        setInviteCredentials({ email, password: data.temporaryPassword })
+        showToast('success', `${name} was added to the team.`)
+      } else {
+        showToast('success', `${name} was added — sign-in details were emailed to them.`)
+      }
       setInviteOpen(false)
       await fetchData()
     } catch (err: any) {
@@ -413,6 +411,22 @@ export default function Team() {
     <AppLayout title="Team">
       <div className="space-y-6">
         <Toast toast={toast} />
+
+        {inviteCredentials && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-guava-green/20 bg-guava-green/10 px-3.5 py-2.5 text-sm text-guava-green">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 shrink-0" />
+              <span>
+                Share these sign-in details with <strong>{inviteCredentials.email}</strong>: temporary password{' '}
+                <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono">{inviteCredentials.password}</code>
+                {' '}— it will not be shown again.
+              </span>
+            </div>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setInviteCredentials(null)}>
+              Dismiss
+            </Button>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={openLocationDialog}>
@@ -640,21 +654,9 @@ export default function Team() {
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="inv-password">Temporary password</Label>
-            <div className="flex gap-2">
-              <Input
-                id="inv-password"
-                type="text"
-                placeholder="Temporary password"
-                value={invPassword}
-                onChange={(e) => setInvPassword(e.target.value)}
-              />
-              <Button type="button" variant="outline" size="icon" onClick={() => setInvPassword(generateTempPassword())} aria-label="Generate password">
-                <KeyRound className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+          <p className="text-xs text-[#777777]">
+            A secure temporary password is generated automatically and emailed to the new member.
+          </p>
           <div className="space-y-2">
             <Label>Assigned cafes</Label>
             <CafeAccessPicker cafes={cafes} selectedIds={invCafeIds} onToggle={toggleInviteCafe} />
