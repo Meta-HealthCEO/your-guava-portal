@@ -48,6 +48,10 @@ function formatCount(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1)
 }
 
+function numberValue(value: unknown) {
+  return typeof value === 'number' ? value : Number(value || 0)
+}
+
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 }
@@ -266,8 +270,8 @@ function RevenueTab() {
                   />
                   <Tooltip
                     contentStyle={{ background: '#1A1A1A', border: '1px solid #2A2A2A', borderRadius: 8, color: '#F0F0F0' }}
-                    labelFormatter={(v: string) => formatDate(v)}
-                    formatter={(value: number) => [formatZAR(value), 'Revenue']}
+                    labelFormatter={(v: unknown) => formatDate(String(v || ''))}
+                    formatter={(value: unknown) => [formatZAR(numberValue(value)), 'Revenue']}
                   />
                   <Area
                     type="monotone"
@@ -416,7 +420,7 @@ function ItemsTab() {
                   <Tooltip
                     contentStyle={CHART_TOOLTIP_STYLE}
                     cursor={BAR_HOVER_CURSOR}
-                    formatter={(value: number) => [value, 'Qty Sold']}
+                    formatter={(value: unknown) => [formatCount(numberValue(value)), 'Qty Sold']}
                   />
                   <Bar dataKey="totalQty" fill="#4DA63B" radius={[4, 4, 0, 0]} activeBar={BAR_ACTIVE_STYLE} />
                 </BarChart>
@@ -726,7 +730,7 @@ function CustomersTab() {
                     </Pie>
                     <Tooltip
                       contentStyle={{ background: '#1A1A1A', border: '1px solid #2A2A2A', borderRadius: 8, color: '#F0F0F0' }}
-                      formatter={(value: number) => [`${value.toFixed(1)}%`, '']}
+                      formatter={(value: unknown) => [`${numberValue(value).toFixed(1)}%`, '']}
                     />
                   </PieChart>
                 </ResponsiveContainer>

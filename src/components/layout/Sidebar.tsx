@@ -16,6 +16,7 @@ import {
   Coffee,
   SlidersHorizontal,
   History,
+  Lightbulb,
   // Workforce module icons - re-import alongside the nav entries below when re-enabling
   // UserCircle,
   // CalendarDays,
@@ -74,6 +75,7 @@ const navSections: NavSection[] = [
   {
     label: 'Setup',
     items: [
+      { label: 'Improvements', to: '/improvements', icon: Lightbulb, exact: true },
       { label: 'Settings', to: '/settings', icon: Settings, exact: true, activePaths: [{ path: '/account', exact: true }] },
     ],
   },

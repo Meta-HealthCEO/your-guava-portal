@@ -1,9 +1,33 @@
 import axios from 'axios'
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '')
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: API_BASE_URL,
   withCredentials: true,
 })
+
+const REFRESH_EXCLUDED_PATHS = new Set([
+  '/auth/login',
+  '/auth/register',
+  '/auth/change-password',
+  '/auth/logout',
+  '/auth/refresh',
+])
+
+function normaliseApiPath(url?: string) {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url, api.defaults.baseURL || window.location.origin)
+    return parsed.pathname.replace(/^\/api(?=\/)/, '')
+  } catch {
+    return url.replace(/^\/api(?=\/)/, '')
+  }
+}
+
+function shouldAttemptRefresh(url?: string) {
+  return !REFRESH_EXCLUDED_PATHS.has(normaliseApiPath(url))
+}
 
 // Request interceptor: attach access token from localStorage
 api.interceptors.request.use((config) => {
@@ -32,14 +56,16 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config
-    if (error.response?.status === 401 && !original._retry) {
+    if (error.response?.status === 401 && original && !original._retry && shouldAttemptRefresh(original.url)) {
       original._retry = true
+      original.headers = original.headers || {}
 
       // If already refreshing, queue this request
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({
             resolve: (token: string) => {
+              original.headers = original.headers || {}
               original.headers.Authorization = `Bearer ${token}`
               resolve(api(original))
             },
@@ -51,7 +77,7 @@ api.interceptors.response.use(
       isRefreshing = true
       try {
         const { data } = await axios.post(
-          `${import.meta.env.VITE_API_URL}/auth/refresh`,
+          `${API_BASE_URL}/auth/refresh`,
           {},
           { withCredentials: true }
         )

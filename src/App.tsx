@@ -21,6 +21,7 @@ import Leave from '@/pages/Leave'
 import UploadDetail from './pages/UploadDetail'
 import Integrations from '@/pages/Integrations'
 import IntegrationCallback from '@/pages/IntegrationCallback'
+import Improvements from '@/pages/Improvements'
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth()
@@ -76,6 +77,7 @@ export default function App() {
       <Route path="/menu-items" element={<ProtectedPage><MenuItems /></ProtectedPage>} />
 
       <Route path="/settings" element={<ProtectedPage><Settings /></ProtectedPage>} />
+      <Route path="/improvements" element={<ProtectedPage><Improvements /></ProtectedPage>} />
       <Route path="/account" element={<ProtectedPage><Navigate to="/settings?section=account" replace /></ProtectedPage>} />
       <Route path="/team" element={<ProtectedPage><Team /></ProtectedPage>} />
 

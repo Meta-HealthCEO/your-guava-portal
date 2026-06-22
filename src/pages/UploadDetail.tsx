@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import api from '@/lib/api'
-import type { Upload, ColumnMapping, ItemsMode } from '@/types/upload'
+import type { Upload, ColumnMapping, ItemsMode, UploadRowError } from '@/types/upload'
 
 interface Row {
   _id: string
@@ -26,6 +26,9 @@ interface RowsPagination {
 }
 
 const ROWS_LIMIT = 50
+const uploadSourceLabel = (posType: Upload['posType']) =>
+  posType === 'yoco' ? 'POS preset' : 'Mapped'
+
 const DEFAULT_ROWS_PAGINATION: RowsPagination = {
   total: 0,
   page: 1,
@@ -55,6 +58,18 @@ const normalisePagination = (
     limit,
     pages: Math.max(pagination?.pages || Math.ceil(total / limit) || 1, 1),
   }
+}
+
+const formatRawPreview = (raw?: UploadRowError['raw']) => {
+  const entries = Object.entries(raw || {})
+    .filter(([, value]) => value != null && String(value).trim() !== '')
+    .slice(0, 4)
+
+  if (entries.length === 0) return 'No raw values captured'
+
+  return entries
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join(' | ')
 }
 
 export default function UploadDetail() {
@@ -170,6 +185,9 @@ export default function UploadDetail() {
     : rowsPagination.total === 0
       ? 'No imported transactions found for this upload.'
       : `Showing ${rowStart.toLocaleString('en-ZA')}-${rowEnd.toLocaleString('en-ZA')} of ${rowsPagination.total.toLocaleString('en-ZA')} imported transactions`
+  const rowErrors = upload.rowErrors || []
+  const rowErrorTotal = Math.max(upload.stats.errors || 0, rowErrors.length)
+  const hiddenRowErrorCount = Math.max(rowErrorTotal - rowErrors.length, 0)
 
   return (
     <AppLayout title={upload.fileName}>
@@ -183,7 +201,7 @@ export default function UploadDetail() {
             <div>
               <CardTitle>{upload.fileName}</CardTitle>
               <p className="text-sm text-muted mt-1">
-                Uploaded {new Date(upload.createdAt).toLocaleString('en-ZA')} • {upload.posType}
+                Uploaded {new Date(upload.createdAt).toLocaleString('en-ZA')} • {uploadSourceLabel(upload.posType)}
               </p>
             </div>
             <Badge variant={upload.status === 'completed' ? 'success' : 'secondary'}>{upload.status}</Badge>
@@ -213,6 +231,40 @@ export default function UploadDetail() {
             )}
           </CardContent>
         </Card>
+
+        {rowErrors.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Rows needing attention</CardTitle>
+              <p className="text-sm text-muted mt-1">
+                Showing {rowErrors.length.toLocaleString('en-ZA')} of {rowErrorTotal.toLocaleString('en-ZA')} import errors
+                {hiddenRowErrorCount > 0 && `; ${hiddenRowErrorCount.toLocaleString('en-ZA')} more were counted.`}
+              </p>
+            </CardHeader>
+            <CardContent className="overflow-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[#777777] text-xs">
+                    <th className="py-2">Row</th>
+                    <th>Reason</th>
+                    <th>Raw values</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rowErrors.map((rowError, index) => (
+                    <tr key={`${rowError.rowNumber || 'row'}-${index}`} className="border-t border-border">
+                      <td className="py-2 font-medium text-text">{rowError.rowNumber || '-'}</td>
+                      <td className="pr-4">{rowError.reason}</td>
+                      <td className="max-w-[36rem] break-words text-xs text-muted">
+                        {formatRawPreview(rowError.raw)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="flex gap-2">
           <Button variant={tab === 'rows' ? 'success' : 'outline'} size="sm" onClick={() => setTab('rows')}>

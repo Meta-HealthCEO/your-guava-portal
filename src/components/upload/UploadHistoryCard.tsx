@@ -13,6 +13,9 @@ const statusColor: Record<string, 'success' | 'secondary' | 'destructive'> = {
   failed: 'destructive',
 }
 
+const uploadSourceLabel = (posType: Upload['posType']) =>
+  posType === 'yoco' ? 'POS preset' : 'Mapped'
+
 interface UploadHistoryCardProps {
   refreshKey?: number
 }
@@ -39,7 +42,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
           <CardTitle>Upload history</CardTitle>
         </div>
         <CardDescription>
-          Every CSV/XLS/XLSX you've imported. Click an entry to view the imported rows or download the original file.
+          Every CSV/XLSX you've imported. Click an entry to view the imported rows or download the original file.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -57,7 +60,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
               <thead>
                 <tr className="text-left text-[#777777] text-xs">
                   <th className="py-2">File</th>
-                  <th>POS</th>
+                  <th>Mapping</th>
                   <th>Imported</th>
                   <th>Date range</th>
                   <th>Status</th>
@@ -69,7 +72,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
                 {uploads.map((u) => (
                   <tr key={u._id} className="border-t border-border">
                     <td className="py-2 flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-[#777777]" />{u.fileName}</td>
-                    <td>{u.posType}</td>
+                    <td>{uploadSourceLabel(u.posType)}</td>
                     <td>{u.stats.imported}</td>
                     <td className="text-muted">
                       {u.dateRange?.firstDate ? new Date(u.dateRange.firstDate).toLocaleDateString('en-ZA') : '—'}

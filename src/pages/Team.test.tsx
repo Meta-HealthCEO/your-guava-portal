@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthContext } from '@/contexts/AuthContext'
@@ -12,13 +12,15 @@ vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
 // Mock the api module
 const mockGet = vi.fn()
+const mockPost = vi.fn()
+const mockDelete = vi.fn()
 vi.mock('@/lib/api', () => {
   return {
     default: {
       get: (...args: unknown[]) => mockGet(...args),
-      post: vi.fn(),
+      post: (...args: unknown[]) => mockPost(...args),
       put: vi.fn(),
-      delete: vi.fn(),
+      delete: (...args: unknown[]) => mockDelete(...args),
       interceptors: {
         request: { use: vi.fn() },
         response: { use: vi.fn() },
@@ -62,6 +64,8 @@ describe('Team', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    mockPost.mockResolvedValue({ data: { success: true, emailSent: true } })
+    mockDelete.mockResolvedValue({ data: { success: true } })
     // Default: sidebar API calls
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) {
@@ -190,6 +194,51 @@ describe('Team', () => {
     expect(checkboxes.length).toBe(2)
   })
 
+  it('submits invites without displaying temporary passwords', async () => {
+    mockPost.mockResolvedValueOnce({
+      data: {
+        success: true,
+        emailSent: true,
+        temporaryPassword: 'Guava-should-not-render',
+      },
+    })
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({ data: { success: true, members: [], seats: { plan: 'starter', used: 1, included: 2, remaining: 1 } } })
+      }
+      if (url.includes('/cafe/list')) {
+        return Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Blouberg Coffee' }] } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Blouberg Coffee').length).toBeGreaterThanOrEqual(1)
+    })
+
+    await userEvent.click(screen.getAllByRole('button', { name: /^add member$/i })[0])
+    await userEvent.type(screen.getByPlaceholderText('Team member name'), 'New Manager')
+    await userEvent.type(screen.getByPlaceholderText('member@example.com'), 'new@example.com')
+    const submitButtons = screen.getAllByRole('button', { name: /^add member$/i })
+    await userEvent.click(submitButtons[submitButtons.length - 1])
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/team/invite', {
+        name: 'New Manager',
+        email: 'new@example.com',
+        cafeIds: ['c1'],
+      })
+    })
+    expect(screen.getByText(/sign-in details were emailed/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Guava-should-not-render/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Share these sign-in details/i)).not.toBeInTheDocument()
+  })
+
   it('shows remove button for managers, not for owner', async () => {
     const mockMembers = [
       {
@@ -231,5 +280,63 @@ describe('Team', () => {
 
     expect(screen.queryByRole('button', { name: /remove alice owner/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /remove bob manager/i })).toBeInTheDocument()
+  })
+
+  it('uses an app confirmation dialog when removing a manager', async () => {
+    const user = userEvent.setup()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const mockMembers = [
+      {
+        _id: 'u1',
+        name: 'Alice Owner',
+        email: 'alice@test.com',
+        role: 'owner',
+        cafeIds: [],
+        createdAt: '2025-01-01',
+      },
+      {
+        _id: 'u2',
+        name: 'Bob Manager',
+        email: 'bob@test.com',
+        role: 'manager',
+        cafeIds: [{ _id: 'c1', name: 'Test Cafe' }],
+        createdAt: '2025-02-01',
+      },
+    ]
+
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({ data: { success: true, members: mockMembers } })
+      }
+      if (url.includes('/cafe/list')) {
+        return Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Test Cafe' }] } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Bob Manager')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /remove bob manager/i }))
+
+    const dialog = screen.getByRole('dialog', { name: /remove team member/i })
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getByText(/bob manager/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/lose access to assigned cafe data/i)).toBeInTheDocument()
+    expect(confirmSpy).not.toHaveBeenCalled()
+
+    await user.click(within(dialog).getByRole('button', { name: /remove member/i }))
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith('/team/u2')
+    })
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })

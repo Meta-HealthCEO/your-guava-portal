@@ -524,3 +524,45 @@ export interface LeaveCalendarDay {
   date: string
   staff: { name: string; type: string }[]
 }
+
+// ── Improvements (partner feedback / ticketing) ────────────────────────────────
+
+export type ImprovementType = 'fix' | 'improvement'
+export type ImprovementArea =
+  | 'dashboard'
+  | 'planning'
+  | 'analytics'
+  | 'history'
+  | 'ask_guava'
+  | 'data_uploads'
+  | 'menu_items'
+  | 'integrations'
+  | 'team'
+  | 'settings'
+  | 'billing'
+  | 'other'
+export type ImprovementPriority = 'low' | 'medium' | 'high'
+export type ImprovementStatus = 'open' | 'planned' | 'in_progress' | 'done' | 'declined'
+
+export interface Improvement {
+  _id: string
+  ticketNumber: number
+  type: ImprovementType
+  title: string
+  area: ImprovementArea
+  priority: ImprovementPriority
+  description: string
+  desiredOutcome?: string
+  pageUrl?: string
+  status: ImprovementStatus
+  resolutionNotes?: string
+  createdBy?: { userId?: string; name?: string; email?: string }
+  orgId: string
+  cafeId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+// Counts per status plus an 'all' total. Mapped from the status union so a new
+// status can never be added without this staying in sync.
+export type ImprovementStatusCounts = Record<'all' | ImprovementStatus, number>

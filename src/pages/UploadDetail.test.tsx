@@ -60,8 +60,46 @@ describe('UploadDetail', () => {
     mockUploadDetail()
     renderUploadDetail()
     await waitFor(() => expect(screen.getByText('export.csv')).toBeInTheDocument())
+    expect(screen.getByText(/POS preset/i)).toBeInTheDocument()
     expect(screen.getAllByText(/imported/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('link', { name: /download/i })).toHaveAttribute('href', 'https://test.r2.local/foo')
+  })
+
+  it('shows captured row-level import errors', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+      }
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'partial-errors.csv',
+            status: 'completed',
+            stats: { imported: 1, skipped: 0, errors: 1, totalRows: 2 },
+            posType: 'wizard',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            dateRange: { firstDate: '2026-04-01', lastDate: '2026-04-01' },
+            rowErrors: [
+              {
+                rowNumber: 3,
+                reason: 'Could not parse date or time',
+                raw: { Receipt: 'R501', Date: 'not-a-date', Items: '1 x Muffin' },
+              },
+            ],
+          },
+          downloadUrl: 'https://test.r2.local/foo',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    await waitFor(() => expect(screen.getByText('Rows needing attention')).toBeInTheDocument())
+    expect(screen.getByText('Could not parse date or time')).toBeInTheDocument()
+    expect(screen.getByText(/Receipt: R501/i)).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
   })
 
   it('uses an app confirmation dialog when deleting an upload', async () => {

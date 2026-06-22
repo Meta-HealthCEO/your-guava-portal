@@ -47,4 +47,46 @@ describe('ColumnMappingWizard', () => {
       'packed'
     )
   })
+
+  it('requires receipt ID for line-per-row imports', () => {
+    const onConfirm = vi.fn()
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="line-per-row"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/receipt id is required/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
+  })
+
+  it('allows line-per-row imports after receipt ID is mapped', () => {
+    const onConfirm = vi.fn()
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="line-per-row"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />
+    )
+
+    const receiptSelect = screen.getAllByRole('combobox')[4]
+    fireEvent.change(receiptSelect, { target: { value: 'Txn' } })
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }))
+
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ date: 'When', items: 'Description', total: 'Amount', receiptId: 'Txn' }),
+      'line-per-row'
+    )
+  })
 })

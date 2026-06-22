@@ -4,7 +4,6 @@ import {
   Building2,
   CheckCircle,
   Edit3,
-  KeyRound,
   Mail,
   MapPin,
   Plus,
@@ -206,12 +205,13 @@ export default function Team() {
   const [invEmail, setInvEmail] = useState('')
   const [invCafeIds, setInvCafeIds] = useState<string[]>([])
   const [inviting, setInviting] = useState(false)
-  const [inviteCredentials, setInviteCredentials] = useState<{ email: string; password: string } | null>(null)
 
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
   const [editName, setEditName] = useState('')
   const [editCafeIds, setEditCafeIds] = useState<string[]>([])
   const [savingMember, setSavingMember] = useState(false)
+  const [memberPendingRemoval, setMemberPendingRemoval] = useState<TeamMember | null>(null)
+  const [removingMember, setRemovingMember] = useState(false)
 
   const [locationOpen, setLocationOpen] = useState(false)
   const [newCafeName, setNewCafeName] = useState('')
@@ -302,17 +302,12 @@ export default function Team() {
 
     setInviting(true)
     try {
-      const { data } = await api.post<{ emailSent?: boolean; temporaryPassword?: string }>('/team/invite', {
+      await api.post<{ emailSent?: boolean }>('/team/invite', {
         name,
         email,
         cafeIds: invCafeIds,
       })
-      if (data.temporaryPassword) {
-        setInviteCredentials({ email, password: data.temporaryPassword })
-        showToast('success', `${name} was added to the team.`)
-      } else {
-        showToast('success', `${name} was added — sign-in details were emailed to them.`)
-      }
+      showToast('success', `${name} was added - sign-in details were emailed to them.`)
       setInviteOpen(false)
       await fetchData()
     } catch (err: any) {
@@ -344,14 +339,20 @@ export default function Team() {
     }
   }
 
-  const handleRemove = async (userId: string, name: string) => {
-    if (!window.confirm(`Remove ${name} from your organisation?`)) return
+  const handleRemove = async () => {
+    if (!memberPendingRemoval) return
+
+    const removedName = memberPendingRemoval.name
+    setRemovingMember(true)
     try {
-      await api.delete(`/team/${userId}`)
-      showToast('success', `${name} has been removed.`)
+      await api.delete(`/team/${memberPendingRemoval._id}`)
+      showToast('success', `${removedName} has been removed.`)
+      setMemberPendingRemoval(null)
       await fetchData()
     } catch (err: any) {
       showToast('error', err?.response?.data?.message || 'Failed to remove member.')
+    } finally {
+      setRemovingMember(false)
     }
   }
 
@@ -411,22 +412,6 @@ export default function Team() {
     <AppLayout title="Team">
       <div className="space-y-6">
         <Toast toast={toast} />
-
-        {inviteCredentials && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-guava-green/20 bg-guava-green/10 px-3.5 py-2.5 text-sm text-guava-green">
-            <div className="flex items-center gap-2">
-              <KeyRound className="h-4 w-4 shrink-0" />
-              <span>
-                Share these sign-in details with <strong>{inviteCredentials.email}</strong>: temporary password{' '}
-                <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono">{inviteCredentials.password}</code>
-                {' '}— it will not be shown again.
-              </span>
-            </div>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setInviteCredentials(null)}>
-              Dismiss
-            </Button>
-          </div>
-        )}
 
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={openLocationDialog}>
@@ -543,7 +528,7 @@ export default function Team() {
                               type="button"
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleRemove(member._id, member.name)}
+                              onClick={() => setMemberPendingRemoval(member)}
                               className="text-[#777777] hover:text-red-400"
                               aria-label={`Remove ${member.name}`}
                             >
@@ -690,6 +675,36 @@ export default function Team() {
             <CafeAccessPicker cafes={cafes} selectedIds={editCafeIds} onToggle={toggleEditCafe} />
           </div>
         </div>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(memberPendingRemoval)}
+        title="Remove team member"
+        description={memberPendingRemoval?.email}
+        onClose={() => {
+          if (!removingMember) setMemberPendingRemoval(null)
+        }}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setMemberPendingRemoval(null)}
+              disabled={removingMember}
+            >
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleRemove} disabled={removingMember}>
+              <Trash2 className="h-4 w-4" />
+              {removingMember ? 'Removing...' : 'Remove member'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-6 text-muted">
+          Remove <span className="font-medium text-text">{memberPendingRemoval?.name}</span> from your organisation?
+          They will lose access to assigned cafe data.
+        </p>
       </Dialog>
 
       <Dialog

@@ -27,6 +27,12 @@ export interface UploadStats {
   totalRows: number;
 }
 
+export interface UploadRowError {
+  rowNumber?: number;
+  reason: string;
+  raw?: Record<string, unknown>;
+}
+
 export interface UploadDateRange {
   firstDate?: string;
   lastDate?: string;
@@ -46,6 +52,7 @@ export interface Upload {
   stats: UploadStats;
   dateRange: UploadDateRange;
   errorMessage?: string;
+  rowErrors?: UploadRowError[];
   headers?: string[];
   sampleRows?: Record<string, string>[];
   createdAt: string;

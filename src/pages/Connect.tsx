@@ -290,16 +290,15 @@ export default function Connect() {
 
   // ── CSV Upload handlers ──────────────────────────────────────────
   const handleFile = async (file: File) => {
-    const validTypes = [
-      'text/csv',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
-    ]
-    const lowerName = file.name.toLowerCase()
-    const validExt = lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')
+  const validTypes = [
+    'text/csv',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ]
+  const lowerName = file.name.toLowerCase()
+  const validExt = lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx')
 
-    if (!validTypes.includes(file.type) && !validExt) {
-      setErrorMsg('Invalid file type. Please upload a .csv, .xls, or .xlsx file.')
+  if (!validTypes.includes(file.type) && !validExt) {
+      setErrorMsg('Invalid file type. Please upload a .csv or .xlsx file.')
       setUploadState('error')
       return
     }
@@ -332,7 +331,7 @@ export default function Connect() {
         setStageErrorMsg(null)
         setUploadState('idle')
       } else {
-        // Auto-confirm Yoco or any POS file with a complete saved mapping.
+        // Auto-confirm any POS file with a complete preset or saved mapping.
         setUploadPhase('importing')
         setProgress(55)
         setTimeout(() => {
@@ -412,7 +411,7 @@ export default function Connect() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".csv,.xls,.xlsx"
+          accept=".csv,.xlsx"
           className="hidden"
           onChange={onFileChange}
         />
@@ -432,7 +431,7 @@ export default function Connect() {
               <CardTitle>Upload Sales Data</CardTitle>
             </div>
             <CardDescription>
-              Upload a Yoco export or another POS CSV/XLSX. Unknown formats are mapped automatically when possible.
+              Upload a POS CSV or XLSX export. Unknown formats are mapped automatically when possible.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -455,7 +454,7 @@ export default function Connect() {
                   <Upload className="w-6 h-6 text-[#555555]" />
                 </div>
                 <p className="text-text font-medium mb-1">
-                  Drop your sales CSV, XLS, or XLSX here
+                  Drop your sales CSV or XLSX here
                 </p>
                 <p className="text-[#555555] text-sm">
                   or{' '}
@@ -463,7 +462,6 @@ export default function Connect() {
                 </p>
                 <div className="flex items-center justify-center gap-2 mt-4">
                   <Badge variant="secondary">.csv</Badge>
-                  <Badge variant="secondary">.xls</Badge>
                   <Badge variant="secondary">.xlsx</Badge>
                 </div>
               </div>

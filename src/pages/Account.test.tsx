@@ -104,7 +104,10 @@ function accountPayload() {
   }
 }
 
-function renderWithAuth(ui: ReactNode) {
+function renderWithAuth(
+  ui: ReactNode,
+  { logout = vi.fn().mockResolvedValue(undefined) }: { logout?: () => Promise<void> } = {}
+) {
   const user = {
     id: 'user123',
     email: 'test@yourguava.com',
@@ -123,7 +126,7 @@ function renderWithAuth(ui: ReactNode) {
           isLoading: false,
           isOwner: true,
           login: vi.fn(),
-          logout: vi.fn(),
+          logout,
           register: vi.fn(),
           switchCafe: vi.fn(),
         }}
@@ -138,6 +141,7 @@ describe('Account', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    mockPost.mockResolvedValue({ data: { success: true } })
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/account')) {
         return Promise.resolve({ data: { success: true, account: accountPayload() } })
@@ -219,5 +223,46 @@ describe('Account', () => {
         name: 'Updated Owner',
       }))
     })
+  })
+
+  it('changes password and signs the user out', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+    mockPost.mockResolvedValueOnce({ data: { success: true } })
+
+    renderWithAuth(<Account />, { logout })
+
+    await waitFor(() => {
+      expect(screen.getByText('Password')).toBeInTheDocument()
+    })
+
+    await userEvent.type(screen.getByLabelText(/^Current Password$/i), 'password123')
+    await userEvent.type(screen.getByLabelText(/^New Password$/i), 'newpassword456')
+    await userEvent.type(screen.getByLabelText(/^Confirm Password$/i), 'newpassword456')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/auth/change-password', {
+        currentPassword: 'password123',
+        newPassword: 'newpassword456',
+      })
+      expect(logout).toHaveBeenCalled()
+    })
+    expect(screen.getByText(/please sign in again/i)).toBeInTheDocument()
+  })
+
+  it('does not submit password changes when confirmation does not match', async () => {
+    renderWithAuth(<Account />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Password')).toBeInTheDocument()
+    })
+
+    await userEvent.type(screen.getByLabelText(/^Current Password$/i), 'password123')
+    await userEvent.type(screen.getByLabelText(/^New Password$/i), 'newpassword456')
+    await userEvent.type(screen.getByLabelText(/^Confirm Password$/i), 'different456')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    expect(screen.getByText(/confirmation do not match/i)).toBeInTheDocument()
+    expect(mockPost).not.toHaveBeenCalledWith('/auth/change-password', expect.anything())
   })
 })

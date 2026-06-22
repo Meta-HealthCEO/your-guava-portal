@@ -86,4 +86,11 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('link', { name: 'Account' })).not.toBeInTheDocument()
     expectActive('Settings')
   })
+
+  it('highlights Improvements on the improvements page', () => {
+    renderSidebar('/improvements')
+
+    expectActive('Improvements')
+    expectInactive('Settings')
+  })
 })

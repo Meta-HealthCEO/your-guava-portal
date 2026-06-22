@@ -42,11 +42,6 @@ describe('Connect', () => {
     localStorage.clear()
     // Default mocks
     mockGet.mockImplementation((url: string) => {
-      if (url.includes('/yoco/status')) {
-        return Promise.resolve({
-          data: { connected: false, lastSyncAt: null, tokenExpiresAt: null, success: true },
-        })
-      }
       if (url.includes('/cafe/me')) {
         return Promise.resolve({ data: { cafe: { name: 'Test' } } })
       }
@@ -86,13 +81,13 @@ describe('Connect', () => {
     })
   })
 
-  it('accepts uppercase CSV and legacy XLS extensions', async () => {
+  it('accepts uppercase CSV and XLSX extensions', async () => {
     mockPost.mockImplementation((url: string) => {
       if (url.includes('/transactions/upload')) {
         return Promise.resolve({
           data: {
             uploadId: 'mock-id',
-            posType: 'yoco',
+            posType: 'wizard',
             columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
             itemsMode: 'packed',
             headers: ['Date', 'Items', 'Total'],
@@ -115,7 +110,7 @@ describe('Connect', () => {
       expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
     })
 
-    const file = new File(['col1,col2\n1,2'], 'SALES.XLS', { type: '' })
+    const file = new File(['col1,col2\n1,2'], 'SALES.XLSX', { type: '' })
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
 
@@ -170,7 +165,7 @@ describe('Connect', () => {
         return Promise.resolve({
           data: {
             uploadId: 'mock-id',
-            posType: 'yoco',
+            posType: 'wizard',
             columnMapping: { date: 'Date', total: 'Total' },
             itemsMode: 'packed',
             headers: ['Date', 'Total'],

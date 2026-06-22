@@ -41,6 +41,7 @@ export function ColumnMappingWizard({
   const [itemsMode, setItemsMode] = useState<ItemsMode>(initialItemsMode)
   const [isConfirming, setIsConfirming] = useState(false)
   const mountedRef = useRef(true)
+  const receiptRequired = itemsMode === 'line-per-row'
 
   useEffect(() => {
     mountedRef.current = true
@@ -50,9 +51,12 @@ export function ColumnMappingWizard({
   }, [])
 
   const requiredOk = useMemo(
-    () => Boolean(mapping.date && mapping.items && mapping.total),
-    [mapping]
+    () => Boolean(mapping.date && mapping.items && mapping.total && (!receiptRequired || mapping.receiptId)),
+    [mapping, receiptRequired]
   )
+  const receiptRequirementMessage = receiptRequired && !mapping.receiptId
+    ? 'Receipt ID is required for line-per-row imports.'
+    : null
 
   if (!open) return null
 
@@ -81,23 +85,26 @@ export function ColumnMappingWizard({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            {CANONICAL_FIELDS.map(({ key, label, required }) => (
-              <div key={key} className="contents">
-                <label className="text-sm text-text self-center">
-                  {label}{required && <span className="text-guava-red"> *</span>}
-                </label>
-                <select
-                  className="bg-[#111111] border border-border rounded-lg px-2 py-1 text-sm"
-                  value={mapping[key] || ''}
-                  onChange={(e) => setField(key, e.target.value)}
-                >
+            {CANONICAL_FIELDS.map(({ key, label, required }) => {
+              const fieldRequired = required || (key === 'receiptId' && receiptRequired)
+              return (
+                <div key={key} className="contents">
+                  <label className="text-sm text-text self-center">
+                    {label}{fieldRequired && <span className="text-guava-red"> *</span>}
+                  </label>
+                  <select
+                    className="bg-[#111111] border border-border rounded-lg px-2 py-1 text-sm"
+                    value={mapping[key] || ''}
+                    onChange={(e) => setField(key, e.target.value)}
+                  >
                   <option value="">— none —</option>
-                  {headers.map((h) => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-              </div>
-            ))}
+                    {headers.map((h) => (
+                      <option key={h} value={h}>{h}</option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
           </div>
 
           <div>
@@ -129,6 +136,12 @@ export function ColumnMappingWizard({
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {receiptRequirementMessage && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              {receiptRequirementMessage}
             </div>
           )}
 

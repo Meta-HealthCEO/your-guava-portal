@@ -4,6 +4,7 @@ import {
   AlertCircle,
   CheckCircle,
   CreditCard,
+  KeyRound,
   Pencil,
   Sparkles,
   User as UserIcon,
@@ -42,12 +43,20 @@ const formatRand = (value: number) => `R${value.toLocaleString('en-ZA')}`
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'
 
-function StatusBanner({ state }: { state: SaveState }) {
+function StatusBanner({
+  state,
+  successMessage = 'Account details saved.',
+  errorMessage = 'Failed to save account details.',
+}: {
+  state: SaveState
+  successMessage?: string
+  errorMessage?: string
+}) {
   if (state === 'success') {
     return (
       <div className="flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green">
         <CheckCircle className="w-4 h-4 shrink-0" />
-        <span>Account details saved.</span>
+        <span>{successMessage}</span>
       </div>
     )
   }
@@ -55,7 +64,7 @@ function StatusBanner({ state }: { state: SaveState }) {
     return (
       <div className="flex items-center gap-2 bg-red-900/10 border border-red-900/30 rounded-lg px-3.5 py-2.5 text-sm text-red-400">
         <AlertCircle className="w-4 h-4 shrink-0" />
-        <span>Failed to save account details.</span>
+        <span>{errorMessage}</span>
       </div>
     )
   }
@@ -160,7 +169,7 @@ function PlanCard({
 export type AccountSettingsSection = 'all' | 'account' | 'billing'
 
 export function AccountSettingsContent({ section = 'all' }: { section?: AccountSettingsSection }) {
-  const { user, isOwner } = useAuth()
+  const { user, isOwner, logout } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [account, setAccount] = useState<Account | null>(null)
@@ -173,6 +182,11 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   const [billingEmail, setBillingEmail] = useState(user?.email ?? '')
   const [profileState, setProfileState] = useState<SaveState>('idle')
   const [isEditingProfile, setIsEditingProfile] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordState, setPasswordState] = useState<SaveState>('idle')
+  const [passwordError, setPasswordError] = useState<string | undefined>()
   const paymentQuery = searchParams.toString()
 
   const showNotice = (type: 'success' | 'error', message: string) => {
@@ -251,6 +265,43 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     }
     setProfileState('idle')
     setIsEditingProfile(false)
+  }
+
+  const handlePasswordSave = async (e: FormEvent) => {
+    e.preventDefault()
+    setPasswordError(undefined)
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError('Current password, new password, and confirmation are required.')
+      setPasswordState('error')
+      return
+    }
+
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters.')
+      setPasswordState('error')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New password and confirmation do not match.')
+      setPasswordState('error')
+      return
+    }
+
+    setPasswordState('saving')
+    try {
+      await api.post('/auth/change-password', { currentPassword, newPassword })
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setPasswordState('success')
+      showNotice('success', 'Password changed. Please sign in again.')
+      await logout()
+    } catch (err: any) {
+      setPasswordError(err?.response?.data?.message || 'Failed to change password.')
+      setPasswordState('error')
+    }
   }
 
   const displayName = account?.user.name || user?.name || ''
@@ -388,6 +439,65 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                 <StatusBanner state={profileState} />
               </div>
             )}
+          </CardContent>
+        </Card>}
+
+        {showAccountSection && <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-guava-red" />
+              <CardTitle>Password</CardTitle>
+            </div>
+            <CardDescription className="mt-1">
+              Change your password and sign in again with the new one.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handlePasswordSave} className="space-y-4 max-w-3xl">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="current-password">Current Password</Label>
+                  <Input
+                    id="current-password"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="new-password">New Password</Label>
+                  <Input
+                    id="new-password"
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="confirm-password">Confirm Password</Label>
+                  <Input
+                    id="confirm-password"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+              </div>
+              <StatusBanner
+                state={passwordState}
+                successMessage="Password changed."
+                errorMessage={passwordError || 'Failed to change password.'}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="submit" disabled={passwordState === 'saving'}>
+                  <KeyRound className="w-3.5 h-3.5" />
+                  {passwordState === 'saving' ? 'Changing...' : 'Change Password'}
+                </Button>
+              </div>
+            </form>
           </CardContent>
         </Card>}
 
