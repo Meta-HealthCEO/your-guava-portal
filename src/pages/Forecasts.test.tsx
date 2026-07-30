@@ -114,4 +114,19 @@ describe('Forecasts', () => {
       expect(screen.getByText(/No forecast data yet/i)).toBeInTheDocument()
     })
   })
+
+  it('shows an error instead of an empty-data prompt when the week request fails', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/week')) return Promise.reject(new Error('service unavailable'))
+      if (url.includes('/forecasts/recent')) return Promise.resolve({ data: { forecasts: [] } })
+      if (url.includes('/forecasts/accuracy')) return Promise.resolve({ data: { avgAccuracy: null, forecasts: [] } })
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Forecasts />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i)
+    expect(screen.queryByText(/No forecast data yet/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
 })

@@ -82,6 +82,8 @@ export default function UploadDetail() {
   const [rowsPagination, setRowsPagination] = useState<RowsPagination>(DEFAULT_ROWS_PAGINATION)
   const [tab, setTab] = useState<'rows' | 'file'>('rows')
   const [loading, setLoading] = useState(true)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [detailReloadToken, setDetailReloadToken] = useState(0)
   const [rowsLoading, setRowsLoading] = useState(false)
   const [rowsError, setRowsError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -118,40 +120,47 @@ export default function UploadDetail() {
   useEffect(() => {
     if (!id) return
     let cancelled = false
+    const controller = new AbortController()
 
     const loadUpload = async () => {
       setLoading(true)
       setRowsLoading(true)
+      setDetailError(null)
       setRowsError(null)
 
-      try {
-        const [detail, rowsRes] = await Promise.all([
-          api.get<{ upload: Upload; downloadUrl: string }>(`/uploads/${id}`),
+      const [detailResult, rowsResult] = await Promise.allSettled([
+          api.get<{ upload: Upload; downloadUrl: string }>(`/uploads/${id}`, { signal: controller.signal }),
           api.get<{ transactions: Row[]; pagination?: RowsPagination }>(`/uploads/${id}/rows`, {
             params: { page: 1, limit: ROWS_LIMIT },
+            signal: controller.signal,
           }),
         ])
 
-        if (cancelled) return
-        setUpload(detail.data.upload)
-        setDownloadUrl(detail.data.downloadUrl)
-        setRowsFromResponse(rowsRes.data, 1)
-      } catch (err: unknown) {
-        if (!cancelled) setRowsError(extractApiError(err, 'Upload details could not be loaded.'))
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-          setRowsLoading(false)
-        }
+      if (cancelled) return
+      if (detailResult.status === 'fulfilled') {
+        setUpload(detailResult.value.data.upload)
+        setDownloadUrl(detailResult.value.data.downloadUrl)
+      } else {
+        setUpload(null)
+        setDownloadUrl('')
+        setDetailError(extractApiError(detailResult.reason, 'Upload details could not be loaded.'))
       }
+      if (rowsResult.status === 'fulfilled') {
+        setRowsFromResponse(rowsResult.value.data, 1)
+      } else {
+        setRowsError(extractApiError(rowsResult.reason, 'Transactions could not be loaded.'))
+      }
+      setLoading(false)
+      setRowsLoading(false)
     }
 
     loadUpload()
 
     return () => {
       cancelled = true
+      controller.abort()
     }
-  }, [id])
+  }, [id, detailReloadToken])
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -168,13 +177,32 @@ export default function UploadDetail() {
   if (loading) {
     return (
       <AppLayout title="Upload">
-        <div className="flex items-center gap-2 text-sm text-[#555555]"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+        <div className="flex items-center gap-2 text-sm text-muted"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
       </AppLayout>
     )
   }
 
   if (!upload) {
-    return <AppLayout title="Upload"><p>Not found.</p></AppLayout>
+    return (
+      <AppLayout title="Upload">
+        <div className="space-y-4">
+          <Button variant="ghost" size="sm" onClick={() => navigate('/data-health')}>
+            <ArrowLeft className="w-4 h-4" /> Back to Data Health
+          </Button>
+          <div className="rounded-lg border border-red-900/30 bg-red-900/10 p-4 text-sm text-red-300" role="alert">
+            <p>{detailError || 'Upload details could not be loaded.'}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => setDetailReloadToken((current) => current + 1)}
+            >
+              Try again
+            </Button>
+          </div>
+        </div>
+      </AppLayout>
+    )
   }
 
   const rowStart = rowsPagination.total === 0 ? 0 : (rowsPagination.page - 1) * rowsPagination.limit + 1
@@ -222,11 +250,11 @@ export default function UploadDetail() {
             )}
             {downloadUrl && (
               <div className="mt-3">
-                <a href={downloadUrl} target="_blank" rel="noreferrer">
-                  <Button variant="outline" size="sm">
+                <Button asChild variant="outline" size="sm">
+                  <a href={downloadUrl} target="_blank" rel="noreferrer">
                     <Download className="w-4 h-4" /> Download original file
-                  </Button>
-                </a>
+                  </a>
+                </Button>
               </div>
             )}
           </CardContent>
@@ -358,11 +386,11 @@ export default function UploadDetail() {
           <Card>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted">Download the original file you uploaded.</p>
-              <a href={downloadUrl} target="_blank" rel="noreferrer">
-                <Button variant="success">
+              <Button asChild variant="success">
+                <a href={downloadUrl} target="_blank" rel="noreferrer">
                   <Download className="w-4 h-4" /> Download {upload.fileName}
-                </Button>
-              </a>
+                </a>
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -466,7 +494,7 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
       <p className="text-text text-xl font-bold">{value}</p>
-      <p className="text-[#555555] text-xs">{label}</p>
+      <p className="text-muted text-xs">{label}</p>
     </div>
   )
 }

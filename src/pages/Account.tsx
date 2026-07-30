@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/hooks/useAuth'
 import api from '@/lib/api'
+import { secureRandomId } from '@/lib/idempotency'
 import type { Account, BillingPlan } from '@/types'
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error'
@@ -38,10 +39,19 @@ type CreditPurchaseResponse = {
   account?: Account
   purchase: PaymentIntent & { credits: number }
 }
+type PaymentStatusResponse = {
+  success: boolean
+  payment: PaymentIntent
+}
 
 const formatRand = (value: number) => `R${value.toLocaleString('en-ZA')}`
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'
+
+const newPaymentIdempotencyKey = (kind: 'plan' | 'credits') => {
+  const entropy = secureRandomId()
+  return `${kind}:${Date.now().toString(36)}:${entropy}`.slice(0, 160)
+}
 
 function StatusBanner({
   state,
@@ -75,6 +85,7 @@ function Notice({ notice }: { notice: NoticeState }) {
   if (!notice) return null
   return (
     <div
+      role={notice.type === 'success' ? 'status' : 'alert'}
       className={
         notice.type === 'success'
           ? 'flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green'
@@ -90,7 +101,7 @@ function Notice({ notice }: { notice: NoticeState }) {
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-1.5">
-      <p className="text-[#555555] text-[11px] uppercase tracking-wider font-medium">{label}</p>
+      <p className="text-muted text-[11px] uppercase tracking-wider font-medium">{label}</p>
       <p className="text-text text-sm font-medium">{value || '—'}</p>
     </div>
   )
@@ -148,7 +159,7 @@ function PlanCard({
         </div>
         <div className="text-right">
           <p className="text-text font-semibold">{formatRand(price)}</p>
-          <p className="text-[#555555] text-xs">{cycle === 'annual' ? 'per year' : 'per month'}</p>
+          <p className="text-muted text-xs">{cycle === 'annual' ? 'per year' : 'per month'}</p>
         </div>
       </div>
       <div className="space-y-1.5">
@@ -173,6 +184,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [account, setAccount] = useState<Account | null>(null)
+  const [accountError, setAccountError] = useState(false)
   const [notice, setNotice] = useState<NoticeState>(null)
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly')
   const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null)
@@ -187,63 +199,89 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordState, setPasswordState] = useState<SaveState>('idle')
   const [passwordError, setPasswordError] = useState<string | undefined>()
+  const planCheckoutRef = useRef<{ intent: string; key: string } | null>(null)
+  const creditCheckoutRef = useRef<{ intent: string; key: string } | null>(null)
   const paymentQuery = searchParams.toString()
 
-  const showNotice = (type: 'success' | 'error', message: string) => {
+  const showNotice = useCallback((type: 'success' | 'error', message: string) => {
     setNotice({ type, message })
     setTimeout(() => setNotice(null), 4000)
-  }
+  }, [])
 
-  const hydrateAccount = () =>
-    api
+  const hydrateAccount = useCallback(
+    () => api
       .get<{ success: boolean; account: Account }>('/account')
       .then(({ data }) => {
+        setAccountError(false)
         setAccount(data.account)
         setBillingCycle(data.account.organization.billingCycle || 'monthly')
         setProfileName(data.account.user.name)
         setOrganizationName(data.account.organization.name)
         setBillingEmail(data.account.organization.billingEmail || data.account.user.email)
-      })
+      }),
+    []
+  )
 
   useEffect(() => {
     hydrateAccount()
       .catch(() => {
+        setAccountError(true)
         setProfileName(user?.name ?? '')
         setBillingEmail(user?.email ?? '')
       })
-  }, [user?.email, user?.name])
+  }, [hydrateAccount, user?.email, user?.name])
 
   useEffect(() => {
-    const payment = searchParams.get('payment')
-    if (!payment || (section !== 'all' && section !== 'billing')) return
+    const paymentHint = searchParams.get('payment')
+    const reference = searchParams.get('reference')
+    if (!paymentHint || (section !== 'all' && section !== 'billing')) return
 
-    hydrateAccount().catch(() => undefined)
+    let cancelled = false
+    const verifyPayment = async () => {
+      if (!reference) {
+        showNotice('error', 'Payment could not be verified because its reference is missing.')
+      } else {
+        try {
+          const { data } = await api.get<PaymentStatusResponse>(`/account/payments/${encodeURIComponent(reference)}`)
+          if (cancelled) return
+          const status = data.payment.status
+          if (status === 'paid') {
+            await hydrateAccount()
+            if (!cancelled) showNotice('success', 'Card payment confirmed. Billing has been updated.')
+          } else if (status === 'pending') {
+            showNotice('success', 'Card payment is still pending. Guava will update billing after confirmation.')
+          } else if (status === 'cancelled') {
+            showNotice('error', 'Card payment was cancelled. No billing changes were made.')
+          } else {
+            showNotice('error', 'Card payment was not completed. No billing changes were made.')
+          }
+        } catch {
+          if (!cancelled) showNotice('error', 'Payment status could not be verified. Please refresh and check billing again.')
+        }
+      }
 
-    if (payment === 'paid') {
-      showNotice('success', 'Card payment confirmed. Billing has been updated.')
-    } else if (payment === 'pending') {
-      showNotice('success', 'Card payment is still pending. Guava will update billing once OneGate confirms it.')
-    } else if (payment === 'cancelled') {
-      showNotice('error', 'Card payment was cancelled. No billing changes were made.')
-    } else {
-      showNotice('error', 'Card payment could not be completed. No billing changes were made.')
+      if (!cancelled) {
+        const nextParams = new URLSearchParams(searchParams)
+        nextParams.delete('payment')
+        nextParams.delete('reference')
+        setSearchParams(nextParams, { replace: true })
+      }
     }
 
-    const nextParams = new URLSearchParams(searchParams)
-    nextParams.delete('payment')
-    nextParams.delete('reference')
-    setSearchParams(nextParams, { replace: true })
-  }, [paymentQuery, section, setSearchParams])
+    void verifyPayment()
+    return () => {
+      cancelled = true
+    }
+  }, [hydrateAccount, paymentQuery, section, searchParams, setSearchParams, showNotice])
 
   const handleProfileSave = async (e: FormEvent) => {
     e.preventDefault()
     setProfileState('saving')
     try {
-      const { data } = await api.patch<{ success: boolean; account: Account }>('/account/profile', {
-        name: profileName,
-        organizationName,
-        billingEmail,
-      })
+      const profilePayload = isOwner
+        ? { name: profileName, organizationName, billingEmail }
+        : { name: profileName }
+      const { data } = await api.patch<{ success: boolean; account: Account }>('/account/profile', profilePayload)
       setAccount(data.account)
       setProfileState('success')
       setIsEditingProfile(false)
@@ -311,10 +349,17 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
 
   const handlePlanCheckout = async (plan: BillingPlan) => {
     setCheckoutPlan(plan.id)
+    const intent = `${plan.id}:${billingCycle}`
+    if (planCheckoutRef.current?.intent !== intent) {
+      planCheckoutRef.current = { intent, key: newPaymentIdempotencyKey('plan') }
+    }
+    const idempotencyKey = planCheckoutRef.current.key
     try {
       const { data } = await api.post<CheckoutResponse>('/account/checkout', {
         plan: plan.id,
         billingCycle,
+      }, {
+        headers: { 'Idempotency-Key': idempotencyKey },
       })
 
       if (data.checkout.redirectUrl) {
@@ -323,9 +368,17 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
         return
       }
 
-      if (data.account) setAccount(data.account)
-      showNotice('success', `${plan.name} plan activated.`)
+      if (data.account) {
+        setAccount(data.account)
+        planCheckoutRef.current = null
+        showNotice('success', `${plan.name} plan activated.`)
+      } else {
+        showNotice('error', 'Secure checkout is still being prepared. Try again in a moment.')
+      }
     } catch (err: any) {
+      if (err?.response && err.response.status < 500 && err.response.status !== 408 && err.response.status !== 429) {
+        planCheckoutRef.current = null
+      }
       showNotice('error', err?.response?.data?.message || 'Could not start card checkout.')
     } finally {
       setCheckoutPlan(null)
@@ -334,8 +387,17 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
 
   const handleBuyCredits = async () => {
     setIsBuyingCredits(true)
+    const intent = 'credits:500'
+    if (creditCheckoutRef.current?.intent !== intent) {
+      creditCheckoutRef.current = { intent, key: newPaymentIdempotencyKey('credits') }
+    }
+    const idempotencyKey = creditCheckoutRef.current.key
     try {
-      const { data } = await api.post<CreditPurchaseResponse>('/account/ai-credits', { credits: 500 })
+      const { data } = await api.post<CreditPurchaseResponse>(
+        '/account/ai-credits',
+        { credits: 500 },
+        { headers: { 'Idempotency-Key': idempotencyKey } }
+      )
 
       if (data.purchase.redirectUrl) {
         showNotice('success', 'Opening secure card checkout...')
@@ -343,9 +405,17 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
         return
       }
 
-      if (data.account) setAccount(data.account)
-      showNotice('success', 'Added 500 Guava Credits to this billing period.')
+      if (data.account) {
+        setAccount(data.account)
+        creditCheckoutRef.current = null
+        showNotice('success', 'Added 500 Guava Credits to this billing period.')
+      } else {
+        showNotice('error', 'Secure checkout is still being prepared. Try again in a moment.')
+      }
     } catch (err: any) {
+      if (err?.response && err.response.status < 500 && err.response.status !== 408 && err.response.status !== 429) {
+        creditCheckoutRef.current = null
+      }
       showNotice('error', err?.response?.data?.message || 'Could not start card checkout.')
     } finally {
       setIsBuyingCredits(false)
@@ -362,6 +432,14 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   return (
       <div className="space-y-6">
         <Notice notice={notice} />
+        {accountError && (
+          <div className="flex flex-col gap-3 rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
+            <p className="text-sm text-red-300">Account and billing details could not be loaded.</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => hydrateAccount().catch(() => setAccountError(true))}>
+              Try again
+            </Button>
+          </div>
+        )}
 
         {showAccountSection && <Card>
           <CardHeader>
@@ -372,7 +450,9 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                   <CardTitle>Account Details</CardTitle>
                 </div>
                 <CardDescription className="mt-1">
-                  Manage your profile, organisation name, and billing contact.
+                  {isOwner
+                    ? 'Manage your profile, organisation name, and billing contact.'
+                    : 'Manage your profile. Organisation billing is managed by the account owner.'}
                 </CardDescription>
               </div>
               {!isEditingProfile && (
@@ -402,16 +482,18 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                     <Input id="profile-email" value={displayEmail} readOnly className="opacity-60 cursor-default" />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="organization-name">Organisation Name</Label>
-                    <Input id="organization-name" value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} />
+                {isOwner && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="organization-name">Organisation Name</Label>
+                      <Input id="organization-name" value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="billing-email">Billing Email</Label>
+                      <Input id="billing-email" type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} />
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="billing-email">Billing Email</Label>
-                    <Input id="billing-email" type="email" value={billingEmail} onChange={(e) => setBillingEmail(e.target.value)} />
-                  </div>
-                </div>
+                )}
                 <StatusBanner state={profileState} />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="submit" disabled={profileState === 'saving'}>
@@ -531,21 +613,21 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
               <div className="rounded-lg border border-border bg-[#111111] p-4">
                 <p className="text-muted text-sm">Seats</p>
                 <p className="text-text text-2xl font-semibold mt-2">
-                  {account?.usage.seats.used ?? 1}/{account?.usage.seats.included ?? 2}
+                  {account ? `${account.usage.seats.used}/${account.usage.seats.included}` : '—'}
                 </p>
-                <p className="text-[#555555] text-xs mt-1">Organisation users</p>
+                <p className="text-muted text-xs mt-1">Organisation users</p>
               </div>
               <div className="rounded-lg border border-border bg-[#111111] p-4">
                 <p className="text-muted text-sm">Locations</p>
                 <p className="text-text text-2xl font-semibold mt-2">
-                  {account?.usage.locations.used ?? 1}/{account?.usage.locations.included ?? 2}
+                  {account ? `${account.usage.locations.used}/${account.usage.locations.included}` : '—'}
                 </p>
-                <p className="text-[#555555] text-xs mt-1">Cafe branches</p>
+                <p className="text-muted text-xs mt-1">Cafe branches</p>
               </div>
               <div className="rounded-lg border border-border bg-[#111111] p-4">
                 <p className="text-muted text-sm">Guava Credits</p>
-                <p className="text-text text-2xl font-semibold mt-2">{credits?.available ?? 0}</p>
-                <p className="text-[#555555] text-xs mt-1">Power AI and data checks</p>
+                <p className="text-text text-2xl font-semibold mt-2">{account ? credits?.available ?? 0 : '—'}</p>
+                <p className="text-muted text-xs mt-1">Power AI and data checks</p>
               </div>
             </div>
 
@@ -555,7 +637,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                 <Sparkles className="w-3.5 h-3.5" />
                 {isBuyingCredits ? 'Opening checkout...' : 'Add 500 Guava Credits'}
               </Button>
-              <p className="text-[#555555] text-xs flex items-center">
+              <p className="text-muted text-xs flex items-center">
                 Included credits reset on {formatDate(credits?.resetAt)}. Bonus credits stay until used.
               </p>
             </div>
@@ -586,7 +668,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                       <div key={entry.id} className="flex items-center justify-between gap-3 text-sm">
                         <span className="min-w-0">
                           <span className="block truncate text-muted">{entry.label}</span>
-                          <span className="block text-xs text-[#555555]">{formatDate(entry.createdAt)}</span>
+                          <span className="block text-xs text-muted">{formatDate(entry.createdAt)}</span>
                         </span>
                         <span className="font-semibold text-text">{entry.credits}</span>
                       </div>
@@ -633,7 +715,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                 />
               ))}
             </div>
-            {!isOwner && <p className="text-[#555555] text-xs">Only the account owner can change billing.</p>}
+            {!isOwner && <p className="text-muted text-xs">Only the account owner can change billing.</p>}
           </CardContent>
         </Card>}
 

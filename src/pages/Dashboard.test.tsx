@@ -69,6 +69,8 @@ describe('Dashboard', () => {
     expect(screen.getByText((text) => text.includes('20') && text.includes('100') && text.startsWith('R'))).toBeInTheDocument()
     // Should show top item
     expect(screen.getByText('Top Item')).toBeInTheDocument()
+    expect(screen.getByText(/factor detail is unavailable/i)).toBeInTheDocument()
+    expect(screen.queryByText('Time-of-Day Breakdown')).not.toBeInTheDocument()
     expect(mockGet).not.toHaveBeenCalledWith('/forecasts/tomorrow')
   })
 
@@ -249,7 +251,7 @@ describe('Dashboard', () => {
       expect(screen.getByText('No item predictions for this day')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('No time-of-day item forecast available for this day.')).toBeInTheDocument()
+    expect(screen.queryByText('Time-of-Day Breakdown')).not.toBeInTheDocument()
   })
 
   it('shows weather card with temperature', async () => {
@@ -280,5 +282,53 @@ describe('Dashboard', () => {
     expect(screen.getByText('Sunny')).toBeInTheDocument()
     expect(screen.getByText('60% humidity')).toBeInTheDocument()
     expect(screen.getByText('123 Test St, Cape Town')).toBeInTheDocument()
+  })
+
+  it('shows honest unavailable states instead of fabricated weather or stage zero', async () => {
+    const unavailableForecast = {
+      ...mockForecast,
+      signals: {
+        ...mockForecast.signals,
+        weather: {
+          available: false,
+          condition: 'Unavailable',
+          unavailableReason: 'Cafe coordinates are not configured',
+        },
+        loadSheddingStage: null,
+        loadSheddingAvailable: false,
+        loadSheddingUnavailableReason: 'Provider unavailable',
+      },
+    }
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/today')) return Promise.resolve({ data: { forecast: unavailableForecast } })
+      if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts: [unavailableForecast] } })
+      if (url.includes('/transactions/stats')) return Promise.resolve({ data: { stats: mockStats } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Weather unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Cafe coordinates are not configured')).toBeInTheDocument()
+    expect(screen.getByText('Load shedding unavailable')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('undefined°')
+    expect(document.body.textContent).not.toContain('undefined%')
+  })
+
+  it('does not misreport an API failure as an empty account', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/week')) return Promise.reject(new Error('forecast service offline'))
+      if (url.includes('/forecasts/today')) return Promise.reject(new Error('forecast service offline'))
+      if (url.includes('/transactions/stats')) return Promise.reject(new Error('stats service offline'))
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Dashboard data unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('No data yet')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
   })
 })

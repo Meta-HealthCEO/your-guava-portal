@@ -47,20 +47,20 @@ export function ItemsHeatmap({ forecasts }: Props) {
     <div className="rounded-xl border border-border bg-surface overflow-hidden">
       <div className="px-5 py-4 border-b border-border">
         <p className="text-text text-sm font-semibold">Items × days heatmap</p>
-        <p className="text-[#555555] text-xs mt-0.5">Top 12 items by weekly predicted quantity</p>
+        <p className="text-muted text-xs mt-0.5">Top 12 items by weekly predicted quantity</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr>
               {/* Sticky first header cell */}
-              <th className="sticky left-0 bg-surface text-left px-4 py-2.5 text-[#555555] font-medium w-36 min-w-36 border-b border-border border-r border-border">
+              <th className="sticky left-0 bg-surface text-left px-4 py-2.5 text-muted font-medium w-36 min-w-36 border-b border-border border-r border-border">
                 Item
               </th>
               {dayLabels.map((day, i) => (
                 <th
                   key={i}
-                  className="text-center px-3 py-2.5 text-[#555555] font-medium min-w-14 border-b border-border"
+                  className="text-center px-3 py-2.5 text-muted font-medium min-w-14 border-b border-border"
                 >
                   {day}
                 </th>

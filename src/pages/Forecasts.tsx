@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { TrendingUp } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
 import type { Forecast } from '@/types'
 import { WeekHeader } from '@/components/forecasts/WeekHeader'
@@ -35,21 +36,38 @@ export default function Forecasts() {
   const [pastForecasts, setPastForecasts] = useState<Forecast[]>([])
   const [accuracy, setAccuracy] = useState<AccuracyPayload | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [supportingDataError, setSupportingDataError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [selectedForecastId, setSelectedForecastId] = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([
-      api.get<{ forecasts: Forecast[] }>('/forecasts/week'),
-      api.get<{ forecasts: Forecast[] }>('/forecasts/recent').catch(() => ({ data: { forecasts: [] } })),
-      api.get<AccuracyPayload>('/forecasts/accuracy'),
-    ])
-      .then(([wk, recent, acc]) => {
-        setFutureForecasts(wk.data.forecasts)
-        setPastForecasts(recent.data.forecasts)
-        setAccuracy(acc.data)
-      })
-      .finally(() => setLoading(false))
-  }, [])
+    const controller = new AbortController()
+    setLoading(true)
+    setLoadError('')
+    setSupportingDataError(false)
+
+    Promise.allSettled([
+      api.get<{ forecasts: Forecast[] }>('/forecasts/week', { signal: controller.signal }),
+      api.get<{ forecasts: Forecast[] }>('/forecasts/recent', { signal: controller.signal }),
+      api.get<AccuracyPayload>('/forecasts/accuracy', { signal: controller.signal }),
+    ]).then(([weekResult, recentResult, accuracyResult]) => {
+      if (controller.signal.aborted) return
+      if (weekResult.status === 'rejected') {
+        setLoadError('Forecasts could not be loaded. Your existing data has not been removed.')
+        return
+      }
+
+      setFutureForecasts(weekResult.value.data.forecasts || [])
+      setPastForecasts(recentResult.status === 'fulfilled' ? recentResult.value.data.forecasts || [] : [])
+      setAccuracy(accuracyResult.status === 'fulfilled' ? accuracyResult.value.data : null)
+      setSupportingDataError(recentResult.status === 'rejected' || accuracyResult.status === 'rejected')
+    }).finally(() => {
+      if (!controller.signal.aborted) setLoading(false)
+    })
+
+    return () => controller.abort()
+  }, [reloadKey])
 
   const weekTotal = futureForecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
   const peakDay = futureForecasts.reduce(
@@ -76,7 +94,7 @@ export default function Forecasts() {
   return (
     <AppLayout title="Planning">
       <div className="space-y-6">
-        <div className="flex items-center gap-2 text-[#555555] text-sm">
+        <div className="flex items-center gap-2 text-muted text-sm">
           <TrendingUp className="w-4 h-4 text-guava-red" />
           7-day rolling sales forecast · Updated daily
         </div>
@@ -93,7 +111,16 @@ export default function Forecasts() {
           </div>
         )}
 
-        {!loading && futureForecasts.length === 0 && (
+        {!loading && loadError && (
+          <div className="rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-4" role="alert">
+            <p className="text-sm text-red-300">{loadError}</p>
+            <Button className="mt-3" type="button" variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>
+              Try again
+            </Button>
+          </div>
+        )}
+
+        {!loading && !loadError && futureForecasts.length === 0 && (
           <div className="text-center py-12">
             <p className="text-muted">
               No forecast data yet. Upload sales data in Data Health to get started.
@@ -101,8 +128,13 @@ export default function Forecasts() {
           </div>
         )}
 
-        {!loading && futureForecasts.length > 0 && (
+        {!loading && !loadError && futureForecasts.length > 0 && (
           <>
+            {supportingDataError && (
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="status">
+                Forecasts are current, but recent comparisons or accuracy metrics are temporarily unavailable.
+              </div>
+            )}
             <WeekHeader
               weekTotal={weekTotal}
               peakDay={peakDay}
@@ -124,7 +156,7 @@ export default function Forecasts() {
               <div>
                 <h2 className="text-text text-base font-semibold">This week's plan</h2>
                 <p className="text-muted text-xs mt-0.5">
-                  Predicted output and suggested stock for the next 7 days
+                  Predicted output for the next 7 days. Stock suggestions appear only when returned by the forecast service.
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -149,7 +181,7 @@ export default function Forecasts() {
                 </p>
               </div>
               {pastForecasts.length === 0 ? (
-                <p className="text-[#555555] text-sm py-4">
+                <p className="text-muted text-sm py-4">
                   No past forecasts yet — your first comparison will appear once today's predictions
                   can be checked against tomorrow's data.
                 </p>

@@ -18,6 +18,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { ForecastHistoryResponse, ForecastHistoryRow } from '@/types'
+import { parseDateOnly } from '@/lib/date'
+import {
+  isLoadSheddingAvailable,
+  isWeatherAvailable,
+  weatherUnavailableReason,
+} from '@/lib/forecastSignals'
 
 const PERIODS = [
   { label: '30d', days: 30 },
@@ -40,7 +46,7 @@ function formatCurrency(value: number | null | undefined) {
 }
 
 function formatDate(date: string) {
-  return new Date(date).toLocaleDateString('en-ZA', {
+  return parseDateOnly(date).toLocaleDateString('en-ZA', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -56,6 +62,7 @@ function formatPercent(value: number | null | undefined, showSign = false) {
 function weatherLabel(row: ForecastHistoryRow) {
   const weather = row.weather
   if (!weather) return '-'
+  if (!isWeatherAvailable(weather)) return weatherUnavailableReason(weather)
   const rain = weather.precipMm != null && weather.precipMm > 0 ? `, ${weather.precipMm.toFixed(1)}mm` : ''
   return `${Math.round(weather.temp)}C, ${weather.condition}${rain}`
 }
@@ -71,7 +78,11 @@ function factorLabels(row: ForecastHistoryRow) {
   if (row.signals.isPublicHoliday) labels.set('publicHoliday', 'Public holiday')
   if (row.signals.isSchoolHoliday) labels.set('schoolHoliday', 'School holiday')
   if (row.signals.isPayday) labels.set('paydaySignal', 'Payday')
-  if (row.signals.loadSheddingStage > 0) labels.set('loadSheddingSignal', `Stage ${row.signals.loadSheddingStage}`)
+  if (isLoadSheddingAvailable(row.signals) && row.signals.loadSheddingStage > 0) {
+    labels.set('loadSheddingSignal', `Stage ${row.signals.loadSheddingStage}`)
+  } else if (!isLoadSheddingAvailable(row.signals)) {
+    labels.set('loadSheddingUnavailable', 'Load shedding unavailable')
+  }
   for (const event of row.signals.events || []) {
     labels.set(`event-${event.name}`, event.name)
   }
@@ -323,7 +334,7 @@ export default function History() {
                           </td>
                           <td className="min-w-72 px-4 py-3">
                             {labels.length === 0 ? (
-                              <span className="text-[#555555]">None</span>
+                              <span className="text-muted">None</span>
                             ) : (
                               <div className="flex flex-wrap gap-1.5">
                                 {labels.slice(0, 4).map((label) => (

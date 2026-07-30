@@ -1,4 +1,4 @@
-import { useState, useEffect, type ComponentType, type FormEvent } from 'react'
+import { useState, useEffect, useCallback, type ComponentType, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
@@ -58,7 +58,7 @@ const ensureWeek = (input?: TradingHoursEntry[]): TradingHoursEntry[] => {
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-1.5">
-      <p className="text-[#555555] text-[11px] uppercase tracking-wider font-medium">{label}</p>
+      <p className="text-muted text-[11px] uppercase tracking-wider font-medium">{label}</p>
       <p className="text-text text-sm font-medium">{value || '—'}</p>
     </div>
   )
@@ -72,7 +72,7 @@ const formatTimeRange = (entry: TradingHoursEntry) => {
 function StatusBanner({ state, error }: { state: SaveState; error?: string }) {
   if (state === 'success') {
     return (
-      <div className="flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green">
+      <div className="flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green" role="status">
         <CheckCircle className="w-4 h-4 shrink-0" />
         <span>Changes saved successfully.</span>
       </div>
@@ -81,7 +81,7 @@ function StatusBanner({ state, error }: { state: SaveState; error?: string }) {
 
   if (state === 'error') {
     return (
-      <div className="flex items-center gap-2 bg-red-900/10 border border-red-900/30 rounded-lg px-3.5 py-2.5 text-sm text-red-400">
+      <div className="flex items-center gap-2 bg-red-900/10 border border-red-900/30 rounded-lg px-3.5 py-2.5 text-sm text-red-400" role="alert">
         <AlertCircle className="w-4 h-4 shrink-0" />
         <span>{error ?? 'Failed to save. Please try again.'}</span>
       </div>
@@ -100,6 +100,8 @@ interface LoadedSnapshot {
   cafePostalCode: string
   cafeProvince: string
   cafeCountry: string
+  cafeLatitude: string
+  cafeLongitude: string
   cafeTimezone: string
   tradingHours: TradingHoursEntry[]
 }
@@ -115,19 +117,6 @@ const ZA_PROVINCES = [
   'North West',
   'Western Cape',
 ] as const
-
-const FALLBACK_SNAPSHOT: LoadedSnapshot = {
-  cafeName: 'My Cafe',
-  cafeAddress: '',
-  cafeAddressLine2: '',
-  cafeSuburb: '',
-  cafeCity: 'Cape Town',
-  cafePostalCode: '',
-  cafeProvince: '',
-  cafeCountry: 'South Africa',
-  cafeTimezone: 'Africa/Johannesburg',
-  tradingHours: defaultTradingHours(),
-}
 
 type SettingsSectionId = 'general' | 'account' | 'billing' | 'prediction' | 'integrations' | 'team'
 
@@ -193,12 +182,15 @@ export default function Settings() {
   const [cafeCity, setCafeCity] = useState('')
   const [cafePostalCode, setCafePostalCode] = useState('')
   const [cafeProvince, setCafeProvince] = useState('')
-  const [cafeCountry, setCafeCountry] = useState('South Africa')
-  const [cafeTimezone, setCafeTimezone] = useState('Africa/Johannesburg')
+  const [cafeCountry, setCafeCountry] = useState('')
+  const [cafeLatitude, setCafeLatitude] = useState('')
+  const [cafeLongitude, setCafeLongitude] = useState('')
+  const [cafeTimezone, setCafeTimezone] = useState('')
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [cafeState, setCafeState] = useState<SaveState>('idle')
   const [cafeError, setCafeError] = useState<string | undefined>()
   const [isEditingCafe, setIsEditingCafe] = useState(false)
-  const [tradingHours, setTradingHours] = useState<TradingHoursEntry[]>(defaultTradingHours())
+  const [tradingHours, setTradingHours] = useState<TradingHoursEntry[]>([])
   const [hoursState, setHoursState] = useState<SaveState>('idle')
   const [hoursError, setHoursError] = useState<string | undefined>()
   const [isEditingHours, setIsEditingHours] = useState(false)
@@ -226,35 +218,61 @@ export default function Settings() {
     setCafePostalCode(snapshot.cafePostalCode)
     setCafeProvince(snapshot.cafeProvince)
     setCafeCountry(snapshot.cafeCountry)
+    setCafeLatitude(snapshot.cafeLatitude)
+    setCafeLongitude(snapshot.cafeLongitude)
     setCafeTimezone(snapshot.cafeTimezone)
     setTradingHours(snapshot.tradingHours)
   }
 
-  useEffect(() => {
-    api
-      .get<{ success: boolean; cafe: Cafe }>('/cafe/me')
-      .then(({ data }) => {
+  const loadCafe = useCallback(async (signal?: AbortSignal) => {
+    setLoadState('loading')
+    setLoaded(null)
+    setIsEditingCafe(false)
+    setIsEditingHours(false)
+    try {
+      const { data } = await api.get<{ success: boolean; cafe: Cafe }>('/cafe/me', { signal })
+      if (!data?.cafe) throw new Error('Cafe response was empty')
         const cafe = data.cafe
         const snapshot: LoadedSnapshot = {
           cafeName: cafe.name || '',
           cafeAddress: cafe.location?.address || '',
           cafeAddressLine2: cafe.location?.addressLine2 || '',
           cafeSuburb: cafe.location?.suburb || '',
-          cafeCity: cafe.location?.city || 'Cape Town',
+          cafeCity: cafe.location?.city || '',
           cafePostalCode: cafe.location?.postalCode || '',
           cafeProvince: cafe.location?.province || '',
-          cafeCountry: cafe.location?.country || 'South Africa',
-          cafeTimezone: cafe.timezone || 'Africa/Johannesburg',
+          cafeCountry: cafe.location?.country || '',
+          cafeLatitude: cafe.location?.lat == null ? '' : String(cafe.location.lat),
+          cafeLongitude: cafe.location?.lng == null ? '' : String(cafe.location.lng),
+          cafeTimezone: cafe.timezone || '',
           tradingHours: ensureWeek(cafe.tradingHours),
         }
         setLoaded(snapshot)
         applySnapshot(snapshot)
-      })
-      .catch(() => {
-        setLoaded(FALLBACK_SNAPSHOT)
-        applySnapshot(FALLBACK_SNAPSHOT)
-      })
+      setLoadState('ready')
+    } catch {
+      if (signal?.aborted) return
+      setCafeName('')
+      setCafeAddress('')
+      setCafeAddressLine2('')
+      setCafeSuburb('')
+      setCafeCity('')
+      setCafePostalCode('')
+      setCafeProvince('')
+      setCafeCountry('')
+      setCafeLatitude('')
+      setCafeLongitude('')
+      setCafeTimezone('')
+      setTradingHours([])
+      setLoadState('error')
+    }
   }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    loadCafe(controller.signal)
+    return () => controller.abort()
+  }, [loadCafe])
 
   const buildLocationPayload = () => ({
     address: cafeAddress,
@@ -264,10 +282,34 @@ export default function Settings() {
     postalCode: cafePostalCode,
     province: cafeProvince,
     country: cafeCountry,
+    lat: cafeLatitude.trim() === '' ? '' : Number(cafeLatitude),
+    lng: cafeLongitude.trim() === '' ? '' : Number(cafeLongitude),
   })
 
   const handleCafeSave = async (e: FormEvent) => {
     e.preventDefault()
+    if (!loaded) return
+    const latitude = cafeLatitude.trim()
+    const longitude = cafeLongitude.trim()
+    if (Boolean(latitude) !== Boolean(longitude)) {
+      setCafeError('Latitude and longitude must both be provided, or both left blank.')
+      setCafeState('error')
+      return
+    }
+    if (latitude && longitude) {
+      const parsedLatitude = Number(latitude)
+      const parsedLongitude = Number(longitude)
+      if (!Number.isFinite(parsedLatitude) || parsedLatitude < -90 || parsedLatitude > 90) {
+        setCafeError('Latitude must be a number between -90 and 90.')
+        setCafeState('error')
+        return
+      }
+      if (!Number.isFinite(parsedLongitude) || parsedLongitude < -180 || parsedLongitude > 180) {
+        setCafeError('Longitude must be a number between -180 and 180.')
+        setCafeState('error')
+        return
+      }
+    }
     setCafeState('saving')
     setCafeError(undefined)
     try {
@@ -287,6 +329,8 @@ export default function Settings() {
               cafePostalCode,
               cafeProvince,
               cafeCountry,
+              cafeLatitude,
+              cafeLongitude,
             }
           : prev
       )
@@ -303,7 +347,8 @@ export default function Settings() {
   }
 
   const handleCafeCancel = () => {
-    const snapshot = loaded ?? FALLBACK_SNAPSHOT
+    if (!loaded) return
+    const snapshot = loaded
     setCafeName(snapshot.cafeName)
     setCafeAddress(snapshot.cafeAddress)
     setCafeAddressLine2(snapshot.cafeAddressLine2)
@@ -312,6 +357,8 @@ export default function Settings() {
     setCafePostalCode(snapshot.cafePostalCode)
     setCafeProvince(snapshot.cafeProvince)
     setCafeCountry(snapshot.cafeCountry)
+    setCafeLatitude(snapshot.cafeLatitude)
+    setCafeLongitude(snapshot.cafeLongitude)
     setCafeError(undefined)
     setCafeState('idle')
     setIsEditingCafe(false)
@@ -325,6 +372,7 @@ export default function Settings() {
 
   const handleHoursSave = async (e: FormEvent) => {
     e.preventDefault()
+    if (!loaded) return
     setHoursState('saving')
     setHoursError(undefined)
     const invalidDay = tradingHours.find(
@@ -351,7 +399,8 @@ export default function Settings() {
   }
 
   const handleHoursCancel = () => {
-    const snapshot = loaded ?? FALLBACK_SNAPSHOT
+    if (!loaded) return
+    const snapshot = loaded
     setTradingHours(snapshot.tradingHours.map((entry) => ({ ...entry })))
     setHoursError(undefined)
     setHoursState('idle')
@@ -382,7 +431,7 @@ export default function Settings() {
                   <Icon className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">{section.label}</span>
-                    <span className={active ? 'block text-xs text-guava-red/80' : 'block text-xs text-[#555555]'}>
+                    <span className={active ? 'block text-xs text-guava-red/80' : 'block text-xs text-muted'}>
                       {section.description}
                     </span>
                   </span>
@@ -395,6 +444,22 @@ export default function Settings() {
         <div className="min-w-0 space-y-6">
           {activeSection === 'general' && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        {loadState === 'loading' && (
+          <div className="xl:col-span-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-muted" role="status">
+            Loading the active cafe settings...
+          </div>
+        )}
+        {loadState === 'error' && (
+          <div className="xl:col-span-2 flex flex-col gap-3 rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
+            <div>
+              <p className="text-sm font-medium text-red-300">Cafe settings are unavailable</p>
+              <p className="mt-1 text-xs text-muted">Nothing can be edited until the saved settings load successfully.</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => loadCafe()}>
+              Try again
+            </Button>
+          </div>
+        )}
         <Card className="xl:col-span-2">
           <CardHeader>
             <div className="flex items-start justify-between gap-3">
@@ -426,7 +491,7 @@ export default function Settings() {
             {isEditingHours ? (
               <form onSubmit={handleHoursSave} className="space-y-4">
                 <div className="rounded-lg border border-border bg-[#111111] divide-y divide-border">
-                  <div className="hidden sm:grid sm:grid-cols-[140px_120px_1fr_1fr] gap-3 px-4 py-2.5 text-[11px] uppercase tracking-wider text-[#555555] font-medium">
+                  <div className="hidden sm:grid sm:grid-cols-[140px_120px_1fr_1fr] gap-3 px-4 py-2.5 text-[11px] uppercase tracking-wider text-muted font-medium">
                     <span>Day</span>
                     <span>Status</span>
                     <span>Opens</span>
@@ -505,7 +570,7 @@ export default function Settings() {
                           className={
                             entry.isOpen
                               ? 'text-sm font-medium text-text tabular-nums'
-                              : 'text-xs font-medium text-[#555555] uppercase tracking-wide'
+                              : 'text-xs font-medium text-muted uppercase tracking-wide'
                           }
                         >
                           {formatTimeRange(entry)}
@@ -549,14 +614,14 @@ export default function Settings() {
           </CardHeader>
           <CardContent>
             {isEditingCafe ? (
-              <form onSubmit={handleCafeSave} className="space-y-5 pb-4">
+              <form onSubmit={handleCafeSave} className="space-y-5 pb-4" noValidate>
                 <div className="space-y-1.5">
                   <Label htmlFor="cafe-name">Cafe Name</Label>
                   <Input id="cafe-name" value={cafeName} onChange={(e) => setCafeName(e.target.value)} placeholder="The Good Bean" required />
                 </div>
 
                 <div className="space-y-3">
-                  <p className="text-[11px] uppercase tracking-wider text-[#555555] font-medium">Address</p>
+                  <p className="text-[11px] uppercase tracking-wider text-muted font-medium">Address</p>
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="cafe-address">Street Address</Label>
@@ -564,7 +629,7 @@ export default function Settings() {
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="cafe-address-line2">
-                        Apartment, suite, floor <span className="text-[#555555] font-normal">(optional)</span>
+                        Apartment, suite, floor <span className="text-muted font-normal">(optional)</span>
                       </Label>
                       <Input id="cafe-address-line2" value={cafeAddressLine2} onChange={(e) => setCafeAddressLine2(e.target.value)} placeholder="Shop 4, Ground Floor" />
                     </div>
@@ -603,11 +668,50 @@ export default function Settings() {
                   </div>
                 </div>
 
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider text-muted font-medium">Forecast coordinates</p>
+                    <p className="mt-1 text-xs text-muted">
+                      Optional decimal coordinates for precise local weather. Enter both values or leave both blank.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cafe-latitude">Latitude</Label>
+                      <Input
+                        id="cafe-latitude"
+                        type="number"
+                        inputMode="decimal"
+                        min="-90"
+                        max="90"
+                        step="any"
+                        value={cafeLatitude}
+                        onChange={(e) => setCafeLatitude(e.target.value)}
+                        placeholder="-33.9249"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="cafe-longitude">Longitude</Label>
+                      <Input
+                        id="cafe-longitude"
+                        type="number"
+                        inputMode="decimal"
+                        min="-180"
+                        max="180"
+                        step="any"
+                        value={cafeLongitude}
+                        onChange={(e) => setCafeLongitude(e.target.value)}
+                        placeholder="18.4241"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="space-y-1.5">
                   <Label>Timezone</Label>
                   <div className="flex items-center justify-between rounded-lg border border-border bg-[#0a0a0a] px-3 py-2 text-sm">
-                    <span className="text-text font-medium tabular-nums">{cafeTimezone}</span>
-                    <span className="text-[#555555] text-xs">Contact support to change</span>
+                    <span className="text-text font-medium tabular-nums">{cafeTimezone || '—'}</span>
+                    <span className="text-muted text-xs">Contact support to change</span>
                   </div>
                 </div>
 
@@ -633,9 +737,9 @@ export default function Settings() {
                 <ReadOnlyField label="Cafe Name" value={cafeName} />
 
                 <div className="space-y-1.5">
-                  <p className="text-[#555555] text-[11px] uppercase tracking-wider font-medium">Address</p>
+                  <p className="text-muted text-[11px] uppercase tracking-wider font-medium">Address</p>
                   <div className="text-text text-sm font-medium leading-relaxed space-y-0.5">
-                    {cafeAddress ? <p>{cafeAddress}</p> : <p className="text-[#555555]">—</p>}
+                    {cafeAddress ? <p>{cafeAddress}</p> : <p className="text-muted">—</p>}
                     {cafeAddressLine2 && <p>{cafeAddressLine2}</p>}
                     {(cafeSuburb || cafeCity || cafePostalCode) && (
                       <p>
@@ -650,7 +754,9 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
+                  <ReadOnlyField label="Latitude" value={cafeLatitude} />
+                  <ReadOnlyField label="Longitude" value={cafeLongitude} />
                   <ReadOnlyField label="Timezone" value={cafeTimezone} />
                 </div>
 
@@ -684,12 +790,12 @@ export default function Settings() {
               </p>
             </div>
             <div className="flex justify-end">
-              <Link to="/planning/factors">
-                <Button type="button">
+              <Button asChild>
+                <Link to="/planning/factors">
                   Open Forecast Factors
                   <ArrowRight className="w-3.5 h-3.5" />
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -714,12 +820,12 @@ export default function Settings() {
                   </p>
                 </div>
                 <div className="flex justify-end">
-                  <Link to="/integrations">
-                    <Button type="button">
+                  <Button asChild>
+                    <Link to="/integrations">
                       Open Integrations
                       <ArrowRight className="w-3.5 h-3.5" />
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -744,12 +850,12 @@ export default function Settings() {
                   </p>
                 </div>
                 <div className="flex justify-end">
-                  <Link to="/team">
-                    <Button type="button">
+                  <Button asChild>
+                    <Link to="/team">
                       Open Team
                       <ArrowRight className="w-3.5 h-3.5" />
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>

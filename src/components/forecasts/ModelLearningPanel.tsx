@@ -149,7 +149,7 @@ function CorrectionList({
               <span className="truncate text-muted">{entry.label}</span>
               <span className={cn('font-semibold', (entry.correction || 0) >= 0 ? 'text-guava-green' : 'text-guava-red')}>
                 {formatPct(entry.correction)}
-                <span className="ml-1 font-normal text-[#555555]">({entry.sampleSize})</span>
+                <span className="ml-1 font-normal text-muted">({entry.sampleSize})</span>
               </span>
             </div>
           ))

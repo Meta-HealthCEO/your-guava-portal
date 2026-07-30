@@ -65,6 +65,44 @@ describe('UploadDetail', () => {
     expect(screen.getByRole('link', { name: /download/i })).toHaveAttribute('href', 'https://test.r2.local/foo')
   })
 
+  it('keeps upload metadata visible when the transaction preview fails', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.reject(new Error('rows unavailable'))
+      }
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'export.csv',
+            status: 'completed',
+            stats: { imported: 4, skipped: 0, errors: 0, totalRows: 4 },
+            posType: 'yoco',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+          },
+          downloadUrl: '',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    expect(await screen.findByText('export.csv')).toBeInTheDocument()
+    expect(screen.getByText('Transactions could not be loaded.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('shows a retryable error instead of a false not-found state', async () => {
+    apiMock.get.mockRejectedValue(new Error('offline'))
+
+    renderUploadDetail()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Upload details could not be loaded.')
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+    expect(screen.queryByText('Not found.')).not.toBeInTheDocument()
+  })
+
   it('shows captured row-level import errors', async () => {
     apiMock.get.mockImplementation((url: string) => {
       if (url.endsWith('/rows')) {

@@ -17,15 +17,15 @@ import {
   SlidersHorizontal,
   History,
   Lightbulb,
-  // Workforce module icons - re-import alongside the nav entries below when re-enabling
-  // UserCircle,
-  // CalendarDays,
-  // CalendarOff,
+  UserCircle,
+  CalendarDays,
+  CalendarOff,
 } from 'lucide-react'
 import guavaIcon from '@/assets/guava-icon.png'
 import { useAuth } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
+import { WORKFORCE_ENABLED } from '@/lib/features'
 
 interface NavItem {
   label: string
@@ -79,10 +79,16 @@ const navSections: NavSection[] = [
       { label: 'Settings', to: '/settings', icon: Settings, exact: true, activePaths: [{ path: '/account', exact: true }] },
     ],
   },
-  // Workforce module - temporarily hidden until ready for production
-  // { label: 'Staff', to: '/staff', icon: UserCircle },
-  // { label: 'Roster', to: '/roster', icon: CalendarDays },
-  // { label: 'Leave', to: '/leave', icon: CalendarOff },
+  ...(WORKFORCE_ENABLED
+    ? [{
+        label: 'Workforce',
+        items: [
+          { label: 'Staff', to: '/staff', icon: UserCircle, exact: true },
+          { label: 'Roster', to: '/roster', icon: CalendarDays, exact: true },
+          { label: 'Leave', to: '/leave', icon: CalendarOff, exact: true },
+        ],
+      }]
+    : []),
 ]
 
 interface SidebarProps {
@@ -152,6 +158,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         <div
           className="fixed inset-0 bg-black/60 z-40 xl:hidden"
           onClick={onClose}
+          aria-hidden="true"
         />
       )}
 
@@ -174,7 +181,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <p className="text-[#999999] text-[10px] leading-tight mt-0.5">{cafeName || ''}</p>
             </div>
           </div>
-          <button onClick={onClose} className="xl:hidden text-[#555555] hover:text-text p-1">
+          <button onClick={onClose} className="xl:hidden text-muted hover:text-text p-1" aria-label="Close navigation">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -184,13 +191,16 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <div className="relative">
               <button
                 onClick={() => setSwitcherOpen(!switcherOpen)}
+                aria-expanded={switcherOpen}
+                aria-haspopup="listbox"
+                aria-label="Switch active cafe"
                 className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-surface border border-border text-sm text-text hover:border-[#3A3A3A] transition-colors"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <Store className="w-3.5 h-3.5 shrink-0 text-muted" />
                   <span className="truncate">{cafeName || 'Select cafe'}</span>
                 </div>
-                <ChevronDown className={cn('w-3.5 h-3.5 shrink-0 text-[#555555] transition-transform', switcherOpen && 'rotate-180')} />
+                <ChevronDown className={cn('w-3.5 h-3.5 shrink-0 text-muted transition-transform', switcherOpen && 'rotate-180')} />
               </button>
               {switcherOpen && (
                 <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded-lg shadow-lg z-50 overflow-hidden">
@@ -222,7 +232,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         <nav className="flex-1 px-3 py-4 overflow-y-auto">
           {visibleSections.map((section) => (
             <div key={section.label} className="mb-3 last:mb-0">
-              <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-[#555555]">
+              <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
                 {section.label}
               </p>
               <div className="space-y-0.5">
@@ -267,10 +277,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         <div className="px-3 pb-4 pt-3 border-t border-border">
           <div className="px-3 py-2 mb-1">
             <p className="text-text text-sm font-medium truncate">{user?.name ?? '-'}</p>
-            <p className="text-[#555555] text-xs truncate">{user?.email ?? '-'}</p>
+            <p className="text-muted text-xs truncate">{user?.email ?? '-'}</p>
           </div>
           <button
             onClick={handleLogout}
+            aria-label="Sign out"
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-muted hover:text-text hover:bg-white/5 transition-colors group"
           >
             <LogOut className="w-4 h-4 shrink-0 group-hover:text-red-400 transition-colors" />

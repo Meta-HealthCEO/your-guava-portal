@@ -10,16 +10,17 @@ import {
   ReferenceLine,
 } from 'recharts'
 import type { Forecast } from '@/types'
+import { parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function shortDayLabel(dateStr: string): string {
-  const d = new Date(dateStr)
+  const d = parseDateOnly(dateStr)
   return `${SHORT_DAYS[d.getDay()]} ${d.getDate()} ${d.toLocaleDateString('en-ZA', { month: 'short' })}`
 }
 
 function todayLabel(): string {
-  return shortDayLabel(new Date().toISOString().slice(0, 10))
+  return shortDayLabel(toLocalDateOnly(new Date()))
 }
 
 function fmtRevenue(value: number) {
@@ -100,7 +101,7 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
   const data: ChartDatum[] = Array.from(allDates)
     .sort()
     .map((dateStr) => {
-      const d = new Date(dateStr)
+      const d = parseDateOnly(dateStr)
       d.setHours(0, 0, 0, 0)
       const isPast = d < today
       const past = pastMap.get(dateStr)

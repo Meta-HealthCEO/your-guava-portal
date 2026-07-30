@@ -22,15 +22,34 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import api from '@/lib/api'
+import api, { authenticatedFetch } from '@/lib/api'
+import { secureRandomId } from '@/lib/idempotency'
 import { cn } from '@/lib/utils'
+import { getInsightChatStorageKeys, readScopedStorage, writeScopedStorage } from '@/lib/chatStorage'
+import { useAuth } from '@/hooks/useAuth'
 import guavaIcon from '@/assets/guava-icon.png'
 
 interface Insight {
   id: string
   text: string
   category: 'trend' | 'warning' | 'tip' | 'highlight'
-  generatedAt: string
+  generatedAt: string | null
+}
+
+type InsightCacheStatus = 'fresh' | 'stale' | 'empty' | 'unconfigured'
+
+interface InsightReadResponse {
+  success: boolean
+  insights: string[]
+  generatedAt: string | null
+  requiresRefresh: boolean
+  cacheStatus: InsightCacheStatus
+}
+
+interface InsightRefreshResponse extends Omit<InsightReadResponse, 'cacheStatus'> {
+  guavaCredits?: { available?: number }
+  aiCredits?: { available?: number }
+  meta?: { replayed?: boolean; coalesced?: boolean }
 }
 
 interface ChatMessage {
@@ -80,8 +99,6 @@ const QUICK_PROMPTS = [
   'What changed in the last 30 days?',
 ]
 
-const CHAT_STORAGE_KEY = 'your-guava:insights-chat:v1'
-const CHAT_LIST_STORAGE_KEY = 'your-guava:insights-chat-list:v1'
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
@@ -131,16 +148,20 @@ function mergeChats(primary: InsightChat[], fallback: InsightChat[]) {
   return sortChats(Array.from(byId.values()))
 }
 
-function loadLocalChatList() {
-  try {
-    const stored = localStorage.getItem(CHAT_LIST_STORAGE_KEY)
-    if (!stored) return []
-    const parsed = JSON.parse(stored)
-    if (!Array.isArray(parsed?.chats)) return []
-    return parsed.chats.map(withMessageIds)
-  } catch {
-    return []
-  }
+function loadLocalChatList(storageKey?: string, scopeId?: string) {
+  if (!storageKey || !scopeId) return []
+  const stored = readScopedStorage<{ chats?: InsightChat[] }>(storageKey, scopeId)
+  if (!Array.isArray(stored?.chats)) return []
+  return stored.chats.map(withMessageIds)
+}
+
+function loadCurrentChat(storageKey?: string, scopeId?: string) {
+  if (!storageKey || !scopeId) return null
+  return readScopedStorage<{
+    activeChatId?: string | null
+    messages?: ChatMessage[]
+    contextStats?: ChatContextStats | null
+  }>(storageKey, scopeId)
 }
 
 function isLocalChat(chatId: string | null) {
@@ -171,6 +192,16 @@ function timeAgo(isoDate: string) {
   if (diff < 60) return `${diff} minute${diff === 1 ? '' : 's'} ago`
   const hours = Math.floor(diff / 60)
   return `${hours} hour${hours === 1 ? '' : 's'} ago`
+}
+
+function createInsightRefreshKey() {
+  const entropy = secureRandomId()
+  return `insight-refresh-${Date.now()}-${entropy}`.slice(0, 160)
+}
+
+function createChatRequestKey() {
+  const entropy = secureRandomId()
+  return `ask-guava-${Date.now()}-${entropy}`.slice(0, 160)
 }
 
 function InsightCard({ insight, index }: { insight: Insight; index: number }) {
@@ -224,7 +255,7 @@ function Stat({ icon: Icon, label, value }: {
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
-      <Icon className="w-3.5 h-3.5 text-[#555555]" />
+      <Icon className="w-3.5 h-3.5 text-muted" />
       <span className="text-muted">{label}</span>
       <span className="text-text font-semibold tabular-nums">{value}</span>
     </div>
@@ -427,7 +458,7 @@ function ChatComposer({
         </div>
       </form>
       {floating && (
-        <p className="mt-2 text-center text-xs text-[#555555]">
+        <p className="mt-2 text-center text-xs text-muted">
           AI can make mistakes. Check important decisions against your source data.
         </p>
       )}
@@ -546,20 +577,32 @@ function ChatHistoryPanel({
 }
 
 export default function Insights() {
+  const { user } = useAuth()
+  const storageKeys = user
+    ? getInsightChatStorageKeys({
+        userId: user.id,
+        orgId: user.orgId,
+        cafeId: user.activeCafeId,
+      })
+    : null
+  const storageScopeId = storageKeys?.scopeId
+  const currentStorageKey = storageKeys?.current
+  const listStorageKey = storageKeys?.list
+  const initialStoredChat = loadCurrentChat(currentStorageKey, storageScopeId)
   const [insights, setInsights] = useState<Insight[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [insightsError, setInsightsError] = useState(false)
+  const [insightsRetryKind, setInsightsRetryKind] = useState<'load' | 'refresh'>('load')
+  const [cacheStatus, setCacheStatus] = useState<InsightCacheStatus>('empty')
+  const [requiresRefresh, setRequiresRefresh] = useState(false)
+  const [creditsRemaining, setCreditsRemaining] = useState<number | null>(null)
   const [hasData, setHasData] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY)
-      if (!stored) return [WELCOME_MESSAGE]
-      const parsed = JSON.parse(stored)
-      if (!Array.isArray(parsed?.messages)) return [WELCOME_MESSAGE]
+      if (!Array.isArray(initialStoredChat?.messages)) return [WELCOME_MESSAGE]
 
-      const storedMessages = parsed.messages
+      const storedMessages = initialStoredChat.messages
         .filter((message: Partial<ChatMessage>) =>
           message &&
           (message.role === 'user' || message.role === 'assistant') &&
@@ -569,33 +612,13 @@ export default function Insights() {
         .map((message: ChatMessage) => ({ ...message, pending: false }))
 
       return storedMessages.length ? storedMessages : [WELCOME_MESSAGE]
-    } catch {
-      return [WELCOME_MESSAGE]
-    }
   })
   const [input, setInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
-  const [chats, setChats] = useState<InsightChat[]>(() => loadLocalChatList())
-  const [activeChatId, setActiveChatId] = useState<string | null>(() => {
-    try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY)
-      if (!stored) return null
-      return JSON.parse(stored)?.activeChatId || null
-    } catch {
-      return null
-    }
-  })
+  const [chats, setChats] = useState<InsightChat[]>(() => loadLocalChatList(listStorageKey, storageScopeId))
+  const [activeChatId, setActiveChatId] = useState<string | null>(initialStoredChat?.activeChatId || null)
   const [isChatsLoading, setIsChatsLoading] = useState(false)
-  const [contextStats, setContextStats] = useState<ChatContextStats | null>(() => {
-    try {
-      const stored = localStorage.getItem(CHAT_STORAGE_KEY)
-      if (!stored) return null
-      const parsed = JSON.parse(stored)
-      return parsed?.contextStats || null
-    } catch {
-      return null
-    }
-  })
+  const [contextStats, setContextStats] = useState<ChatContextStats | null>(initialStoredChat?.contextStats || null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const messageRefs = useRef(new Map<string, HTMLDivElement>())
@@ -606,6 +629,7 @@ export default function Insights() {
   const messagesRef = useRef<ChatMessage[]>(messages)
   const contextStatsRef = useRef<ChatContextStats | null>(contextStats)
   const isChatLoadingRef = useRef(false)
+  const insightRefreshKeyRef = useRef<string | null>(null)
   const didInitialChatSelectionRef = useRef(false)
   const hasConversation = messages.some((message) => message.id !== 'welcome')
   const hasConversationRef = useRef(hasConversation)
@@ -695,41 +719,78 @@ export default function Insights() {
     requestScrollToBottom('auto')
   }, [cancelAssistantTyping, requestScrollToBottom, setActiveChat, setTrackedMessages])
 
-  const loadInsights = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setIsRefreshing(true)
-    else setIsLoading(true)
+  const applyInsightPayload = useCallback((
+    data: { insights?: unknown; generatedAt?: unknown },
+    nextCacheStatus: InsightCacheStatus
+  ) => {
+    const texts = Array.isArray(data.insights)
+      ? data.insights.filter((text): text is string => typeof text === 'string' && text.trim().length > 0)
+      : []
+    const generatedAt = typeof data.generatedAt === 'string' ? data.generatedAt : null
+    const mapped: Insight[] = texts.map((text, index) => ({
+      id: String(index + 1),
+      text,
+      category: (['trend', 'warning', 'tip', 'highlight'] as const)[index % 4],
+      generatedAt,
+    }))
+    setInsights(mapped)
+    setHasData(mapped.length > 0)
+    setCacheStatus(nextCacheStatus)
+    setLastUpdated(generatedAt)
+  }, [])
 
+  const loadInsights = useCallback(async () => {
+    setIsLoading(true)
     try {
-      const { data } = await api.get('/forecasts/insights')
-      if (data?.insights?.length) {
-        const mapped: Insight[] = data.insights.map((text: string, i: number) => ({
-          id: String(i + 1),
-          text,
-          category: (['trend', 'warning', 'tip', 'highlight'] as const)[i % 4],
-          generatedAt: data.generatedAt || new Date().toISOString(),
-        }))
-        setInsights(mapped)
-        setHasData(true)
-      } else {
-        setHasData(false)
-      }
+      const { data } = await api.get<InsightReadResponse>('/forecasts/insights')
+      const nextStatus: InsightCacheStatus = ['fresh', 'stale', 'empty', 'unconfigured'].includes(data?.cacheStatus)
+        ? data.cacheStatus
+        : Array.isArray(data?.insights) && data.insights.length > 0
+          ? 'fresh'
+          : 'empty'
+      applyInsightPayload(data, nextStatus)
+      setRequiresRefresh(Boolean(data?.requiresRefresh))
       setInsightsError(false)
-      setLastUpdated(new Date().toISOString())
     } catch {
       // Keep any previously loaded insights visible, but surface the failure honestly.
+      setInsightsRetryKind('load')
       setInsightsError(true)
     } finally {
       setIsLoading(false)
+    }
+  }, [applyInsightPayload])
+
+  const refreshInsights = useCallback(async () => {
+    setIsRefreshing(true)
+    setInsightsError(false)
+    const idempotencyKey = insightRefreshKeyRef.current ?? createInsightRefreshKey()
+    insightRefreshKeyRef.current = idempotencyKey
+
+    try {
+      const { data } = await api.post<InsightRefreshResponse>(
+        '/forecasts/insights/refresh',
+        {},
+        { headers: { 'Idempotency-Key': idempotencyKey } }
+      )
+      applyInsightPayload(data, 'fresh')
+      setRequiresRefresh(false)
+      setCreditsRemaining(data.guavaCredits?.available ?? data.aiCredits?.available ?? null)
+      insightRefreshKeyRef.current = null
+      setInsightsError(false)
+    } catch {
+      setInsightsRetryKind('refresh')
+      setInsightsError(true)
+    } finally {
       setIsRefreshing(false)
     }
-  }, [])
+  }, [applyInsightPayload])
 
   const loadChats = useCallback(async () => {
     setIsChatsLoading(true)
     try {
       const { data } = await api.get('/insight-chats', { params: { archived: true } })
       const loadedChats: InsightChat[] = (data.chats || []).map(withMessageIds)
-      const mergedChats = mergeChats(loadedChats, loadLocalChatList())
+      const mergedChats = mergeChats(loadedChats, loadLocalChatList(listStorageKey, storageScopeId))
       setChats(mergedChats)
 
       if (isChatLoadingRef.current) return
@@ -748,7 +809,7 @@ export default function Insights() {
     } finally {
       setIsChatsLoading(false)
     }
-  }, [applyChat])
+  }, [applyChat, listStorageKey, storageScopeId])
 
   useEffect(() => {
     loadInsights()
@@ -795,35 +856,33 @@ export default function Insights() {
 
   useEffect(() => {
     if (messages.some((message) => message.pending)) return
+    if (!currentStorageKey || !storageScopeId) return
 
     const storedMessages = messages
       .filter((message) => message.id !== 'welcome' || messages.length === 1)
       .slice(-80)
       .map((message) => ({ ...message, pending: false }))
 
-    localStorage.setItem(
-      CHAT_STORAGE_KEY,
-      JSON.stringify({
-        activeChatId,
-        messages: storedMessages,
-        contextStats,
-        updatedAt: new Date().toISOString(),
-      })
-    )
-  }, [activeChatId, messages, contextStats])
+    writeScopedStorage(currentStorageKey, {
+      scopeId: storageScopeId,
+      activeChatId,
+      messages: storedMessages,
+      contextStats,
+      updatedAt: new Date().toISOString(),
+    })
+  }, [activeChatId, messages, contextStats, currentStorageKey, storageScopeId])
 
   useEffect(() => {
-    localStorage.setItem(
-      CHAT_LIST_STORAGE_KEY,
-      JSON.stringify({
-        chats: chats.slice(0, 80).map((chat) => ({
-          ...chat,
-          messages: chat.messages.map((message) => ({ ...message, pending: false })),
-        })),
-        updatedAt: new Date().toISOString(),
-      })
-    )
-  }, [chats])
+    if (!listStorageKey || !storageScopeId) return
+    writeScopedStorage(listStorageKey, {
+      scopeId: storageScopeId,
+      chats: chats.slice(0, 20).map((chat) => ({
+        ...chat,
+        messages: chat.messages.slice(-20).map((message) => ({ ...message, pending: false })),
+      })),
+      updatedAt: new Date().toISOString(),
+    })
+  }, [chats, listStorageKey, storageScopeId])
 
   useEffect(() => () => {
     cancelAssistantTyping()
@@ -957,86 +1016,93 @@ export default function Insights() {
       .map((line) => line.replace('data:', '').trimStart())
       .join('\n')
 
-    if (!eventName || !dataText) return
+    if (!eventName) return { type: 'ignored' as const }
+    if (!dataText) throw new Error(`AI stream ${eventName} event had no data`)
 
     let data: { text?: string; message?: string; contextStats?: ChatContextStats | null }
     try {
       data = JSON.parse(dataText)
     } catch {
-      return // Malformed/partial SSE frame — skip rather than crash the stream
+      throw new Error(`AI stream ${eventName} event contained invalid data`)
     }
     if (eventName === 'delta') {
-      appendAssistantDelta(assistantId, data.text || '')
+      const text = data.text || ''
+      appendAssistantDelta(assistantId, text)
+      return { type: 'delta' as const, text }
     }
     if (eventName === 'done') {
       setContextStats(data.contextStats || null)
       finishAssistantMessage(assistantId)
+      return { type: 'done' as const, contextStats: data.contextStats || null }
     }
     if (eventName === 'error') {
-      appendAssistantDelta(assistantId, `\n\n${data.message || 'The AI stream stopped unexpectedly.'}`)
-      finishAssistantMessage(assistantId)
+      throw new Error(data.message || 'The AI stream stopped unexpectedly.')
     }
+    return { type: 'ignored' as const }
   }
 
   const streamAssistantMessage = async (
     assistantId: string,
     payloadMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
-    onFirstDelta: () => void
+    onFirstDelta: () => void,
+    idempotencyKey: string
   ) => {
-    const token = localStorage.getItem('accessToken')
-    const apiBaseUrl = String(api.defaults.baseURL || import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
-    const response = await fetch(`${apiBaseUrl}/forecasts/insights/chat/stream`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ messages: payloadMessages }),
-    })
-
-    if (!response.ok || !response.body) {
-      throw new Error('Streaming chat request failed')
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let answer = ''
-    let streamedContextStats: ChatContextStats | null = null
-
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      const events = buffer.split('\n\n')
-      buffer = events.pop() || ''
-      for (const event of events) {
-        if (event.includes('event: delta')) onFirstDelta()
-        const dataLine = event
-          .split('\n')
-          .find((line) => line.startsWith('data:'))
-          ?.replace('data:', '')
-          .trimStart()
-        if (dataLine) {
-          try {
-            const parsed = JSON.parse(dataLine)
-            if (event.includes('event: delta')) answer += parsed.text || ''
-            if (event.includes('event: done')) streamedContextStats = parsed.contextStats || null
-          } catch {
-            // Malformed/partial SSE frame — skip rather than abort the stream
-          }
-        }
-        handleStreamEvent(event, assistantId)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 90_000)
+    try {
+      const response = await authenticatedFetch('/forecasts/insights/chat/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify({ messages: payloadMessages }),
+        signal: controller.signal,
+      })
+      if (!response.ok || !response.body) {
+        throw new Error('Streaming chat request failed')
       }
-    }
 
-    if (buffer.trim()) {
-      handleStreamEvent(buffer, assistantId)
-    }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let answer = ''
+      let streamedContextStats: ChatContextStats | null = null
+      let sawDone = false
 
-    return { answer, contextStats: streamedContextStats }
+      const processEvent = (event: string) => {
+        const parsed = handleStreamEvent(event, assistantId)
+        if (parsed.type === 'delta') {
+          onFirstDelta()
+          answer += parsed.text
+        } else if (parsed.type === 'done') {
+          sawDone = true
+          streamedContextStats = parsed.contextStats
+        }
+      }
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || ''
+        for (const event of events) {
+          processEvent(event)
+        }
+      }
+
+      buffer += decoder.decode()
+      if (buffer.trim()) {
+        processEvent(buffer)
+      }
+      if (!sawDone) throw new Error('AI stream ended before its completion event')
+
+      return { answer, contextStats: streamedContextStats }
+    } finally {
+      window.clearTimeout(timeoutId)
+    }
   }
 
   const saveChat = async (
@@ -1168,10 +1234,7 @@ export default function Insights() {
       }
       setChatNotice('Chat renamed.')
     } catch {
-      setChats((current) =>
-        current.map((item) => (item._id === chat._id ? { ...item, title } : item))
-      )
-      setChatNotice('Chat renamed locally. Sync will retry when the API is available.')
+      setChatNotice('Could not rename this chat. Please try again.')
     }
   }
 
@@ -1190,10 +1253,7 @@ export default function Insights() {
       setChats((current) => current.map((item) => (item._id === updatedChat._id ? updatedChat : item)))
       if (archived && activeChatIdRef.current === chat._id) startNewChat({ preserve: false })
     } catch {
-      setChats((current) =>
-        current.map((item) => (item._id === chat._id ? { ...item, archived } : item))
-      )
-      if (archived && activeChatIdRef.current === chat._id) startNewChat({ preserve: false })
+      setChatNotice(`Could not ${archived ? 'archive' : 'restore'} this chat. Please try again.`)
     }
   }
 
@@ -1211,7 +1271,8 @@ export default function Insights() {
       try {
         await api.delete(`/insight-chats/${chat._id}`)
       } catch {
-        // Optimistically remove the chat locally either way.
+        setChatNotice(`Could not delete ${chat.title}. Please try again.`)
+        return
       }
     }
 
@@ -1248,12 +1309,13 @@ export default function Insights() {
     try {
       const chatId = await ensureActiveChat(nextMessages)
       const payloadMessages = messagesForApi(nextMessages)
+      const idempotencyKey = createChatRequestKey()
       let streamedAny = false
 
       try {
         const streamed = await streamAssistantMessage(assistantId, payloadMessages, () => {
           streamedAny = true
-        })
+        }, idempotencyKey)
         const stats = streamed.contextStats || contextStatsRef.current
         const finalMessages = [
           ...nextMessages,
@@ -1267,7 +1329,11 @@ export default function Insights() {
           return
         }
 
-        const { data } = await api.post('/forecasts/insights/chat', { messages: payloadMessages })
+        const { data } = await api.post(
+          '/forecasts/insights/chat',
+          { messages: payloadMessages },
+          { headers: { 'Idempotency-Key': idempotencyKey } }
+        )
         setContextStats(data.contextStats || null)
         revealAssistantMessage(assistantId, data.answer || 'I could not generate an answer.')
         await saveChat(
@@ -1282,7 +1348,7 @@ export default function Insights() {
     } catch {
       revealAssistantMessage(
         assistantId,
-        'I could not reach the AI analyst right now. Check that the backend is running and that ANTHROPIC_API_KEY is set.'
+        'I could not reach the AI analyst right now. Please try again in a moment.'
       )
     } finally {
       isChatLoadingRef.current = false
@@ -1417,11 +1483,14 @@ export default function Insights() {
                       <Sparkles className="w-4 h-4 text-guava-red" />
                       Auto Analysis
                     </CardTitle>
-                    <CardDescription>Generated from recent sales and upcoming signals.</CardDescription>
+                    <CardDescription>
+                      Generated from recent sales and upcoming signals. Each manual refresh uses 10 Guava credits.
+                      {creditsRemaining != null ? ` ${creditsRemaining} credits remaining.` : ''}
+                    </CardDescription>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {lastUpdated && (
-                      <div className="flex items-center gap-1.5 text-[#555555] text-xs">
+                      <div className="flex items-center gap-1.5 text-muted text-xs">
                         <Clock className="w-3 h-3" />
                         <span>Updated {timeAgo(lastUpdated)}</span>
                       </div>
@@ -1429,11 +1498,11 @@ export default function Insights() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => loadInsights(true)}
-                      disabled={isRefreshing}
+                      onClick={refreshInsights}
+                      disabled={isRefreshing || cacheStatus === 'unconfigured'}
                     >
                       <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
-                      {isRefreshing ? 'Refreshing...' : 'Refresh'}
+                      {isRefreshing ? 'Refreshing...' : 'Refresh (10 credits)'}
                     </Button>
                   </div>
                 </div>
@@ -1442,31 +1511,56 @@ export default function Insights() {
                 {!isLoading && insightsError && (
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-900/30 bg-red-900/10 px-3.5 py-2.5 text-sm text-red-400">
                     <span>
-                      {insights.length > 0
-                        ? 'Could not refresh insights — showing the last loaded analysis.'
+                      {insightsRetryKind === 'refresh'
+                        ? insights.length > 0
+                          ? 'Could not refresh insights — showing the last loaded analysis.'
+                          : 'Could not generate insights. No credits will be charged for a failed request.'
                         : 'Insights are unavailable right now. Please try again.'}
                     </span>
-                    <Button variant="secondary" size="sm" onClick={() => loadInsights(true)} disabled={isRefreshing}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={insightsRetryKind === 'refresh' ? refreshInsights : loadInsights}
+                      disabled={isRefreshing || isLoading}
+                    >
                       Retry
                     </Button>
+                  </div>
+                )}
+
+                {!isLoading && !insightsError && hasData && (requiresRefresh || cacheStatus === 'stale') && (
+                  <div className="mb-4 rounded-lg border border-amber-700/30 bg-amber-900/10 px-3.5 py-2.5 text-sm text-amber-200" role="status">
+                    This saved analysis may be out of date. Refreshing is an explicit 10-credit action.
                   </div>
                 )}
 
                 {!isLoading && !hasData && !insightsError && (
                   <div className="flex flex-col items-center justify-center min-h-65 text-center">
                     <div className="w-12 h-12 rounded-xl bg-[#111111] border border-border flex items-center justify-center mb-4">
-                      <Sparkles className="w-6 h-6 text-[#555555]" />
+                      <Sparkles className="w-6 h-6 text-muted" />
                     </div>
-                    <h2 className="text-text text-base font-semibold mb-2">No insights yet</h2>
-                    <p className="text-[#555555] text-sm mb-5 max-w-xs">
-                      Upload your transaction data to unlock AI-powered sales insights tailored to your cafe.
+                    <h2 className="text-text text-base font-semibold mb-2">
+                      {cacheStatus === 'unconfigured' ? 'AI insights are not configured' : 'No generated insights yet'}
+                    </h2>
+                    <p className="text-muted text-sm mb-5 max-w-xs">
+                      {cacheStatus === 'unconfigured'
+                        ? 'Insight generation is unavailable in this environment. Contact support for configuration help.'
+                        : 'Generate an analysis from your imported sales data, or upload transactions if this cafe has none yet.'}
                     </p>
-                    <Link to="/data-health">
-                      <Button>
-                        <Upload className="w-4 h-4" />
-                        Upload Sales Data
-                      </Button>
-                    </Link>
+                    {cacheStatus !== 'unconfigured' && (
+                      <div className="flex flex-wrap justify-center gap-2">
+                        <Button type="button" onClick={refreshInsights} disabled={isRefreshing}>
+                          <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
+                          {isRefreshing ? 'Generating...' : 'Generate (10 credits)'}
+                        </Button>
+                        <Button asChild variant="outline">
+                          <Link to="/data-health">
+                            <Upload className="w-4 h-4" />
+                            Upload Sales Data
+                          </Link>
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
+import { getLocalMonthBounds, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 import type { LeaveRequest, StaffMember, LeaveCalendarDay } from '@/types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ function getStaffName(staffId: LeaveRequest['staffId']): string {
 }
 
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
+  return parseDateOnly(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 }
 
 // ── Submit Leave Form ────────────────────────────────────────────────────────
@@ -151,8 +152,7 @@ function LeaveCalendar() {
 
   useEffect(() => {
     setLoading(true)
-    const startDate = new Date(year, month, 1).toISOString().split('T')[0]
-    const endDate = new Date(year, month + 1, 0).toISOString().split('T')[0]
+    const { startDate, endDate } = getLocalMonthBounds(new Date(year, month, 1, 12))
     api
       .get<{ calendar: LeaveCalendarDay[] }>(`/leave/calendar?startDate=${startDate}&endDate=${endDate}`)
       .then(({ data }) => setCalendarDays(data.calendar || []))
@@ -205,7 +205,7 @@ function LeaveCalendar() {
             {/* Header */}
             <div className="grid grid-cols-7 mb-1">
               {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-                <div key={d} className="text-center text-[10px] text-[#555555] py-1">
+                <div key={d} className="text-center text-[10px] text-muted py-1">
                   {d}
                 </div>
               ))}
@@ -220,7 +220,7 @@ function LeaveCalendar() {
                 }
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`
                 const calDay = calendarMap.get(dateStr)
-                const isToday = dateStr === new Date().toISOString().split('T')[0]
+                const isToday = dateStr === toLocalDateOnly(new Date())
 
                 return (
                   <div
@@ -435,9 +435,9 @@ export default function Leave() {
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <CalendarOff className="w-8 h-8 text-[#555555] mb-3" />
+                  <CalendarOff className="w-8 h-8 text-muted mb-3" />
                   <p className="text-muted text-sm">No leave requests</p>
-                  <p className="text-[#555555] text-xs mt-1">
+                  <p className="text-muted text-xs mt-1">
                     {filter !== 'all' ? 'Try changing the filter' : 'Submit a leave request to get started'}
                   </p>
                 </div>

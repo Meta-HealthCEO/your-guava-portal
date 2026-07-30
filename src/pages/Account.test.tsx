@@ -30,13 +30,13 @@ vi.mock('@/lib/api', () => {
   }
 })
 
-function accountPayload() {
+function accountPayload(role: 'owner' | 'manager' = 'owner') {
   return {
     user: {
       id: 'user123',
       email: 'test@yourguava.com',
       name: 'Test Owner',
-      role: 'owner',
+      role,
       orgId: 'org123',
       cafeIds: ['cafe123'],
       activeCafeId: 'cafe123',
@@ -106,13 +106,16 @@ function accountPayload() {
 
 function renderWithAuth(
   ui: ReactNode,
-  { logout = vi.fn().mockResolvedValue(undefined) }: { logout?: () => Promise<void> } = {}
+  {
+    logout = vi.fn().mockResolvedValue(undefined),
+    role = 'owner',
+  }: { logout?: () => Promise<void>; role?: 'owner' | 'manager' } = {}
 ) {
   const user = {
     id: 'user123',
     email: 'test@yourguava.com',
     name: 'Test Owner',
-    role: 'owner' as const,
+    role,
     orgId: 'org123',
     cafeIds: ['cafe123'],
     activeCafeId: 'cafe123',
@@ -124,7 +127,7 @@ function renderWithAuth(
         value={{
           user,
           isLoading: false,
-          isOwner: true,
+          isOwner: role === 'owner',
           login: vi.fn(),
           logout,
           register: vi.fn(),
@@ -141,6 +144,7 @@ describe('Account', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    window.history.pushState({}, '', '/account')
     mockPost.mockResolvedValue({ data: { success: true } })
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/account')) {
@@ -222,6 +226,74 @@ describe('Account', () => {
       expect(mockPatch).toHaveBeenCalledWith('/account/profile', expect.objectContaining({
         name: 'Updated Owner',
       }))
+    })
+  })
+
+  it('submits only the editable name field for managers', async () => {
+    const managerAccount = accountPayload('manager')
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/account')) return Promise.resolve({ data: { success: true, account: managerAccount } })
+      return Promise.resolve({ data: {} })
+    })
+    mockPatch.mockResolvedValueOnce({ data: { success: true, account: managerAccount } })
+
+    renderWithAuth(<Account />, { role: 'manager' })
+    await userEvent.click(await screen.findByRole('button', { name: /^edit$/i }))
+
+    expect(screen.queryByLabelText(/organisation name/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/billing email/i)).not.toBeInTheDocument()
+    const nameInput = screen.getByLabelText(/full name/i)
+    await userEvent.clear(nameInput)
+    await userEvent.type(nameInput, 'Manager Name')
+    await userEvent.click(screen.getByText('Save Account'))
+
+    await waitFor(() => {
+      expect(mockPatch).toHaveBeenCalledWith('/account/profile', { name: 'Manager Name' })
+    })
+  })
+
+  it('verifies a payment reference before showing confirmation', async () => {
+    window.history.pushState({}, '', '/account?payment=paid&reference=pay-123')
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/account/payments/pay-123')) {
+        return Promise.resolve({ data: { success: true, payment: { reference: 'pay-123', status: 'paid' } } })
+      }
+      if (url.includes('/account')) {
+        return Promise.resolve({ data: { success: true, account: accountPayload() } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Account />)
+
+    expect(await screen.findByText(/card payment confirmed/i)).toBeInTheDocument()
+    expect(mockGet).toHaveBeenCalledWith('/account/payments/pay-123')
+  })
+
+  it('reuses the credit-checkout idempotency key after a network failure', async () => {
+    mockPost
+      .mockRejectedValueOnce(new Error('connection dropped'))
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          account: accountPayload(),
+          purchase: { provider: 'mock', credits: 500, status: 'paid' },
+        },
+      })
+
+    renderWithAuth(<Account />)
+    const button = await screen.findByRole('button', { name: /add 500 guava credits/i })
+    await userEvent.click(button)
+    expect(await screen.findByText(/could not start card checkout/i)).toBeInTheDocument()
+
+    await userEvent.click(button)
+    await waitFor(() => {
+      const calls = mockPost.mock.calls.filter(([url]) => url === '/account/ai-credits')
+      expect(calls).toHaveLength(2)
+      const firstKey = calls[0][2]?.headers?.['Idempotency-Key']
+      const secondKey = calls[1][2]?.headers?.['Idempotency-Key']
+      expect(firstKey).toMatch(/^credits:/)
+      expect(secondKey).toBe(firstKey)
     })
   })
 

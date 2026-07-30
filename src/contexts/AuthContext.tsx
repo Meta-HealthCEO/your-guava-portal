@@ -1,5 +1,6 @@
 import { createContext, useEffect, useState, type ReactNode } from 'react'
 import api from '@/lib/api'
+import { clearInsightChatStorage } from '@/lib/chatStorage'
 import type { User } from '@/types'
 
 interface AuthContextType {
@@ -50,6 +51,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       email,
       password,
     })
+    clearInsightChatStorage()
     localStorage.setItem('accessToken', data.accessToken)
     setUser(data.user)
   }
@@ -59,6 +61,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       await api.post('/auth/logout')
     } finally {
       localStorage.removeItem('accessToken')
+      clearInsightChatStorage()
       setUser(null)
     }
   }
@@ -77,6 +80,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       cafeName,
       ...(orgName ? { orgName } : {}),
     })
+    clearInsightChatStorage()
     localStorage.setItem('accessToken', data.accessToken)
     setUser(data.user)
   }
@@ -86,6 +90,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       '/team/switch-cafe',
       { cafeId }
     )
+    clearInsightChatStorage()
     localStorage.setItem('accessToken', data.accessToken)
     // Reload the page so all data refetches for the new cafe
     window.location.reload()

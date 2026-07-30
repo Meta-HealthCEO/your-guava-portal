@@ -126,20 +126,26 @@ export interface ForecastFactor {
   reason?: string
 }
 
+export interface ForecastWeatherSignal {
+  available?: boolean
+  temp?: number | null
+  condition: string
+  humidity?: number | null
+  isRain?: boolean
+  precipMm?: number
+  chanceOfRain?: number
+  unavailableReason?: string
+}
+
 export interface Forecast {
   _id: string
   date: string
   items: ForecastItem[]
   signals: {
-    weather: {
-      temp: number
-      condition: string
-      humidity: number
-      isRain?: boolean
-      precipMm?: number
-      chanceOfRain?: number
-    }
-    loadSheddingStage: number
+    weather: ForecastWeatherSignal
+    loadSheddingStage: number | null
+    loadSheddingAvailable?: boolean | null
+    loadSheddingUnavailableReason?: string | null
     isPublicHoliday: boolean
     isSchoolHoliday: boolean
     isPayday: boolean
@@ -197,7 +203,9 @@ export interface ForecastHistoryRow {
     isPublicHoliday: boolean
     isSchoolHoliday: boolean
     isPayday: boolean
-    loadSheddingStage: number
+    loadSheddingStage: number | null
+    loadSheddingAvailable?: boolean | null
+    loadSheddingUnavailableReason?: string | null
     events: { name: string; impact: string; impactPct?: number }[]
   }
   activeFactors: ForecastFactor[]
@@ -513,7 +521,7 @@ export interface LeaveRequest {
 }
 
 export interface LeaveBalanceData {
-  staffId: string
+  staffId: string | { _id: string; name?: string; role?: StaffMember['role'] }
   staffName?: string
   annual: { total: number; used: number }
   sick: { total: number; used: number }

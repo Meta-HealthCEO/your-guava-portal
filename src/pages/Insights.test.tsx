@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within, fireEvent } from '@/test/test-utils'
+import { render as rtlRender, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { BrowserRouter } from 'react-router-dom'
+import { AuthContext } from '@/contexts/AuthContext'
 import Insights from './Insights'
 
 // Mock assets
@@ -14,6 +16,7 @@ const mockPatch = vi.fn()
 const mockDelete = vi.fn()
 vi.mock('@/lib/api', () => {
   return {
+    authenticatedFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
     default: {
       get: (...args: unknown[]) => mockGet(...args),
       post: (...args: unknown[]) => mockPost(...args),
@@ -29,8 +32,36 @@ vi.mock('@/lib/api', () => {
   }
 })
 
-const CHAT_STORAGE_KEY = 'your-guava:insights-chat:v1'
-const CHAT_LIST_STORAGE_KEY = 'your-guava:insights-chat-list:v1'
+const CHAT_SCOPE_ID = 'u1:org1:c1'
+const CHAT_STORAGE_KEY = `your-guava:insights-chat:v2:${CHAT_SCOPE_ID}`
+const CHAT_LIST_STORAGE_KEY = `your-guava:insights-chat-list:v2:${CHAT_SCOPE_ID}`
+const testUser = {
+  id: 'u1',
+  email: 'owner@example.com',
+  name: 'Owner',
+  role: 'owner' as const,
+  orgId: 'org1',
+  cafeIds: ['c1'],
+  activeCafeId: 'c1',
+}
+
+function render(ui: React.ReactElement) {
+  return rtlRender(
+    <BrowserRouter>
+      <AuthContext.Provider value={{
+        user: testUser,
+        isLoading: false,
+        isOwner: true,
+        login: vi.fn(),
+        logout: vi.fn(),
+        register: vi.fn(),
+        switchCafe: vi.fn(),
+      }}>
+        {ui}
+      </AuthContext.Provider>
+    </BrowserRouter>
+  )
+}
 
 const contextStats = {
   transactionCount: 12,
@@ -63,12 +94,13 @@ function storeActiveChat(savedChat: ReturnType<typeof chat>) {
   localStorage.setItem(
     CHAT_STORAGE_KEY,
     JSON.stringify({
+      scopeId: CHAT_SCOPE_ID,
       activeChatId: savedChat._id,
       messages: savedChat.messages,
       contextStats: savedChat.contextStats,
     })
   )
-  localStorage.setItem(CHAT_LIST_STORAGE_KEY, JSON.stringify({ chats: [savedChat] }))
+  localStorage.setItem(CHAT_LIST_STORAGE_KEY, JSON.stringify({ scopeId: CHAT_SCOPE_ID, chats: [savedChat] }))
 }
 
 function mockBaseRequests(chats: Array<ReturnType<typeof chat>> = []) {
@@ -87,6 +119,24 @@ function mockBaseRequests(chats: Array<ReturnType<typeof chat>> = []) {
     }
     return Promise.resolve({ data: {} })
   })
+}
+
+function streamResponse(body: string): Response {
+  let delivered = false
+  const value = new TextEncoder().encode(body)
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: () => {
+          if (delivered) return Promise.resolve({ done: true, value: undefined })
+          delivered = true
+          return Promise.resolve({ done: false, value })
+        },
+      }),
+    },
+  } as unknown as Response
 }
 
 describe('Insights', () => {
@@ -155,7 +205,7 @@ describe('Insights', () => {
     expect(skeletons.length).toBeGreaterThan(0)
   })
 
-  it('shows refresh button', async () => {
+  it('shows the metered refresh cost', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) {
         return Promise.resolve({ data: { cafe: { name: 'Test' } } })
@@ -166,8 +216,82 @@ describe('Insights', () => {
     render(<Insights />)
 
     await waitFor(() => {
-      expect(screen.getByText('Refresh')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /refresh \(10 credits\)/i })).toBeInTheDocument()
     })
+  })
+
+  it('uses the read-only endpoint on load without spending credits', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/insights')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            insights: [],
+            generatedAt: null,
+            requiresRefresh: true,
+            cacheStatus: 'empty',
+          },
+        })
+      }
+      if (url.includes('/insight-chats')) return Promise.resolve({ data: { chats: [] } })
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+
+    expect(await screen.findByText('No generated insights yet')).toBeInTheDocument()
+    expect(mockGet).toHaveBeenCalledWith('/forecasts/insights')
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('refreshes through the metered POST and reuses its idempotency key on retry', async () => {
+    const generatedAt = '2026-07-30T08:00:00.000Z'
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/insights')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            insights: ['Saved analysis'],
+            generatedAt,
+            requiresRefresh: true,
+            cacheStatus: 'stale',
+          },
+        })
+      }
+      if (url.includes('/insight-chats')) return Promise.resolve({ data: { chats: [] } })
+      return Promise.resolve({ data: {} })
+    })
+    mockPost
+      .mockRejectedValueOnce(new Error('network interrupted'))
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          insights: ['Refreshed analysis'],
+          generatedAt,
+          requiresRefresh: false,
+          guavaCredits: { available: 90 },
+          aiCredits: { available: 90 },
+          meta: { replayed: true, coalesced: false },
+        },
+      })
+
+    render(<Insights />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /refresh \(10 credits\)/i }))
+    expect(await screen.findByText(/could not refresh insights/i)).toBeInTheDocument()
+
+    const firstConfig = mockPost.mock.calls[0][2] as { headers: { 'Idempotency-Key': string } }
+    const firstKey = firstConfig.headers['Idempotency-Key']
+    expect(firstKey).toBeTruthy()
+    expect(firstKey.length).toBeLessThanOrEqual(160)
+
+    await userEvent.click(screen.getByRole('button', { name: /^retry$/i }))
+
+    expect(await screen.findByText('Refreshed analysis')).toBeInTheDocument()
+    expect(mockPost).toHaveBeenCalledTimes(2)
+    expect(mockPost.mock.calls[0][0]).toBe('/forecasts/insights/refresh')
+    expect(mockPost.mock.calls[0][1]).toEqual({})
+    expect(mockPost.mock.calls[1][2].headers['Idempotency-Key']).toBe(firstKey)
   })
 
   it('shows category badges on insights', async () => {
@@ -202,6 +326,7 @@ describe('Insights', () => {
     localStorage.setItem(
       CHAT_STORAGE_KEY,
       JSON.stringify({
+        scopeId: CHAT_SCOPE_ID,
         messages: [
           { id: 'user-saved', role: 'user', content: 'Saved question' },
           { id: 'assistant-saved', role: 'assistant', content: '# Saved answer\n\n**Bold result**' },
@@ -230,6 +355,7 @@ describe('Insights', () => {
     localStorage.setItem(
       CHAT_STORAGE_KEY,
       JSON.stringify({
+        scopeId: CHAT_SCOPE_ID,
         activeChatId: 'saved-chat',
         messages: [
           { id: 'user-saved-1', role: 'user', content: 'First saved question' },
@@ -293,9 +419,11 @@ describe('Insights', () => {
     fireEvent.submit(input.closest('form')!)
 
     await waitFor(() => {
-      expect(mockPost).toHaveBeenCalledWith('/forecasts/insights/chat', {
-        messages: [{ role: 'user', content: 'What are my best sellers?' }],
-      })
+      expect(mockPost).toHaveBeenCalledWith(
+        '/forecasts/insights/chat',
+        { messages: [{ role: 'user', content: 'What are my best sellers?' }] },
+        { headers: { 'Idempotency-Key': expect.stringMatching(/^ask-guava-/) } }
+      )
     })
     const userPrompt = screen
       .getAllByText('What are my best sellers?')
@@ -304,6 +432,37 @@ describe('Insights', () => {
 
     const assistantReply = await screen.findByText(/flat whites/i)
     expect(assistantReply.closest('[data-message-role="assistant"]')).toBeInTheDocument()
+  })
+
+  it('does not save a partial stream without done', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(streamResponse(
+      'event: delta\ndata: ' + JSON.stringify({ text: 'Partial answer' }) + '\n\n'
+    ))
+    mockPost.mockResolvedValue({ data: { chat: chat({ _id: 'chat-partial' }) } })
+    render(<Insights />)
+    const input = await screen.findByPlaceholderText(/how can i help/i)
+    await userEvent.type(input, 'Interrupt this answer')
+    fireEvent.submit(input.closest('form')!)
+    expect(await screen.findByText(/partial answer/i)).toBeInTheDocument()
+    expect(await screen.findByText(/stream stopped before it finished/i)).toBeInTheDocument()
+    expect(mockPatch).not.toHaveBeenCalled()
+    expect(mockPost.mock.calls.some(([url]) => url === '/forecasts/insights/chat')).toBe(false)
+  })
+
+  it('does not save partial output followed by an SSE error event', async () => {
+    mockBaseRequests()
+    const body = 'event: delta\ndata: ' + JSON.stringify({ text: 'Partial error answer' })
+      + '\n\nevent: error\ndata: ' + JSON.stringify({ message: 'Provider failed' }) + '\n\n'
+    vi.mocked(fetch).mockResolvedValue(streamResponse(body))
+    mockPost.mockResolvedValue({ data: { chat: chat({ _id: 'chat-error' }) } })
+    render(<Insights />)
+    const input = await screen.findByPlaceholderText(/how can i help/i)
+    await userEvent.type(input, 'Fail this stream')
+    fireEvent.submit(input.closest('form')!)
+    expect(await screen.findByText(/partial error answer/i)).toBeInTheDocument()
+    expect(await screen.findByText(/stream stopped before it finished/i)).toBeInTheDocument()
+    expect(mockPatch).not.toHaveBeenCalled()
   })
 
   it('starts a blank thread when New is clicked instead of reselecting the previous chat', async () => {

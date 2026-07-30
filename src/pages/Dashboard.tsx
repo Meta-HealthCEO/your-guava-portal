@@ -10,8 +10,6 @@ import {
   Droplets,
   Sun,
   Wind,
-  ChevronDown,
-  ChevronUp,
   Upload,
   AlertTriangle,
   Coffee,
@@ -34,6 +32,13 @@ import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
 import type { Forecast, ForecastFactorSettings, TransactionStats } from '@/types'
 import { cn } from '@/lib/utils'
+import { parseDateOnly } from '@/lib/date'
+import {
+  isLoadSheddingAvailable,
+  isWeatherAvailable,
+  loadSheddingUnavailableReason,
+  weatherUnavailableReason,
+} from '@/lib/forecastSignals'
 
 // Item categorisation
 
@@ -170,7 +175,7 @@ function KpiCard({
           <div>
             <p className="text-muted text-xs font-medium uppercase tracking-wider mb-1">{label}</p>
             <p className="text-text text-2xl font-bold tracking-tight">{value}</p>
-            {sub && <p className="text-[#555555] text-xs mt-1">{sub}</p>}
+            {sub && <p className="text-muted text-xs mt-1">{sub}</p>}
           </div>
           <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${accent}18` }}>
             <Icon className="w-4 h-4" style={{ color: accent }} />
@@ -205,8 +210,10 @@ function ForecastStatusCard({
 }
 
 function WeatherCard({ signals, locationLabel }: { signals: Forecast['signals']; locationLabel: string }) {
-  const { weather, loadSheddingStage } = signals
-  const condition = weather.condition.toLowerCase()
+  const { weather } = signals
+  const weatherAvailable = isWeatherAvailable(weather)
+  const loadSheddingAvailable = isLoadSheddingAvailable(signals)
+  const condition = weatherAvailable ? weather.condition.toLowerCase() : ''
   const WeatherIcon = condition.includes('storm')
     ? CloudLightning
     : condition.includes('rain')
@@ -224,24 +231,41 @@ function WeatherCard({ signals, locationLabel }: { signals: Forecast['signals'];
               <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-xl bg-[#4A9ECC]/10">
                 <WeatherIcon className="h-7 w-7 text-[#4A9ECC]" />
               </div>
-              <div>
-                <span className="text-4xl font-bold text-text">{weather.temp}&deg;</span>
-                <p className="text-[#AAB8CC] text-sm">{weather.condition}</p>
-              </div>
+              {weatherAvailable ? (
+                <div>
+                  <span className="text-4xl font-bold text-text">{weather.temp}&deg;</span>
+                  <p className="text-[#AAB8CC] text-sm">{weather.condition}</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="font-semibold text-text">Weather unavailable</p>
+                  <p className="mt-1 max-w-xs text-xs text-muted">{weatherUnavailableReason(weather)}</p>
+                </div>
+              )}
             </div>
           </div>
-          {loadSheddingStage > 0 && (
+          {loadSheddingAvailable && signals.loadSheddingStage > 0 ? (
             <div className="bg-guava-yellow/10 border border-guava-yellow/20 rounded-lg px-2.5 py-2 text-center">
               <Zap className="w-4 h-4 text-guava-yellow mx-auto mb-0.5" />
-              <p className="text-guava-yellow text-xs font-bold">Stage {loadSheddingStage}</p>
+              <p className="text-guava-yellow text-xs font-bold">Stage {signals.loadSheddingStage}</p>
             </div>
-          )}
+          ) : !loadSheddingAvailable ? (
+            <div
+              className="max-w-36 rounded-lg border border-border bg-surface/60 px-2.5 py-2 text-center"
+              title={loadSheddingUnavailableReason(signals)}
+            >
+              <Zap className="mx-auto mb-0.5 h-4 w-4 text-muted" />
+              <p className="text-xs font-medium text-muted">Load shedding unavailable</p>
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center gap-4 pt-3 border-t border-[#2A3048]">
-          <div className="flex items-center gap-1.5">
-            <Wind className="w-3.5 h-3.5 text-[#4A9ECC]" />
-            <span className="text-muted text-xs">{weather.humidity}% humidity</span>
-          </div>
+          {weatherAvailable && typeof weather.humidity === 'number' && Number.isFinite(weather.humidity) && (
+            <div className="flex items-center gap-1.5">
+              <Wind className="w-3.5 h-3.5 text-[#4A9ECC]" />
+              <span className="text-muted text-xs">{weather.humidity}% humidity</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <Droplets className="w-3.5 h-3.5 text-muted" />
             <span className="text-muted text-xs">{locationLabel}</span>
@@ -269,7 +293,6 @@ function formatPlan(plan?: string) {
 }
 
 function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
-  const { signals } = forecast
   const colors: Record<string, string> = {
     weather: '#4A9ECC',
     loadShedding: '#EF476F',
@@ -278,62 +301,6 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
     events: '#9B59B6',
     learning: '#FF8A3D',
   }
-  const fallbackFactors: NonNullable<Forecast['factors']> = [
-    {
-      key: 'weather',
-      label: 'Weather',
-      active: signals.weather.temp > 27 || signals.weather.temp < 18 || signals.weather.condition.toLowerCase().includes('rain'),
-      adjustmentPct: null,
-      effect: signals.weather.temp > 27
-        ? '+30% cold drinks, -10% coffee'
-        : signals.weather.temp < 18
-          ? '+15% coffee, -20% cold drinks'
-          : signals.weather.condition.toLowerCase().includes('rain')
-            ? '-10%'
-            : 'no effect',
-      reason: signals.weather.condition,
-    },
-    {
-      key: 'loadShedding',
-      label: 'Load shedding',
-      active: signals.loadSheddingStage > 0,
-      adjustmentPct: signals.loadSheddingStage >= 5 ? -40 : signals.loadSheddingStage >= 3 ? -22 : signals.loadSheddingStage > 0 ? -8 : 0,
-      effect: signals.loadSheddingStage > 0 ? `Stage ${signals.loadSheddingStage}` : 'no effect',
-      reason: signals.loadSheddingStage > 0 ? `stage ${signals.loadSheddingStage}` : '',
-    },
-    {
-      key: 'holiday',
-      label: 'Holiday',
-      active: signals.isPublicHoliday || signals.isSchoolHoliday,
-      adjustmentPct: signals.isPublicHoliday && signals.isSchoolHoliday ? 20 : signals.isPublicHoliday ? 15 : signals.isSchoolHoliday ? 8 : 0,
-      effect: signals.isPublicHoliday || signals.isSchoolHoliday ? 'calendar adjustment' : 'no effect',
-      reason: signals.isPublicHoliday ? 'public holiday' : signals.isSchoolHoliday ? 'school holiday' : '',
-    },
-    {
-      key: 'payday',
-      label: 'Payday',
-      active: signals.isPayday,
-      adjustmentPct: signals.isPayday ? 20 : 0,
-      effect: signals.isPayday ? '+20%' : 'no effect',
-      reason: signals.isPayday ? 'payday window' : '',
-    },
-    {
-      key: 'events',
-      label: 'Events',
-      active: (signals.events?.length ?? 0) > 0,
-      adjustmentPct: signals.events?.[0]?.impactPct ?? (signals.events?.[0]?.impact === 'high' ? 35 : signals.events?.[0]?.impact === 'medium' ? 20 : signals.events?.[0]?.impact === 'low' ? 10 : 0),
-      effect: (signals.events?.length ?? 0) > 0 ? signals.events?.[0]?.name : 'no effect',
-      reason: signals.events?.[0]?.name,
-    },
-    {
-      key: 'learning',
-      label: 'Learning correction',
-      active: false,
-      adjustmentPct: 0,
-      effect: 'no effect',
-      reason: 'not enough history yet',
-    },
-  ]
   const compactImpact = (factor: NonNullable<Forecast['factors']>[number]) => {
     if (typeof factor.adjustmentPct === 'number') {
       const rounded = Number(factor.adjustmentPct.toFixed(1))
@@ -341,7 +308,7 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
     }
     return factor.effect && factor.effect !== 'no effect' ? 'varies' : 'active'
   }
-  const sourceFactors = forecast.factors && forecast.factors.length > 0 ? forecast.factors : fallbackFactors
+  const sourceFactors = forecast.factors ?? []
   const sourceByKey = new Map(sourceFactors.map((factor) => [factor.key, factor]))
   const orderedFactors = FORECAST_FACTOR_ORDER
     .map((key) => sourceByKey.get(key))
@@ -355,13 +322,13 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
     const configuredOn = sectionSettings && 'enabled' in sectionSettings ? sectionSettings.enabled !== false : true
     const off = !locked && !configuredOn
     const active = Boolean(factor.active && !locked && !off)
-    const rawPct = Math.abs(factor.adjustmentPct ?? (active ? 25 : 0))
+    const rawPct = Math.abs(factor.adjustmentPct ?? 0)
     const stateLabel = locked ? formatPlan(entitlement?.requiredPlan) : off ? 'Off' : active ? compactImpact(factor) : '0%'
 
     return {
       key: factor.key,
       label: factor.label,
-      pct: active ? Math.min(100, Math.max(35, rawPct * 2.5)) : 0,
+      pct: active ? Math.min(100, rawPct) : 0,
       impact: stateLabel,
       detail: locked
         ? `Unlock on ${formatPlan(entitlement?.requiredPlan)}`
@@ -383,10 +350,15 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm">Sales Impact Factors</CardTitle>
-          <span className="text-[#555555] text-xs">{activeCount} active</span>
+          <span className="text-muted text-xs">{activeCount} active</span>
         </div>
       </CardHeader>
       <CardContent className="pt-0">
+        {displayFactors.length === 0 ? (
+          <p className="py-5 text-center text-xs text-muted">
+            Factor detail is unavailable for this forecast.
+          </p>
+        ) : (
         <div className="grid grid-cols-3 gap-3">
           {displayFactors.map((f) => (
             <div key={f.key} className="flex flex-col items-center text-center" title={f.detail || f.label}>
@@ -405,6 +377,7 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
             </div>
           ))}
         </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -425,114 +398,11 @@ function ItemCard({ itemName, predictedQty }: { itemName: string; predictedQty: 
       <div className="text-3xl font-bold mb-1 tabular-nums" style={{ color }}>
         {predictedQty}
       </div>
-      <div className="text-[#555555] text-[11px] leading-tight truncate" title={itemName}>
+      <div className="text-muted text-[11px] leading-tight truncate" title={itemName}>
         {itemName.replace(/\s*\(.*?\)\s*/g, '')}
       </div>
     </div>
   )
-}
-
-function TimePeriodRow({
-  period,
-  maxQty,
-}: {
-  period: { label: string; timeRange: string; temp: number; items: { name: string; qty: number }[]; totalQty: number }
-  maxQty: number
-}) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="border-b border-[#1F1F1F] last:border-0">
-      <button
-        className="w-full flex items-center gap-3 py-3 px-1 hover:bg-white/[0.02] transition-colors rounded-lg text-left"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <Clock className="w-3.5 h-3.5 text-[#555555] shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-text text-sm font-medium">{period.label}</span>
-            <span className="text-[#555555] text-xs">{period.timeRange}</span>
-            <span className="text-[#555555] text-xs">{period.temp}&deg;</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {period.items.slice(0, 7).map((item) => {
-            const color = getItemColor(item.name)
-            const Icon = getItemIcon(item.name)
-            return (
-              <span
-                key={item.name}
-                className="inline-flex items-center gap-0.5 text-[11px] font-semibold tabular-nums"
-                style={{ color }}
-              >
-                <Icon className="w-3 h-3" style={{ color }} />
-                {item.qty}
-              </span>
-            )
-          })}
-          <span className="text-text text-xs w-8 text-right font-bold ml-1">{period.totalQty}</span>
-          {expanded ? <ChevronUp className="w-3.5 h-3.5 text-[#555555]" /> : <ChevronDown className="w-3.5 h-3.5 text-[#555555]" />}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="px-6 pb-3 space-y-2">
-          {period.items.map((item) => {
-            const color = getItemColor(item.name)
-            const pct = Math.round((item.qty / maxQty) * 100)
-            return (
-              <div key={item.name} className="flex items-center gap-3">
-                <span className="text-muted text-xs w-32 truncate">{item.name.replace(/\s*\(.*?\)\s*/g, '')}</span>
-                <div className="flex-1 h-1.5 bg-surface-2 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
-                </div>
-                <span className="text-xs font-semibold tabular-nums w-6 text-right" style={{ color }}>{item.qty}</span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Build time periods from forecast data
-
-function buildTimePeriods(forecast: Forecast) {
-  // Include ALL forecast items, not just the top 6
-  const allItems = forecast.items
-  if (allItems.length === 0) return []
-
-  // Distribute quantities across time periods with category-aware weighting
-  // Coffee dominates morning, food peaks mid-morning, cold drinks peak afternoon
-  const periods = [
-    { label: 'Pre-Dawn', timeRange: '05:00 - 06:00', temp: Math.max(forecast.signals.weather.temp - 5, 14), pctByCategory: { coffee: 0.04, food: 0.01, cold_drink: 0.01, water: 0.01, retail: 0.02, other: 0.02 } },
-    { label: 'Early Morning', timeRange: '06:00 - 08:00', temp: forecast.signals.weather.temp - 3, pctByCategory: { coffee: 0.18, food: 0.10, cold_drink: 0.08, water: 0.08, retail: 0.10, other: 0.10 } },
-    { label: 'Morning Rush', timeRange: '08:00 - 10:00', temp: forecast.signals.weather.temp - 1, pctByCategory: { coffee: 0.32, food: 0.35, cold_drink: 0.22, water: 0.25, retail: 0.30, other: 0.25 } },
-    { label: 'Late Morning', timeRange: '10:00 - 12:00', temp: forecast.signals.weather.temp, pctByCategory: { coffee: 0.22, food: 0.28, cold_drink: 0.25, water: 0.28, retail: 0.25, other: 0.25 } },
-    { label: 'Afternoon', timeRange: '12:00 - 15:00', temp: forecast.signals.weather.temp, pctByCategory: { coffee: 0.16, food: 0.20, cold_drink: 0.32, water: 0.28, retail: 0.25, other: 0.25 } },
-    { label: 'Evening Wind-Down', timeRange: '15:00 - 17:00', temp: forecast.signals.weather.temp - 2, pctByCategory: { coffee: 0.08, food: 0.06, cold_drink: 0.12, water: 0.10, retail: 0.08, other: 0.13 } },
-  ]
-
-  return periods.map((p) => {
-    const items = allItems.map((item) => {
-      const cat = categoriseItem(item.itemName)
-      const pct = p.pctByCategory[cat] || 0.1
-      return {
-        name: item.itemName,
-        qty: Math.round(item.predictedQty * pct),
-      }
-    }).filter(i => i.qty > 0)
-      .sort((a, b) => b.qty - a.qty)
-
-    return {
-      label: p.label,
-      timeRange: p.timeRange,
-      temp: Math.round(p.temp),
-      totalQty: items.reduce((s, i) => s + i.qty, 0),
-      items,
-    }
-  })
 }
 
 // Main dashboard
@@ -543,6 +413,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<TransactionStats | null>(null)
   const [locationLabel, setLocationLabel] = useState('Cafe location')
   const [forecastLoadFailed, setForecastLoadFailed] = useState(false)
+  const [statsLoadFailed, setStatsLoadFailed] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [hasData, setHasData] = useState(true)
   const [selectedDayIdx, setSelectedDayIdx] = useState(0)
@@ -555,12 +426,15 @@ export default function Dashboard() {
     const load = async () => {
       setIsLoading(true)
       setForecastLoadFailed(false)
+      setStatsLoadFailed(false)
       try {
         const [weekRes, statsRes, cafeRes] = await Promise.all([
           api.get('/forecasts/week')
             .then((res) => ({ res, failed: false }))
             .catch(() => ({ res: null, failed: true })),
-          api.get('/transactions/stats').catch(() => null),
+          api.get('/transactions/stats')
+            .then((res) => ({ res, failed: false }))
+            .catch(() => ({ res: null, failed: true })),
           api.get('/cafe/me').catch(() => null),
         ])
 
@@ -579,13 +453,16 @@ export default function Dashboard() {
 
         if (cancelled) return
 
-        const loadedStats = statsRes?.data?.stats || null
+        const loadedStats = statsRes.res?.data?.stats || null
         const cafe = cafeRes?.data?.cafe
         const nextLocationLabel = [cafe?.location?.address, cafe?.location?.city].filter(Boolean).join(', ')
 
         setWeekForecasts(loadedWeek)
         setFallbackForecast(todayFallback)
-        setForecastLoadFailed(weekRes.failed && todayFailed)
+        setForecastLoadFailed(
+          loadedWeek.length === 0 && !todayFallback && (weekRes.failed || todayFailed)
+        )
+        setStatsLoadFailed(statsRes.failed)
         setSelectedDayIdx((current) => (
           loadedWeek.length === 0 ? 0 : Math.min(current, loadedWeek.length - 1)
         ))
@@ -593,7 +470,7 @@ export default function Dashboard() {
         setLocationLabel(nextLocationLabel || cafe?.name || 'Cafe location')
 
         const forecastHasItems = (loadedWeek[0]?.items.length || todayFallback?.items.length || 0) > 0
-        setHasData((loadedStats?.totalTransactions || 0) > 0 || forecastHasItems)
+        setHasData(statsRes.failed || (loadedStats?.totalTransactions || 0) > 0 || forecastHasItems)
       } catch {
         if (!cancelled) {
           setForecastLoadFailed(true)
@@ -615,10 +492,6 @@ export default function Dashboard() {
     ? activeForecast.items.reduce((a, b) => a.predictedQty > b.predictedQty ? a : b)
     : undefined
   const totalItems = activeForecast?.items.reduce((sum, i) => sum + i.predictedQty, 0) ?? 0
-  const timePeriods = activeForecast ? buildTimePeriods(activeForecast) : []
-  const peakPeriod = timePeriods.length > 0 ? timePeriods.reduce((a, b) => a.totalQty > b.totalQty ? a : b) : null
-  const maxTimePeriodQty = Math.max(...timePeriods.map(p => p.totalQty), 1)
-
   const kpis = [
     {
       label: 'Forecast Revenue',
@@ -628,9 +501,9 @@ export default function Dashboard() {
       accent: '#4DA63B',
     },
     {
-      label: 'Peak Period',
-      value: peakPeriod?.label ?? '-',
-      sub: peakPeriod ? `${peakPeriod.timeRange} - ${peakPeriod.totalQty} items` : undefined,
+      label: 'Forecast Day',
+      value: activeForecast ? formatDate(parseDateOnly(activeForecast.date)) : '-',
+      sub: activeForecast ? getDayLabel(parseDateOnly(activeForecast.date)) : undefined,
       icon: Clock,
       accent: '#FFD166',
     },
@@ -656,13 +529,13 @@ export default function Dashboard() {
       <AppLayout title="Today">
         <div className="flex flex-col items-center justify-center min-h-100 text-center">
           <div className="w-14 h-14 rounded-xl bg-surface border border-border flex items-center justify-center mb-4">
-            <AlertTriangle className="w-7 h-7 text-[#555555]" />
+            <AlertTriangle className="w-7 h-7 text-muted" />
           </div>
           <h2 className="text-text text-lg font-semibold mb-2">No data yet</h2>
-          <p className="text-[#555555] text-sm mb-6 max-w-xs">Upload your transaction data to start generating forecasts.</p>
-          <Link to="/data-health">
-            <Button><Upload className="w-4 h-4" />Upload Sales Data</Button>
-          </Link>
+          <p className="text-muted text-sm mb-6 max-w-xs">Upload your transaction data to start generating forecasts.</p>
+          <Button asChild>
+            <Link to="/data-health"><Upload className="w-4 h-4" />Upload Sales Data</Link>
+          </Button>
         </div>
       </AppLayout>
     )
@@ -683,7 +556,7 @@ export default function Dashboard() {
       <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
         {weekForecasts.length > 0
           ? weekForecasts.map((wf, idx) => {
-              const d = new Date(wf.date)
+              const d = parseDateOnly(wf.date)
               return (
                 <button
                   key={idx}
@@ -707,14 +580,22 @@ export default function Dashboard() {
 
       {!isLoading && !activeForecast && (
         <ForecastStatusCard
-          title={forecastLoadFailed ? 'Forecast unavailable' : 'No forecast ready yet'}
+          title={statsLoadFailed ? 'Dashboard data unavailable' : forecastLoadFailed ? 'Forecast unavailable' : 'No forecast ready yet'}
           message={
-            forecastLoadFailed
+            statsLoadFailed
+              ? 'The portal could not verify your transaction history or load a forecast. Try again before treating this as an empty account.'
+              : forecastLoadFailed
               ? 'Your sales data is available, but the forecast service did not return a usable forecast. Try again, and check the backend logs if it keeps happening.'
               : 'Your sales data is available, but there is not enough matched history yet to build today\'s item forecast.'
           }
-          action={forecastLoadFailed ? <Button onClick={reload}>Try again</Button> : undefined}
+          action={statsLoadFailed || forecastLoadFailed ? <Button onClick={reload}>Try again</Button> : undefined}
         />
+      )}
+
+      {!isLoading && statsLoadFailed && activeForecast && (
+        <div className="mb-5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="status">
+          The forecast loaded, but the historical transaction summary is temporarily unavailable.
+        </div>
       )}
 
       {/* Predicted Output */}
@@ -782,11 +663,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Bottom Grid: Weather + Factors | Time Breakdown */}
+      {/* Weather and backend-provided forecast factors */}
       {(isLoading || activeForecast) && (
-      <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-5">
-        {/* Left column */}
-        <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <div className="space-y-4 xl:col-span-2 xl:grid xl:grid-cols-2 xl:gap-5 xl:space-y-0">
           {isLoading ? (
             <>
               <Skeleton className="h-40 rounded-xl" />
@@ -799,31 +679,6 @@ export default function Dashboard() {
             </>
           ) : null}
         </div>
-
-        {/* Right column: Time of Day */}
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm">Time-of-Day Breakdown</CardTitle>
-              <span className="text-[#555555] text-xs">Click to expand</span>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-2">
-            {isLoading ? (
-              <div className="space-y-3">
-                {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}
-              </div>
-            ) : timePeriods.length > 0 ? (
-              <div>
-                {timePeriods.map((period) => (
-                  <TimePeriodRow key={period.label} period={period} maxQty={maxTimePeriodQty} />
-                ))}
-              </div>
-            ) : (
-              <p className="py-10 text-center text-sm text-muted">No time-of-day item forecast available for this day.</p>
-            )}
-          </CardContent>
-        </Card>
       </div>
       )}
     </AppLayout>

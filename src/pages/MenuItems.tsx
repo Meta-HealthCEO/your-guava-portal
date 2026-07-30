@@ -66,6 +66,7 @@ export default function MenuItems() {
   const [items, setItems] = useState<SalesItem[]>([])
   const [reviewItems, setReviewItems] = useState<SalesItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [query, setQuery] = useState('')
@@ -80,6 +81,7 @@ export default function MenuItems() {
 
   const refresh = async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       const [menuRes, reviewRes] = await Promise.all([
         api.get<{ items: SalesItem[] }>('/items?active=true'),
@@ -98,6 +100,7 @@ export default function MenuItems() {
       })
       setDrafts(nextDrafts)
     } catch (err) {
+      setLoadError(true)
       showNotice('error', apiError(err, 'Could not load menu items.'))
     } finally {
       setLoading(false)
@@ -221,7 +224,7 @@ export default function MenuItems() {
     <AppLayout title="Menu Items">
       <div className="space-y-5">
         {notice && (
-          <div className={cn(
+          <div role={notice.type === 'success' ? 'status' : 'alert'} className={cn(
             'flex items-center gap-2 rounded-lg border px-3.5 py-2.5 text-sm',
             notice.type === 'success'
               ? 'border-guava-green/20 bg-guava-green/10 text-guava-green'
@@ -232,13 +235,20 @@ export default function MenuItems() {
           </div>
         )}
 
+        {loadError && (
+          <div className="flex flex-col gap-3 rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
+            <p className="text-sm text-red-300">Menu items could not be loaded. Counts below are unavailable.</p>
+            <Button type="button" variant="outline" size="sm" onClick={refresh}>Try again</Button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <Card>
             <CardContent className="pt-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-muted text-xs uppercase tracking-wide">Menu items</p>
-                  <p className="text-text text-2xl font-bold">{items.length}</p>
+                  <p className="text-text text-2xl font-bold">{loadError ? '—' : items.length}</p>
                 </div>
                 <Tags className="w-5 h-5 text-guava-green" />
               </div>
@@ -249,7 +259,7 @@ export default function MenuItems() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-muted text-xs uppercase tracking-wide">Need a match</p>
-                  <p className="text-text text-2xl font-bold">{reviewCount}</p>
+                  <p className="text-text text-2xl font-bold">{loadError ? '—' : reviewCount}</p>
                 </div>
                 <Coffee className="w-5 h-5 text-guava-red" />
               </div>
@@ -260,7 +270,7 @@ export default function MenuItems() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-muted text-xs uppercase tracking-wide">Price differences</p>
-                  <p className="text-text text-2xl font-bold">{priceCount}</p>
+                  <p className="text-text text-2xl font-bold">{loadError ? '—' : priceCount}</p>
                 </div>
                 <AlertCircle className="w-5 h-5 text-amber-300" />
               </div>
@@ -289,7 +299,7 @@ export default function MenuItems() {
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-sm text-[#555555] py-8">Loading menu items...</div>
+              <div className="text-sm text-muted py-8">Loading menu items...</div>
             ) : tab === 'review' ? (
               <div className="space-y-3">
                 {reviewItems.length === 0 ? (

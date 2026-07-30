@@ -3,10 +3,12 @@ import {
   AlertCircle,
   Building2,
   CheckCircle,
+  Clock3,
   Edit3,
   Mail,
   MapPin,
   Plus,
+  RefreshCw,
   ShieldCheck,
   Store,
   Trash2,
@@ -27,7 +29,15 @@ import { cn } from '@/lib/utils'
 import type { TeamMember, CafeBasic } from '@/types'
 
 type ToastState = { type: 'success' | 'error'; message: string } | null
-type SeatSummary = { plan: string; used: number; included: number; remaining: number }
+type SeatSummary = { plan: string; used: number; active?: number; pending?: number; included: number; remaining: number }
+type PendingInvitation = {
+  _id: string
+  name: string
+  email: string
+  cafeIds: CafeBasic[]
+  expiresAt: string
+  createdAt: string
+}
 
 function Toast({ toast }: { toast: ToastState }) {
   if (!toast) return null
@@ -195,6 +205,7 @@ export default function Team() {
   const { isOwner } = useAuth()
 
   const [members, setMembers] = useState<TeamMember[]>([])
+  const [invitations, setInvitations] = useState<PendingInvitation[]>([])
   const [cafes, setCafes] = useState<CafeBasic[]>([])
   const [seats, setSeats] = useState<SeatSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -205,6 +216,7 @@ export default function Team() {
   const [invEmail, setInvEmail] = useState('')
   const [invCafeIds, setInvCafeIds] = useState<string[]>([])
   const [inviting, setInviting] = useState(false)
+  const [invitationActionId, setInvitationActionId] = useState<string | null>(null)
 
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
   const [editName, setEditName] = useState('')
@@ -216,7 +228,7 @@ export default function Team() {
   const [locationOpen, setLocationOpen] = useState(false)
   const [newCafeName, setNewCafeName] = useState('')
   const [newCafeAddress, setNewCafeAddress] = useState('')
-  const [newCafeCity, setNewCafeCity] = useState('Cape Town')
+  const [newCafeCity, setNewCafeCity] = useState('')
   const [addingCafe, setAddingCafe] = useState(false)
 
   const showToast = (type: 'success' | 'error', message: string) => {
@@ -227,10 +239,11 @@ export default function Team() {
   const fetchData = async () => {
     try {
       const [teamRes, cafeRes] = await Promise.all([
-        api.get<{ success: boolean; members: TeamMember[]; seats?: SeatSummary }>('/team'),
+        api.get<{ success: boolean; members: TeamMember[]; invitations?: PendingInvitation[]; seats?: SeatSummary }>('/team'),
         api.get<{ success: boolean; cafes: CafeBasic[] }>('/cafe/list'),
       ])
       setMembers(teamRes.data.members || [])
+      setInvitations(teamRes.data.invitations || [])
       setSeats(teamRes.data.seats || null)
       setCafes(cafeRes.data.cafes || [])
     } catch {
@@ -268,7 +281,7 @@ export default function Team() {
   const openLocationDialog = () => {
     setNewCafeName('')
     setNewCafeAddress('')
-    setNewCafeCity('Cape Town')
+    setNewCafeCity('')
     setLocationOpen(true)
   }
 
@@ -307,13 +320,39 @@ export default function Team() {
         email,
         cafeIds: invCafeIds,
       })
-      showToast('success', `${name} was added - sign-in details were emailed to them.`)
+      showToast('success', `Invitation sent to ${email}. Their account is created after they accept it.`)
       setInviteOpen(false)
       await fetchData()
     } catch (err: any) {
       showToast('error', err?.response?.data?.message || 'Failed to add team member.')
     } finally {
       setInviting(false)
+    }
+  }
+
+  const handleResendInvitation = async (invitation: PendingInvitation) => {
+    setInvitationActionId(invitation._id)
+    try {
+      await api.post(`/team/invitations/${invitation._id}/resend`)
+      showToast('success', `A new invitation link was sent to ${invitation.email}.`)
+      await fetchData()
+    } catch (err: any) {
+      showToast('error', err?.response?.data?.message || 'Failed to resend invitation.')
+    } finally {
+      setInvitationActionId(null)
+    }
+  }
+
+  const handleRevokeInvitation = async (invitation: PendingInvitation) => {
+    setInvitationActionId(invitation._id)
+    try {
+      await api.delete(`/team/invitations/${invitation._id}`)
+      showToast('success', `Invitation for ${invitation.email} was revoked.`)
+      await fetchData()
+    } catch (err: any) {
+      showToast('error', err?.response?.data?.message || 'Failed to revoke invitation.')
+    } finally {
+      setInvitationActionId(null)
     }
   }
 
@@ -370,7 +409,7 @@ export default function Team() {
       await api.post('/team/add-cafe', {
         name,
         address: newCafeAddress.trim(),
-        city: newCafeCity.trim() || 'Cape Town',
+        city: newCafeCity.trim(),
       })
       showToast('success', `${name} was added.`)
       setLocationOpen(false)
@@ -597,6 +636,47 @@ export default function Team() {
             </CardContent>
           </Card>
         </div>
+
+        {invitations.length > 0 && (
+          <Card>
+            <CardHeader className="border-b border-border">
+              <CardTitle className="flex items-center gap-2">
+                <Clock3 className="h-4 w-4 text-amber-300" />
+                Pending invitations
+              </CardTitle>
+              <CardDescription>
+                {invitations.length} seat{invitations.length === 1 ? '' : 's'} reserved until accepted or revoked
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="divide-y divide-border p-0">
+              {invitations.map((invitation) => {
+                const busy = invitationActionId === invitation._id
+                return (
+                  <div key={invitation._id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(220px,1fr)_minmax(180px,1fr)_auto] md:items-center">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-text">{invitation.name}</p>
+                      <p className="mt-1 truncate text-xs text-muted">{invitation.email}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {invitation.cafeIds.map((cafe) => (
+                        <Badge key={cafe._id} variant="secondary">{cafe.name}</Badge>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 md:justify-end">
+                      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => handleResendInvitation(invitation)}>
+                        <RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} />
+                        Resend
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" disabled={busy} className="text-red-400" onClick={() => handleRevokeInvitation(invitation)}>
+                        Revoke
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Dialog
@@ -640,7 +720,7 @@ export default function Team() {
             </div>
           </div>
           <p className="text-xs text-[#777777]">
-            A secure temporary password is generated automatically and emailed to the new member.
+            We email a single-use link. The manager chooses their password before an account is created.
           </p>
           <div className="space-y-2">
             <Label>Assigned cafes</Label>

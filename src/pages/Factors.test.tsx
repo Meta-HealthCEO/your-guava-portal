@@ -249,6 +249,25 @@ describe('Factors', () => {
     mockPut.mockResolvedValue({ data: { settings, entitlements } })
   })
 
+  it('does not present failed live-factor requests as verified empty data', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/cafe/list')) return Promise.resolve({ data: { cafes: [] } })
+      if (url.includes('/forecasts/factors')) {
+        return Promise.resolve({ data: { defaults: settings, settings, entitlements } })
+      }
+      if (url.includes('/events/effects')) return Promise.reject(new Error('effects unavailable'))
+      if (url.includes('/events')) return Promise.resolve({ data: { events: [] } })
+      if (url.includes('/forecasts/week')) return Promise.reject(new Error('forecasts unavailable'))
+      return Promise.reject(new Error(`Unexpected URL: ${url}`))
+    })
+
+    renderWithAuth(<Factors />)
+
+    expect(await screen.findByText(/empty values below do not mean/i)).toBeInTheDocument()
+    expect(screen.getByText(/live forecast factors and historical event effects/i)).toBeInTheDocument()
+  })
+
   it('shows the live factor workspace', async () => {
     renderWithAuth(<Factors />)
 

@@ -159,9 +159,9 @@ describe('Team', () => {
     expect(screen.getByRole('dialog', { name: /add team member/i })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Team member name')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('member@example.com')).toBeInTheDocument()
-    // Passwords are generated server-side — there must be no client password input
+    // Passwords are chosen only on the invitation acceptance page.
     expect(screen.queryByPlaceholderText('Temporary password')).not.toBeInTheDocument()
-    expect(screen.getByText(/temporary password is generated automatically/i)).toBeInTheDocument()
+    expect(screen.getByText(/single-use link/i)).toBeInTheDocument()
   }, 10000)
 
   it('shows cafe checkboxes in invite form', async () => {
@@ -194,12 +194,12 @@ describe('Team', () => {
     expect(checkboxes.length).toBe(2)
   })
 
-  it('submits invites without displaying temporary passwords', async () => {
+  it('submits a pending invitation without displaying secrets', async () => {
     mockPost.mockResolvedValueOnce({
       data: {
         success: true,
         emailSent: true,
-        temporaryPassword: 'Guava-should-not-render',
+        invitation: { email: 'new@example.com' },
       },
     })
     mockGet.mockImplementation((url: string) => {
@@ -234,9 +234,52 @@ describe('Team', () => {
         cafeIds: ['c1'],
       })
     })
-    expect(screen.getByText(/sign-in details were emailed/i)).toBeInTheDocument()
-    expect(screen.queryByText(/Guava-should-not-render/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Share these sign-in details/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/account is created after they accept/i)).toBeInTheDocument()
+  })
+
+  it('renders pending invitations and supports resend and revoke', async () => {
+    const user = userEvent.setup()
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            members: [],
+            invitations: [{
+              _id: 'invite1',
+              name: 'Pending Manager',
+              email: 'pending@example.com',
+              cafeIds: [{ _id: 'c1', name: 'Blouberg Coffee' }],
+              expiresAt: '2026-08-01T12:00:00.000Z',
+              createdAt: '2026-07-30T12:00:00.000Z',
+            }],
+            seats: { plan: 'starter', used: 2, active: 1, pending: 1, included: 2, remaining: 0 },
+          },
+        })
+      }
+      if (url.includes('/cafe/list')) {
+        return Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Blouberg Coffee' }] } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Blouberg Coffee' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    expect(await screen.findByText('Pending Manager')).toBeInTheDocument()
+    expect(screen.getByText(/1 seat reserved/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /resend/i }))
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/team/invitations/invite1/resend')
+    })
+
+    await user.click(screen.getByRole('button', { name: /revoke/i }))
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith('/team/invitations/invite1')
+    })
   })
 
   it('shows remove button for managers, not for owner', async () => {

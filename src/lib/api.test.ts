@@ -36,7 +36,7 @@ const loadApi = async () => {
   if (!requestHandler || !responseRejected) {
     throw new Error('API interceptors were not registered')
   }
-  return { api: mod.default, requestHandler, responseRejected }
+  return { api: mod.default, authenticatedFetch: mod.authenticatedFetch, requestHandler, responseRejected }
 }
 
 describe('api interceptors', () => {
@@ -51,6 +51,7 @@ describe('api interceptors', () => {
     expect(axiosMock.create).toHaveBeenCalledWith({
       baseURL: 'http://localhost:5000/api',
       withCredentials: true,
+      timeout: 20_000,
     })
   })
 
@@ -104,10 +105,105 @@ describe('api interceptors', () => {
     expect(axiosMock.post).toHaveBeenCalledWith(
       'http://localhost:5000/api/auth/refresh',
       {},
-      { withCredentials: true }
+      { withCredentials: true, timeout: 20_000 }
     )
     expect(localStorage.getItem('accessToken')).toBe('new-token')
     expect(original.headers.Authorization).toBe('Bearer new-token')
     expect(axiosMock.instance).toHaveBeenCalledWith(original)
+  })
+
+  it('refreshes and retries an authenticated streaming fetch exactly once', async () => {
+    const { authenticatedFetch } = await loadApi()
+    localStorage.setItem('accessToken', 'old-token')
+    axiosMock.post.mockResolvedValueOnce({ data: { accessToken: 'stream-token' } })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 401 })
+      .mockResolvedValueOnce({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(authenticatedFetch('/forecasts/insights/chat/stream', { method: 'POST' }))
+      .resolves.toEqual({ status: 200 })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const retriedInit = fetchMock.mock.calls[1][1] as RequestInit
+    expect(new Headers(retriedInit.headers).get('Authorization')).toBe('Bearer stream-token')
+    expect(localStorage.getItem('accessToken')).toBe('stream-token')
+    expect(axiosMock.post).toHaveBeenCalledWith(
+      'http://localhost:5000/api/auth/refresh',
+      {},
+      { withCredentials: true, timeout: 20_000 }
+    )
+  })
+
+  it('shares one refresh rotation between Axios and streaming requests', async () => {
+    const { authenticatedFetch, responseRejected } = await loadApi()
+    localStorage.setItem('accessToken', 'old-token')
+    let finishRefresh!: (value: { data: { accessToken: string } }) => void
+    axiosMock.post.mockImplementationOnce(() => new Promise((resolve) => {
+      finishRefresh = resolve
+    }))
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ status: 401 })
+      .mockResolvedValueOnce({ status: 200 })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const streamRetry = authenticatedFetch('/forecasts/insights/chat/stream', { method: 'POST' })
+    const axiosRetry = responseRejected({
+      config: { url: '/account', headers: {} },
+      response: { status: 401 },
+    })
+
+    await vi.waitFor(() => expect(axiosMock.post).toHaveBeenCalledTimes(1))
+    finishRefresh({ data: { accessToken: 'shared-token' } })
+    await expect(Promise.all([streamRetry, axiosRetry])).resolves.toHaveLength(2)
+
+    expect(axiosMock.post).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(axiosMock.instance).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem('accessToken')).toBe('shared-token')
+  })
+
+  it('times out while waiting for streaming response headers', async () => {
+    const { authenticatedFetch } = await loadApi()
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          )
+        })
+      ))
+
+      const assertion = expect(authenticatedFetch('/forecasts/insights/chat/stream'))
+        .rejects.toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(20_000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the header timeout after a stream connects but preserves caller cancellation', async () => {
+    const { authenticatedFetch } = await loadApi()
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({ status: 200 })
+      vi.stubGlobal('fetch', fetchMock)
+      const caller = new AbortController()
+
+      await authenticatedFetch('/forecasts/insights/chat/stream', { signal: caller.signal })
+      const requestSignal = (fetchMock.mock.calls[0][1] as RequestInit).signal as AbortSignal
+
+      await vi.advanceTimersByTimeAsync(20_001)
+      expect(requestSignal.aborted).toBe(false)
+
+      caller.abort()
+      expect(requestSignal.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

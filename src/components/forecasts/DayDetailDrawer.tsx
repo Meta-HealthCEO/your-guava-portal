@@ -1,13 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { X, Coffee, Droplets, UtensilsCrossed, Waves, Sparkles } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import { ModifierBreakdown } from './ModifierBreakdown'
 import type { Forecast } from '@/types'
+import { parseDateOnly } from '@/lib/date'
 
 function getDayLabel(dateStr: string): string {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const target = new Date(dateStr)
+  const target = parseDateOnly(dateStr)
   target.setHours(0, 0, 0, 0)
   const diff = Math.round((target.getTime() - today.getTime()) / 86400000)
   if (diff === 0) return 'Today'
@@ -16,7 +17,7 @@ function getDayLabel(dateStr: string): string {
 }
 
 function fullDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-ZA', {
+  return parseDateOnly(dateStr).toLocaleDateString('en-ZA', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -29,6 +30,7 @@ const COFFEE_KEYWORDS = ['flat white', 'cappuccino', 'long white', 'espresso', '
 const COLD_KEYWORDS = ['iced', 'cold brew']
 const FOOD_KEYWORDS = ['muffin', 'brownie', 'cookie', 'sandwich', 'cake', 'croissant']
 const WATER_KEYWORDS = ['water', 'still', 'sparkling']
+const SHOW_INVENTORY_ROLLUP = false
 
 function matchesAny(name: string, keywords: string[]): boolean {
   const lower = name.toLowerCase()
@@ -53,7 +55,8 @@ interface InventoryRollup {
 function computeInventory(items: Forecast['items']): InventoryRollup {
   const rollup: InventoryRollup = { coffee: 0, cold: 0, food: 0, water: 0 }
   for (const item of items) {
-    const stock = item.suggestedStock ?? item.predictedQty
+    const stock = item.suggestedStock
+    if (stock == null) continue
     if (matchesAny(item.itemName, COFFEE_KEYWORDS)) rollup.coffee += stock
     else if (matchesAny(item.itemName, COLD_KEYWORDS)) rollup.cold += stock
     else if (matchesAny(item.itemName, FOOD_KEYWORDS)) rollup.food += stock
@@ -69,22 +72,48 @@ interface Props {
 }
 
 export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
-  const { date, items, signals, totalPredictedRevenue } = forecast
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const { date, items, totalPredictedRevenue } = forecast
 
   // Determine if this is a past day
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const forecastDate = new Date(date)
+  const forecastDate = parseDateOnly(date)
   forecastDate.setHours(0, 0, 0, 0)
   const isPast = forecastDate < today
 
-  // Close on Escape
   useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    dialogRef.current?.focus()
+
     function handler(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    return () => {
+      window.removeEventListener('keydown', handler)
+      previousFocus?.focus()
+    }
   }, [onClose])
 
   // Prevent background scroll
@@ -138,15 +167,18 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
       {/* Drawer panel */}
       <div
+        ref={dialogRef}
         className="fixed right-0 top-0 h-full bg-surface border-l border-border z-50 overflow-y-auto
                    w-full sm:w-130"
         role="dialog"
         aria-modal="true"
+        aria-labelledby="day-forecast-dialog-title"
+        tabIndex={-1}
       >
         {/* Header */}
         <div className="sticky top-0 bg-surface border-b border-border px-5 py-4 flex items-start justify-between gap-4 z-10">
           <div>
-            <p className="text-text font-semibold text-base">
+            <p id="day-forecast-dialog-title" className="text-text font-semibold text-base">
               {isPast ? 'Day review' : 'Day forecast'} — {getDayLabel(date)}
             </p>
             <p className="text-muted text-xs mt-0.5">{fullDate(date)}</p>
@@ -154,7 +186,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           <button
             onClick={onClose}
             className="text-muted hover:text-text p-1 -mr-1 shrink-0"
-            aria-label="Close"
+            aria-label="Close forecast details"
           >
             <X className="w-4 h-4" />
           </button>
@@ -259,7 +291,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 Why this prediction?
               </p>
-              <ModifierBreakdown signals={signals} factors={forecast.factors} />
+              <ModifierBreakdown factors={forecast.factors} />
             </div>
           )}
 
@@ -275,10 +307,10 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               // Review mode: Item · Predicted · Actual · Δ%
               <div className="space-y-0">
                 <div className="grid grid-cols-4 pb-2 border-b border-border">
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider">Item</span>
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Predicted</span>
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Actual</span>
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Δ %</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider">Item</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Predicted</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Actual</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Δ %</span>
                 </div>
                 {(hasActuals ? sortedForReview : sortedItems).map((item) => {
                   const pct =
@@ -287,7 +319,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                       : null
                   const pctColor =
                     pct == null
-                      ? 'text-[#555555]'
+                      ? 'text-muted'
                       : Math.abs(pct) <= 5
                       ? 'text-guava-green'
                       : Math.abs(pct) <= 15
@@ -314,15 +346,11 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               // Plan mode: Item · Predicted · Suggested stock · Revenue est.
               <div className="space-y-0">
                 <div className="grid grid-cols-3 pb-2 border-b border-border">
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider">Item</span>
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Predicted</span>
-                  <span className="text-[#555555] text-[10px] uppercase tracking-wider text-right">Suggested stock</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider">Item</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Predicted</span>
+                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Suggested stock</span>
                 </div>
                 {sortedItems.map((item) => {
-                  const stock =
-                    item.suggestedStock != null
-                      ? item.suggestedStock
-                      : Math.ceil(item.predictedQty * 1.1)
                   return (
                     <div
                       key={item.itemName}
@@ -330,7 +358,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                     >
                       <span className="text-text text-xs truncate pr-1">{item.itemName}</span>
                       <span className="text-muted text-xs text-right">{item.predictedQty}</span>
-                      <span className="text-[#555555] text-xs text-right">{stock}</span>
+                      <span className="text-muted text-xs text-right">{item.suggestedStock ?? '—'}</span>
                     </div>
                   )
                 })}
@@ -339,7 +367,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           </div>
 
           {/* ── FUTURE only: Inventory rollup + AI insight ─────────────────── */}
-          {!isPast && (
+          {!isPast && SHOW_INVENTORY_ROLLUP && (
             <>
               <Separator className="bg-border" />
 
@@ -352,33 +380,33 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                     <Coffee className="w-4 h-4 text-guava-red shrink-0" />
                     <div>
                       <p className="text-text text-sm font-semibold">≈ {inventory.coffee}</p>
-                      <p className="text-[#555555] text-[10px]">coffee drinks</p>
+                      <p className="text-muted text-[10px]">coffee drinks</p>
                     </div>
                   </div>
                   <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
                     <Droplets className="w-4 h-4 text-guava-green shrink-0" />
                     <div>
                       <p className="text-text text-sm font-semibold">≈ {inventory.cold}</p>
-                      <p className="text-[#555555] text-[10px]">cold drinks</p>
+                      <p className="text-muted text-[10px]">cold drinks</p>
                     </div>
                   </div>
                   <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
                     <UtensilsCrossed className="w-4 h-4 text-guava-yellow shrink-0" />
                     <div>
                       <p className="text-text text-sm font-semibold">≈ {inventory.food}</p>
-                      <p className="text-[#555555] text-[10px]">food items</p>
+                      <p className="text-muted text-[10px]">food items</p>
                     </div>
                   </div>
                   <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
                     <Waves className="w-4 h-4 text-muted shrink-0" />
                     <div>
                       <p className="text-text text-sm font-semibold">≈ {inventory.water}</p>
-                      <p className="text-[#555555] text-[10px]">waters</p>
+                      <p className="text-muted text-[10px]">waters</p>
                     </div>
                   </div>
                 </div>
-                <p className="text-[#555555] text-[10px] mt-3 leading-relaxed">
-                  Suggested stock includes a safety margin and learns from past forecasts vs actuals.
+                <p className="text-muted text-[10px] mt-3 leading-relaxed">
+                  Rollup uses only suggested stock values returned by the forecast service.
                 </p>
               </div>
 

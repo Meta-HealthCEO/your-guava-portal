@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { CheckCircle, AlertCircle } from 'lucide-react'
 import api from '@/lib/api'
 
 type Phase = 'exchanging' | 'success' | 'error'
+type CallbackPayload = Record<string, string>
 
 const PROVIDER_DISPLAY: Record<string, string> = {
   xero: 'Xero',
@@ -13,31 +14,28 @@ const PROVIDER_DISPLAY: Record<string, string> = {
 
 export default function IntegrationCallback() {
   const { provider = '' } = useParams<{ provider: string }>()
-  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
 
   const [phase, setPhase] = useState<Phase>('exchanging')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [callbackPayload, setCallbackPayload] = useState<CallbackPayload | null | undefined>(undefined)
 
   // Prevent double-invoke in React Strict Mode
   const called = useRef(false)
+  const captured = useRef(false)
 
   const providerName = PROVIDER_DISPLAY[provider] ?? provider
 
-  useEffect(() => {
-    if (called.current) return
-    called.current = true
-
+  // Authorization codes and state are short-lived secrets. Capture them before
+  // paint and remove the full query string from browser history immediately.
+  useLayoutEffect(() => {
+    if (captured.current) return
+    captured.current = true
+    const searchParams = new URLSearchParams(window.location.search)
     const code = searchParams.get('code')
     const state = searchParams.get('state')
-
-    if (!code) {
-      setErrorMsg('No authorisation code was returned by the provider.')
-      setPhase('error')
-      return
-    }
-
-    const body: Record<string, string> = { code }
+    const body: CallbackPayload = {}
+    if (code) body.code = code
     if (state) body.state = state
     const realmId = searchParams.get('realmId')
     const tenantId = searchParams.get('tenantId')
@@ -45,9 +43,23 @@ export default function IntegrationCallback() {
     if (realmId) body.realmId = realmId
     if (tenantId) body.tenantId = tenantId
     if (businessId) body.businessId = businessId
+    window.history.replaceState(window.history.state, '', window.location.pathname)
+    setCallbackPayload(code && state ? body : null)
+  }, [])
+
+  useEffect(() => {
+    if (callbackPayload === undefined) return
+    if (called.current) return
+    called.current = true
+
+    if (!callbackPayload) {
+      setErrorMsg('The provider did not return a valid authorisation response.')
+      setPhase('error')
+      return
+    }
 
     api
-      .post(`/integrations/${provider}/callback`, body)
+      .post(`/integrations/${provider}/callback`, callbackPayload)
       .then(() => {
         setPhase('success')
         setTimeout(() => navigate('/integrations'), 1500)
@@ -63,7 +75,7 @@ export default function IntegrationCallback() {
         setErrorMsg(msg)
         setPhase('error')
       })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [callbackPayload, navigate, provider])
 
   return (
     <div className="min-h-screen bg-[#0F0F0F] flex items-center justify-center px-4">
@@ -74,7 +86,7 @@ export default function IntegrationCallback() {
             <p className="text-text font-semibold text-base">
               Connecting to {providerName}…
             </p>
-            <p className="text-[#555555] text-sm mt-1">Exchanging authorisation code</p>
+            <p className="text-muted text-sm mt-1">Exchanging authorisation code</p>
           </>
         )}
 
@@ -84,7 +96,7 @@ export default function IntegrationCallback() {
               <CheckCircle className="w-6 h-6 text-guava-green" />
             </div>
             <p className="text-text font-semibold text-base">Connected</p>
-            <p className="text-[#555555] text-sm mt-1">
+            <p className="text-muted text-sm mt-1">
               {providerName} connected successfully. Redirecting…
             </p>
           </>

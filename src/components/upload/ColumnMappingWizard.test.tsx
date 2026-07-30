@@ -1,4 +1,5 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi } from 'vitest'
 import { ColumnMappingWizard } from './ColumnMappingWizard'
 import type { ColumnMapping } from '@/types/upload'
@@ -28,8 +29,9 @@ describe('ColumnMappingWizard', () => {
     expect(confirm).toBeDisabled()
   })
 
-  it('calls onConfirm with mapping when all required fields set', () => {
+  it('calls onConfirm with mapping when all required fields set', async () => {
     const onConfirm = vi.fn()
+    const user = userEvent.setup()
     render(
       <ColumnMappingWizard
         open
@@ -41,11 +43,28 @@ describe('ColumnMappingWizard', () => {
         onCancel={() => {}}
       />
     )
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }))
+    await user.click(screen.getByRole('button', { name: /confirm/i }))
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ date: 'When', items: 'Description', total: 'Amount' }),
       'packed'
     )
+  })
+
+  it('rejects reusing one source column for multiple canonical fields', () => {
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={{ date: 'When', items: 'When', total: 'Amount' }}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/each field needs its own source column/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
   })
 
   it('requires receipt ID for line-per-row imports', () => {
@@ -66,8 +85,9 @@ describe('ColumnMappingWizard', () => {
     expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
   })
 
-  it('allows line-per-row imports after receipt ID is mapped', () => {
+  it('allows line-per-row imports after receipt ID is mapped', async () => {
     const onConfirm = vi.fn()
+    const user = userEvent.setup()
     render(
       <ColumnMappingWizard
         open
@@ -81,8 +101,8 @@ describe('ColumnMappingWizard', () => {
     )
 
     const receiptSelect = screen.getAllByRole('combobox')[4]
-    fireEvent.change(receiptSelect, { target: { value: 'Txn' } })
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }))
+    await user.selectOptions(receiptSelect, 'Txn')
+    await user.click(screen.getByRole('button', { name: /confirm/i }))
 
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ date: 'When', items: 'Description', total: 'Amount', receiptId: 'Txn' }),

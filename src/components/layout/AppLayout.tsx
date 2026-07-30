@@ -22,6 +22,7 @@ export function AppLayout({ children, title }: AppLayoutProps) {
             <button
               onClick={() => setSidebarOpen(true)}
               className="xl:hidden text-muted hover:text-text p-1.5 -ml-1.5"
+              aria-label="Open navigation"
             >
               <Menu className="w-5 h-5" />
             </button>

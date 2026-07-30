@@ -1,10 +1,30 @@
 import axios from 'axios'
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '')
+const REQUEST_TIMEOUT_MS = 20_000
+const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
+
+if (import.meta.env.PROD && !configuredApiUrl) {
+  throw new Error('VITE_API_URL is required for production builds')
+}
+
+if (import.meta.env.PROD && configuredApiUrl) {
+  let productionApiUrl: URL
+  try {
+    productionApiUrl = new URL(configuredApiUrl)
+  } catch {
+    throw new Error('VITE_API_URL must be an absolute HTTPS URL for production builds')
+  }
+  if (productionApiUrl.protocol !== 'https:') {
+    throw new Error('VITE_API_URL must use HTTPS for production builds')
+  }
+}
+
+export const API_BASE_URL = (configuredApiUrl || '/api').replace(/\/+$/, '')
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
+  timeout: REQUEST_TIMEOUT_MS,
 })
 
 const REFRESH_EXCLUDED_PATHS = new Set([
@@ -29,6 +49,81 @@ function shouldAttemptRefresh(url?: string) {
   return !REFRESH_EXCLUDED_PATHS.has(normaliseApiPath(url))
 }
 
+let refreshPromise: Promise<string> | null = null
+
+function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post(
+        `${API_BASE_URL}/auth/refresh`,
+        {},
+        { withCredentials: true, timeout: REQUEST_TIMEOUT_MS }
+      )
+      .then(({ data }) => {
+        const token = data?.accessToken
+        if (!token || typeof token !== 'string') {
+          throw new Error('Refresh response did not include an access token')
+        }
+        localStorage.setItem('accessToken', token)
+        return token
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+  return refreshPromise
+}
+
+function apiUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path
+  return `${API_BASE_URL}/${path.replace(/^\/+/, '')}`
+}
+
+/**
+ * Fetch wrapper for streaming endpoints. It mirrors the Axios authentication
+ * behaviour and retries exactly once after a successful refresh.
+ */
+export async function authenticatedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const send = async (token: string | null) => {
+    const headers = new Headers(init.headers)
+    if (token) headers.set('Authorization', `Bearer ${token}`)
+    else headers.delete('Authorization')
+
+    const headerTimeout = new AbortController()
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, headerTimeout.signal])
+      : headerTimeout.signal
+    const timeoutId = window.setTimeout(() => headerTimeout.abort(), REQUEST_TIMEOUT_MS)
+
+    try {
+      // Clearing the timer as soon as fetch resolves bounds only the
+      // connection/header wait. The caller's signal remains attached to the
+      // response body so an established stream can still be cancelled.
+      return await fetch(apiUrl(path), {
+        ...init,
+        credentials: 'include',
+        headers,
+        signal,
+      })
+    } finally {
+      window.clearTimeout(timeoutId)
+    }
+  }
+
+  let response = await send(localStorage.getItem('accessToken'))
+  if (response.status !== 401 || !shouldAttemptRefresh(path)) return response
+
+  try {
+    const token = await refreshAccessToken()
+    response = await send(token)
+    return response
+  } catch (error) {
+    localStorage.removeItem('accessToken')
+    window.location.assign('/login')
+    throw error
+  }
+}
+
 // Request interceptor: attach access token from localStorage
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken')
@@ -37,20 +132,6 @@ api.interceptors.request.use((config) => {
 })
 
 // Global refresh lock — prevents multiple concurrent refresh attempts
-let isRefreshing = false
-let failedQueue: Array<{
-  resolve: (token: string) => void
-  reject: (err: unknown) => void
-}> = []
-
-function processQueue(error: unknown, token: string | null) {
-  failedQueue.forEach((p) => {
-    if (token) p.resolve(token)
-    else p.reject(error)
-  })
-  failedQueue = []
-}
-
 // Response interceptor: on 401, try refresh (serialized) then retry
 api.interceptors.response.use(
   (response) => response,
@@ -60,39 +141,14 @@ api.interceptors.response.use(
       original._retry = true
       original.headers = original.headers || {}
 
-      // If already refreshing, queue this request
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({
-            resolve: (token: string) => {
-              original.headers = original.headers || {}
-              original.headers.Authorization = `Bearer ${token}`
-              resolve(api(original))
-            },
-            reject,
-          })
-        })
-      }
-
-      isRefreshing = true
       try {
-        const { data } = await axios.post(
-          `${API_BASE_URL}/auth/refresh`,
-          {},
-          { withCredentials: true }
-        )
-        const newToken = data.accessToken
-        localStorage.setItem('accessToken', newToken)
-        processQueue(null, newToken)
+        const newToken = await refreshAccessToken()
         original.headers.Authorization = `Bearer ${newToken}`
         return api(original)
       } catch (refreshError) {
-        processQueue(refreshError, null)
         localStorage.removeItem('accessToken')
         window.location.href = '/login'
         return Promise.reject(refreshError)
-      } finally {
-        isRefreshing = false
       }
     }
     return Promise.reject(error)

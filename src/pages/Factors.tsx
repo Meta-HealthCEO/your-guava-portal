@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { isWeatherAvailable, weatherUnavailableReason } from '@/lib/forecastSignals'
 import type {
   EventSalesEffect,
   Forecast,
@@ -190,6 +191,7 @@ export default function Factors() {
   const [saving, setSaving] = useState(false)
   const [eventSaving, setEventSaving] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
+  const [supportingDataWarning, setSupportingDataWarning] = useState('')
   const [eventName, setEventName] = useState('')
   const [eventDate, setEventDate] = useState('')
   const [eventImpact, setEventImpact] = useState<'low' | 'medium' | 'high'>('medium')
@@ -203,6 +205,7 @@ export default function Factors() {
 
   const load = async () => {
     setLoading(true)
+    setSupportingDataWarning('')
     try {
       const [factorRes, eventRes, effectRes, weekRes] = await Promise.all([
         api.get<{
@@ -220,16 +223,25 @@ export default function Factors() {
             belowExpected: number
             insufficientData: number
           }
-        }>('/events/effects').catch(() => ({ data: { effects: [] as EventSalesEffect[], summary: null } })),
-        api.get<{ forecasts: Forecast[] }>('/forecasts/week').catch(() => ({ data: { forecasts: [] as Forecast[] } })),
+        }>('/events/effects').catch(() => null),
+        api.get<{ forecasts: Forecast[] }>('/forecasts/week').catch(() => null),
       ])
       setDefaults(factorRes.data.defaults)
       setSettings(factorRes.data.settings)
       setEntitlements(factorRes.data.entitlements)
       setEvents(eventRes.data.events)
-      setEventEffects(effectRes.data.effects)
-      setEventEffectSummary(effectRes.data.summary)
-      setForecasts(weekRes.data.forecasts)
+      setEventEffects(effectRes?.data.effects || [])
+      setEventEffectSummary(effectRes?.data.summary || null)
+      setForecasts(weekRes?.data.forecasts || [])
+      const unavailable = [
+        !weekRes ? 'live forecast factors' : '',
+        !effectRes ? 'historical event effects' : '',
+      ].filter(Boolean)
+      if (unavailable.length > 0) {
+        setSupportingDataWarning(
+          `${unavailable.join(' and ')} could not be loaded. Empty values below do not mean that no factors or effects exist.`
+        )
+      }
     } catch {
       showNotice('error', 'Could not load forecast factors.')
     } finally {
@@ -377,6 +389,15 @@ export default function Factors() {
     <AppLayout title="Factors">
       <div className="space-y-5">
         <NoticeBanner notice={notice} />
+        {supportingDataWarning && (
+          <div
+            className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-200"
+            role="status"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{supportingDataWarning}</span>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <Card>
@@ -506,7 +527,9 @@ export default function Factors() {
                                 R{Number(forecast.totalPredictedRevenue || 0).toLocaleString('en-ZA')}
                               </td>
                               <td className="px-3 py-3 text-muted">
-                                {forecast.signals.weather.temp}C - {forecast.signals.weather.condition}
+                                {isWeatherAvailable(forecast.signals.weather)
+                                  ? `${forecast.signals.weather.temp}C - ${forecast.signals.weather.condition}`
+                                  : weatherUnavailableReason(forecast.signals.weather)}
                               </td>
                               <td className="px-3 py-3">
                                 <div className="flex flex-wrap gap-1.5">

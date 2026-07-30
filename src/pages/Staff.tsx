@@ -18,6 +18,7 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { parseDateOnly, toLocalDateOnly } from '@/lib/date'
 import type { StaffMember, LeaveBalanceData } from '@/types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ const ROLE_COLORS: Record<string, string> = {
 const ROLE_OPTIONS = ['barista', 'kitchen', 'front', 'manager', 'other'] as const
 
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
+  return parseDateOnly(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 // ── Add Staff Form ───────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
   const [phone, setPhone] = useState('')
   const [role, setRole] = useState<StaffMember['role']>('barista')
   const [hourlyRate, setHourlyRate] = useState('')
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0])
+  const [startDate, setStartDate] = useState(toLocalDateOnly(new Date()))
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -347,7 +348,7 @@ function StaffCard({
           <>
             <Separator className="mb-3" />
             <div className="space-y-2">
-              <p className="text-[10px] text-[#555555] uppercase tracking-wider font-medium">Leave Balances</p>
+              <p className="text-[10px] text-muted uppercase tracking-wider font-medium">Leave Balances</p>
               <LeaveBar label="Annual" used={balance.annual.used} total={balance.annual.total} color="#4DA63B" />
               <LeaveBar label="Sick" used={balance.sick.used} total={balance.sick.total} color="#4A9ECC" />
               <LeaveBar label="Family" used={balance.family.used} total={balance.family.total} color="#FFD166" />
@@ -391,7 +392,10 @@ export default function Staff() {
   }, [loadData])
 
   const balanceMap = new Map<string, LeaveBalanceData>()
-  balances.forEach((b) => balanceMap.set(b.staffId, b))
+  balances.forEach((balance) => {
+    const staffId = typeof balance.staffId === 'string' ? balance.staffId : balance.staffId._id
+    balanceMap.set(staffId, balance)
+  })
 
   async function handleAdd(data: Omit<StaffMember, '_id' | 'isActive'>) {
     await api.post('/staff', data)
@@ -452,10 +456,10 @@ export default function Staff() {
       ) : (
         <div className="flex flex-col items-center justify-center min-h-75 text-center">
           <div className="w-14 h-14 rounded-xl bg-surface border border-border flex items-center justify-center mb-4">
-            <UserPlus className="w-7 h-7 text-[#555555]" />
+            <UserPlus className="w-7 h-7 text-muted" />
           </div>
           <h2 className="text-text text-lg font-semibold mb-2">No staff yet</h2>
-          <p className="text-[#555555] text-sm mb-6 max-w-xs">Add your first staff member to get started with scheduling.</p>
+          <p className="text-muted text-sm mb-6 max-w-xs">Add your first staff member to get started with scheduling.</p>
           <Button variant="success" onClick={() => setShowAddForm(true)}>
             <UserPlus className="w-4 h-4" />
             Add Staff

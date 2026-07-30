@@ -9,7 +9,7 @@ vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
 vi.mock('@/lib/api', () => ({
   default: {
-    get: vi.fn().mockResolvedValue({ data: { cafe: { name: 'Test Cafe' } } }),
+    get: vi.fn(() => new Promise(() => {})),
   },
 }))
 
@@ -92,5 +92,13 @@ describe('Sidebar', () => {
 
     expectActive('Improvements')
     expectInactive('Settings')
+  })
+
+  it('hides unfinished workforce navigation when the feature flag is off', () => {
+    renderSidebar('/today')
+
+    expect(screen.queryByRole('link', { name: 'Staff' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Roster' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Leave' })).not.toBeInTheDocument()
   })
 })

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,11 @@ import logo from '@/assets/logo.png'
 export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const requestedPath = (location.state as { from?: unknown } | null)?.from
+  const returnTo = typeof requestedPath === 'string' && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
+    ? requestedPath
+    : '/today'
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -23,7 +28,7 @@ export default function Login() {
 
     try {
       await login(email, password)
-      navigate('/today')
+      navigate(returnTo, { replace: true })
     } catch (err: unknown) {
       if (
         err &&
@@ -69,17 +74,17 @@ export default function Login() {
           <div className="mt-8 flex items-center justify-center gap-6">
             <div className="text-center">
               <p className="text-guava-green text-2xl font-bold">94%</p>
-              <p className="text-[#555555] text-xs mt-0.5">Accuracy</p>
+              <p className="text-muted text-xs mt-0.5">Accuracy</p>
             </div>
             <div className="w-px h-8 bg-white/10" />
             <div className="text-center">
               <p className="text-guava-red text-2xl font-bold">30%</p>
-              <p className="text-[#555555] text-xs mt-0.5">Less Waste</p>
+              <p className="text-muted text-xs mt-0.5">Less Waste</p>
             </div>
             <div className="w-px h-8 bg-white/10" />
             <div className="text-center">
               <p className="text-guava-yellow text-2xl font-bold">200+</p>
-              <p className="text-[#555555] text-xs mt-0.5">Cafes</p>
+              <p className="text-muted text-xs mt-0.5">Cafes</p>
             </div>
           </div>
         </div>
@@ -94,7 +99,7 @@ export default function Login() {
 
           <div className="bg-[#111111]/60 backdrop-blur-xl border border-white/8 rounded-2xl p-8">
             <h1 className="text-text text-xl font-bold tracking-tight mb-1">Welcome back</h1>
-            <p className="text-[#555555] text-sm mb-6">Sign in to your portal</p>
+            <p className="text-muted text-sm mb-6">Sign in to your portal</p>
 
             {error && (
               <div className="flex items-start gap-2.5 bg-red-900/20 border border-red-900/40 rounded-lg px-3.5 py-3 mb-5">

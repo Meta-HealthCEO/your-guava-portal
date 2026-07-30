@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { History, FileText, ExternalLink, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
 import type { Upload } from '@/types/upload'
 
@@ -23,16 +24,23 @@ interface UploadHistoryCardProps {
 export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
   const [uploads, setUploads] = useState<Upload[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
 
   useEffect(() => {
     let active = true
+    const controller = new AbortController()
     setLoading(true)
-    api.get<{ success: boolean; uploads: Upload[] }>('/uploads')
+    setError(false)
+    api.get<{ success: boolean; uploads: Upload[] }>('/uploads', { signal: controller.signal })
       .then(({ data }) => { if (active) setUploads(data.uploads) })
-      .catch(() => { if (active) setUploads([]) })
+      .catch(() => { if (active && !controller.signal.aborted) setError(true) })
       .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [refreshKey])
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [refreshKey, retryKey])
 
   return (
     <Card>
@@ -47,14 +55,22 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
       </CardHeader>
       <CardContent>
         {loading && (
-          <div className="flex items-center gap-2 text-sm text-[#555555]">
+          <div className="flex items-center gap-2 text-sm text-muted">
             <Loader2 className="w-4 h-4 animate-spin" /> Loading...
           </div>
         )}
-        {!loading && uploads.length === 0 && (
-          <p className="text-sm text-[#555555]">No uploads yet. Drop a CSV in the card above to get started.</p>
+        {!loading && error && (
+          <div className="rounded-lg border border-red-900/30 bg-red-900/10 p-3" role="alert">
+            <p className="text-sm text-red-300">Upload history could not be loaded.</p>
+            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setRetryKey((key) => key + 1)}>
+              Try again
+            </Button>
+          </div>
         )}
-        {!loading && uploads.length > 0 && (
+        {!loading && !error && uploads.length === 0 && (
+          <p className="text-sm text-muted">No uploads yet. Drop a CSV in the card above to get started.</p>
+        )}
+        {!loading && !error && uploads.length > 0 && (
           <div className="overflow-auto">
             <table className="w-full text-sm">
               <thead>

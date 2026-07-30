@@ -2,11 +2,18 @@ import { Cloud, Zap, Calendar, Banknote, Megaphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Forecast } from '@/types'
+import { parseDateOnly } from '@/lib/date'
+import {
+  isLoadSheddingAvailable,
+  isWeatherAvailable,
+  loadSheddingUnavailableReason,
+  weatherUnavailableReason,
+} from '@/lib/forecastSignals'
 
 function getDayLabel(dateStr: string): string {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const target = new Date(dateStr)
+  const target = parseDateOnly(dateStr)
   target.setHours(0, 0, 0, 0)
   const diff = Math.round((target.getTime() - today.getTime()) / 86400000)
   if (diff === 0) return 'Today'
@@ -15,7 +22,7 @@ function getDayLabel(dateStr: string): string {
 }
 
 function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-ZA', {
+  return parseDateOnly(dateStr).toLocaleDateString('en-ZA', {
     day: 'numeric',
     month: 'short',
   })
@@ -45,6 +52,8 @@ interface Props {
 
 export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
   const { signals, items, totalPredictedRevenue, date } = forecast
+  const weatherAvailable = isWeatherAvailable(signals.weather)
+  const loadSheddingAvailable = isLoadSheddingAvailable(signals)
   const hasActuals = hasMatchedActuals(forecast)
   const actualRevenue = hasActuals && forecast.actualRevenue != null ? forecast.actualRevenue : null
 
@@ -80,6 +89,15 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
   return (
     <Card
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open forecast details for ${getDayLabel(date)}`}
       className="cursor-pointer hover:border-[#444444] transition-colors"
     >
       <CardContent className="p-4 space-y-3">
@@ -87,7 +105,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         <div className="flex items-start justify-between">
           <div>
             <p className="text-text font-semibold text-sm">{getDayLabel(date)}</p>
-            <p className="text-[#555555] text-xs">{formatDate(date)}</p>
+            <p className="text-muted text-xs">{formatDate(date)}</p>
           </div>
           <div className="text-right">
             {mode === 'review' && hasActuals && actualRevenue != null ? (
@@ -95,7 +113,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                 <p className="text-text font-bold text-lg leading-tight">
                   R {actualRevenue.toLocaleString('en-ZA')}
                 </p>
-                <p className="text-xs text-[#555555]">
+                <p className="text-xs text-muted">
                   pred R {totalPredictedRevenue.toLocaleString('en-ZA')}
                 </p>
               </>
@@ -104,7 +122,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                 <p className="text-muted font-semibold text-sm leading-tight">
                   Awaiting sales data
                 </p>
-                <p className="text-xs text-[#555555]">
+                <p className="text-xs text-muted">
                   pred R {totalPredictedRevenue.toLocaleString('en-ZA')}
                 </p>
               </>
@@ -119,7 +137,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               </p>
             )}
             {mode === 'plan' && isNeutral && weekAvg > 0 && (
-              <p className="text-xs text-[#555555]">avg</p>
+              <p className="text-xs text-muted">avg</p>
             )}
             {mode === 'review' && hasActuals && acc !== null && (
               <p className={`text-xs font-medium ${accColor}`}>
@@ -133,10 +151,6 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         {mode === 'plan' && top5Plan.length > 0 && (
           <div className="space-y-1.5">
             {top5Plan.map((item) => {
-              const stock =
-                item.suggestedStock != null
-                  ? item.suggestedStock
-                  : Math.ceil(item.predictedQty * 1.1)
               return (
                 <div key={item.itemName} className="flex items-center gap-2">
                   <span className="text-muted text-[10px] w-28 truncate shrink-0">
@@ -148,12 +162,14 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                       style={{ width: `${Math.max(8, (item.predictedQty / maxQtyPlan) * 100)}%` }}
                     />
                     <div className="flex flex-col leading-none">
-                      <span className="text-[#555555] text-[10px]">
+                      <span className="text-muted text-[10px]">
                         Predicted: {item.predictedQty}
                       </span>
-                      <span className="text-[#444444] text-[10px]">
-                        Stock: {stock}
-                      </span>
+                      {item.suggestedStock != null && (
+                        <span className="text-muted text-[10px]">
+                          Suggested stock: {item.suggestedStock}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -210,7 +226,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                     <div className="flex flex-col leading-none gap-0.5">
                       {hasActuals ? (
                         <>
-                          <span className="text-[#555555] text-[10px]">
+                          <span className="text-muted text-[10px]">
                             pred: {pred}
                           </span>
                           {actual != null && (
@@ -220,7 +236,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
                           )}
                         </>
                       ) : (
-                        <span className="text-[#555555] text-[10px]">{pred}</span>
+                        <span className="text-muted text-[10px]">{pred}</span>
                       )}
                     </div>
                   </div>
@@ -233,9 +249,15 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         {/* Signal chips — only in plan mode (review is in the past, signals are historical context) */}
         {mode === 'plan' && (
           <div className="flex flex-wrap gap-1.5 pt-1">
-            <Badge variant="outline" className="text-[10px] py-0 h-5 px-1.5 gap-1 border-border">
+            <Badge
+              variant="outline"
+              className="text-[10px] py-0 h-5 px-1.5 gap-1 border-border"
+              title={weatherAvailable ? undefined : weatherUnavailableReason(signals.weather)}
+            >
               <Cloud className="w-2.5 h-2.5" />
-              {signals.weather.temp}°C · {signals.weather.condition}
+              {weatherAvailable
+                ? `${signals.weather.temp}°C · ${signals.weather.condition}`
+                : 'Weather unavailable'}
             </Badge>
 
             {signals.isPayday && (
@@ -259,10 +281,21 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               </Badge>
             )}
 
-            {signals.loadSheddingStage > 0 && (
+            {loadSheddingAvailable && signals.loadSheddingStage > 0 && (
               <Badge variant="destructive" className="text-[10px] py-0 h-5 px-1.5">
                 <Zap className="w-2.5 h-2.5 mr-1" />
                 Stage {signals.loadSheddingStage}
+              </Badge>
+            )}
+
+            {!loadSheddingAvailable && (
+              <Badge
+                variant="outline"
+                className="text-[10px] py-0 h-5 px-1.5"
+                title={loadSheddingUnavailableReason(signals)}
+              >
+                <Zap className="w-2.5 h-2.5 mr-1" />
+                Load shedding unavailable
               </Badge>
             )}
 
@@ -281,9 +314,15 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
         {/* In review mode show a minimal weather chip so context isn't totally lost */}
         {mode === 'review' && (
           <div className="flex flex-wrap gap-1.5 pt-1">
-            <Badge variant="outline" className="text-[10px] py-0 h-5 px-1.5 gap-1 border-border">
+            <Badge
+              variant="outline"
+              className="text-[10px] py-0 h-5 px-1.5 gap-1 border-border"
+              title={weatherAvailable ? undefined : weatherUnavailableReason(signals.weather)}
+            >
               <Cloud className="w-2.5 h-2.5" />
-              {signals.weather.temp}°C · {signals.weather.condition}
+              {weatherAvailable
+                ? `${signals.weather.temp}°C · ${signals.weather.condition}`
+                : 'Weather unavailable'}
             </Badge>
           </div>
         )}

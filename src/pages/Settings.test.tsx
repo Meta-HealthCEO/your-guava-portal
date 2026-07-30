@@ -67,6 +67,18 @@ describe('Settings', () => {
     window.history.pushState({}, '', '/settings')
   })
 
+  it('keeps settings read-only when the cafe snapshot cannot be loaded', async () => {
+    mockGet.mockRejectedValue(new Error('network unavailable'))
+
+    renderWithAuth(<Settings />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/settings are unavailable/i)
+    expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /edit trading hours/i })).toBeDisabled()
+    expect(screen.queryByText('My Cafe')).not.toBeInTheDocument()
+    expect(mockPut).not.toHaveBeenCalled()
+  })
+
   it('renders cafe details in view mode by default', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) {
@@ -140,6 +152,8 @@ describe('Settings', () => {
                 postalCode: '8005',
                 province: 'Western Cape',
                 country: 'South Africa',
+                lat: -33.9249,
+                lng: 18.4241,
               },
               timezone: 'Africa/Johannesburg',
             },
@@ -162,6 +176,8 @@ describe('Settings', () => {
     expect(screen.getByText('Shop 4')).toBeInTheDocument()
     expect(screen.getByText(/Sea Point, Cape Town, 8005/)).toBeInTheDocument()
     expect(screen.getByText(/Western Cape, South Africa/)).toBeInTheDocument()
+    expect(screen.getByText('-33.9249')).toBeInTheDocument()
+    expect(screen.getByText('18.4241')).toBeInTheDocument()
     expect(screen.getByText('Africa/Johannesburg')).toBeInTheDocument()
   })
 
@@ -204,6 +220,9 @@ describe('Settings', () => {
     const province = screen.getByLabelText(/^Province$/i) as HTMLSelectElement
     await userEvent.selectOptions(province, 'Western Cape')
 
+    await userEvent.type(screen.getByLabelText(/^Latitude$/i), '-33.9249')
+    await userEvent.type(screen.getByLabelText(/^Longitude$/i), '18.4241')
+
     await userEvent.click(screen.getByText('Save Cafe Details'))
 
     await waitFor(() => {
@@ -215,10 +234,40 @@ describe('Settings', () => {
             postalCode: '8005',
             province: 'Western Cape',
             country: 'South Africa',
+            lat: -33.9249,
+            lng: 18.4241,
           }),
         })
       )
     })
+  })
+
+  it('requires a valid latitude and longitude pair before saving', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: { success: true, cafe: { name: 'Coordinate Cafe', location: {} } },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Settings />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /edit cafe details/i }))
+    const latitude = screen.getByLabelText(/^Latitude$/i)
+    const longitude = screen.getByLabelText(/^Longitude$/i)
+    await userEvent.type(latitude, '-33.9249')
+    await userEvent.click(screen.getByText('Save Cafe Details'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/latitude and longitude must both be provided/i)
+    expect(mockPut).not.toHaveBeenCalled()
+
+    await userEvent.type(longitude, '181')
+    await userEvent.click(screen.getByText('Save Cafe Details'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/longitude must be a number between -180 and 180/i)
+    expect(mockPut).not.toHaveBeenCalled()
   })
 
   it('exposes all 9 ZA provinces in the dropdown', async () => {

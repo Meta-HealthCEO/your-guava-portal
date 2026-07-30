@@ -321,16 +321,16 @@ function ProviderCard({
             {/* Meta info */}
             <div className="rounded-lg bg-[#0F0F0F] border border-[#1E1E1E] px-3 py-2.5 text-xs space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#555555]">Connected since</span>
+                <span className="text-muted">Connected since</span>
                 <span className="text-muted">{formatDate(state.connectedAt)}</span>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#555555]">Last sync</span>
+                <span className="text-muted">Last sync</span>
                 <span className="text-muted">{formatDateTime(state.lastSyncAt)}</span>
               </div>
               {state.lastSyncStatus && (
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[#555555]">Sync status</span>
+                  <span className="text-muted">Sync status</span>
                   {state.lastSyncStatus === 'success' ? (
                     <span className="text-guava-green flex items-center gap-1">
                       <CheckCircle className="w-3 h-3" /> Success

@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { addLocalDays, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
@@ -120,10 +121,7 @@ function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: 
 function buildLast30Days(): string[] {
   const days: string[] = []
   for (let i = 29; i >= 0; i--) {
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() - i)
-    days.push(d.toISOString().slice(0, 10))
+    days.push(toLocalDateOnly(addLocalDays(new Date(), -i)))
   }
   return days
 }
@@ -133,8 +131,8 @@ function formatDate(iso: string): string {
 }
 
 function monthsSpan(earliest: string, latest: string): string {
-  const e = new Date(earliest)
-  const l = new Date(latest)
+  const e = parseDateOnly(earliest)
+  const l = parseDateOnly(latest)
   const months = (l.getFullYear() - e.getFullYear()) * 12 + (l.getMonth() - e.getMonth())
   if (months <= 0) return '< 1 month'
   if (months === 1) return '1 month'
@@ -144,10 +142,14 @@ function monthsSpan(earliest: string, latest: string): string {
 function DataStatusCard({
   status,
   loading,
+  error,
+  onRetry,
   onUploadClick,
 }: {
   status: DataStatus | null
   loading: boolean
+  error: boolean
+  onRetry: () => void
   onUploadClick: () => void
 }) {
   const days30 = buildLast30Days()
@@ -191,9 +193,17 @@ function DataStatusCard({
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="flex items-center gap-2 text-[#555555] text-sm py-2">
+          <div className="flex items-center gap-2 text-muted text-sm py-2">
             <div className="w-4 h-4 border-2 border-[#555555]/30 border-t-[#555555] rounded-full animate-spin" />
             Checking data status…
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-start gap-3 py-2" role="alert">
+            <div>
+              <p className="text-sm font-medium text-red-300">Data status is unavailable</p>
+              <p className="mt-1 text-xs text-muted">Guava could not verify freshness. Your uploaded data has not been removed.</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>Try again</Button>
           </div>
         ) : (
           <div className="flex flex-col lg:flex-row lg:items-center gap-6">
@@ -208,7 +218,7 @@ function DataStatusCard({
 
             {/* Middle: 30-day coverage strip */}
             <div className="shrink-0">
-              <p className="text-[#555555] text-xs mb-1.5">Last 30 days</p>
+              <p className="text-muted text-xs mb-1.5">Last 30 days</p>
               <div className="flex gap-0.5" role="list" aria-label="30-day data coverage">
                 {days30.map((day) => {
                   const count = coverageMap.get(day)
@@ -257,6 +267,7 @@ export default function Connect() {
   // ── Data status state ────────────────────────────────────────────
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
   const [dataStatusLoading, setDataStatusLoading] = useState(true)
+  const [dataStatusError, setDataStatusError] = useState(false)
 
   // ── CSV Upload state ─────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false)
@@ -272,20 +283,26 @@ export default function Connect() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Fetch data status ────────────────────────────────────────────
-  const fetchDataStatus = async () => {
+  const fetchDataStatus = async (signal?: AbortSignal) => {
     try {
       setDataStatusLoading(true)
-      const { data } = await api.get<{ success: boolean; data: DataStatus }>('/transactions/status')
+      setDataStatusError(false)
+      const { data } = await api.get<{ success: boolean; data: DataStatus }>('/transactions/status', { signal })
       setDataStatus(data.data)
     } catch {
-      // Non-fatal: leave status null
+      if (!signal?.aborted) {
+        setDataStatus(null)
+        setDataStatusError(true)
+      }
     } finally {
-      setDataStatusLoading(false)
+      if (!signal?.aborted) setDataStatusLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchDataStatus()
+    const controller = new AbortController()
+    fetchDataStatus(controller.signal)
+    return () => controller.abort()
   }, [historyRefreshKey])
 
   // ── CSV Upload handlers ──────────────────────────────────────────
@@ -322,6 +339,7 @@ export default function Connect() {
     try {
       const { data } = await api.post<StageUploadResponse>('/transactions/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120_000,
         onUploadProgress: (e) => {
           if (e.total) setProgress(Math.min(35, Math.round((e.loaded / e.total) * 35)))
         },
@@ -340,7 +358,8 @@ export default function Connect() {
         }, 600)
         const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
           `/uploads/${data.uploadId}/confirm`,
-          { columnMapping: data.columnMapping, itemsMode: data.itemsMode }
+          { columnMapping: data.columnMapping, itemsMode: data.itemsMode },
+          { timeout: 120_000 }
         )
         setUploadPhase('forecasting')
         setProgress(95)
@@ -420,6 +439,8 @@ export default function Connect() {
         <DataStatusCard
           status={dataStatus}
           loading={dataStatusLoading}
+          error={dataStatusError}
+          onRetry={() => fetchDataStatus()}
           onUploadClick={openFilePicker}
         />
 
@@ -443,6 +464,15 @@ export default function Connect() {
                 onDragLeave={() => setIsDragging(false)}
                 onDrop={onDrop}
                 onClick={openFilePicker}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    openFilePicker()
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Choose a sales CSV or XLSX file to upload"
                 className={cn(
                   'border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors',
                   isDragging
@@ -451,12 +481,12 @@ export default function Connect() {
                 )}
               >
                 <div className="w-12 h-12 rounded-xl bg-[#111111] border border-border flex items-center justify-center mx-auto mb-4">
-                  <Upload className="w-6 h-6 text-[#555555]" />
+                  <Upload className="w-6 h-6 text-muted" />
                 </div>
                 <p className="text-text font-medium mb-1">
                   Drop your sales CSV or XLSX here
                 </p>
-                <p className="text-[#555555] text-sm">
+                <p className="text-muted text-sm">
                   or{' '}
                   <span className="text-guava-red hover:underline">click to browse</span>
                 </p>
@@ -474,14 +504,14 @@ export default function Connect() {
                   <LoaderCircle className="w-6 h-6 text-guava-red animate-spin" />
                 </div>
                 <p className="text-text font-medium mb-1">{uploadPhaseText[uploadPhase].title}</p>
-                <p className="text-[#555555] text-sm mb-4">{uploadPhaseText[uploadPhase].detail}</p>
+                <p className="text-muted text-sm mb-4">{uploadPhaseText[uploadPhase].detail}</p>
                 <div className="h-2 bg-border rounded-full overflow-hidden">
                   <div
                     className="h-full bg-guava-red rounded-full transition-all duration-300"
                     style={{ width: `${Math.max(uploadPhaseText[uploadPhase].progress, progress)}%` }}
                   />
                 </div>
-                <p className="text-[#555555] text-xs mt-2">{Math.max(uploadPhaseText[uploadPhase].progress, progress)}%</p>
+                <p className="text-muted text-xs mt-2">{Math.max(uploadPhaseText[uploadPhase].progress, progress)}%</p>
               </div>
             )}
 
@@ -498,19 +528,19 @@ export default function Connect() {
                     <div className="grid grid-cols-3 gap-3 mb-4">
                       <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
                         <p className="text-guava-green text-xl font-bold">{result.imported.toLocaleString()}</p>
-                        <p className="text-[#555555] text-xs">imported</p>
+                        <p className="text-muted text-xs">imported</p>
                       </div>
                       <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
                         <p className="text-muted text-xl font-bold">{result.skipped.toLocaleString()}</p>
-                        <p className="text-[#555555] text-xs">skipped</p>
+                        <p className="text-muted text-xs">skipped</p>
                       </div>
                       <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
                         <p className="text-text text-xl font-bold">{result.total.toLocaleString()}</p>
-                        <p className="text-[#555555] text-xs">total rows</p>
+                        <p className="text-muted text-xs">total rows</p>
                       </div>
                     </div>
                     {result.firstDate && result.lastDate && (
-                      <p className="text-[#555555] text-xs mb-4">
+                      <p className="text-muted text-xs mb-4">
                         Date range: {new Date(result.firstDate).toLocaleDateString('en-ZA')} → {new Date(result.lastDate).toLocaleDateString('en-ZA')}
                       </p>
                     )}
@@ -571,7 +601,7 @@ export default function Connect() {
 
             {/* Last upload timestamp */}
             {lastUpload && uploadState !== 'uploading' && (
-              <div className="flex items-center gap-1.5 text-[#555555] text-xs">
+              <div className="flex items-center gap-1.5 text-muted text-xs">
                 <Clock className="w-3 h-3" />
                 <span>Last upload: {new Date(lastUpload).toLocaleString('en-ZA')}</span>
               </div>
@@ -606,7 +636,8 @@ export default function Connect() {
               }, 600)
               const res = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
                 `/uploads/${stageResponse.uploadId}/confirm`,
-                { columnMapping: mapping, itemsMode }
+                { columnMapping: mapping, itemsMode },
+                { timeout: 120_000 }
               )
               setUploadPhase('forecasting')
               setProgress(95)

@@ -170,11 +170,12 @@ function RevenueTab() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
     setError('')
     const { startDate, endDate } = getDateRange(period)
     api
-      .get<RevenueResponse>(`/analytics/revenue?period=daily&startDate=${startDate}&endDate=${endDate}`)
+      .get<RevenueResponse>(`/analytics/revenue?period=daily&startDate=${startDate}&endDate=${endDate}`, { signal: controller.signal })
       .then(({ data: res }) => {
         const summary = res.summary ?? res.meta?.summary
         setData({
@@ -186,8 +187,9 @@ function RevenueTab() {
           data: res.data || [],
         })
       })
-      .catch(() => setError('Failed to load revenue data'))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!controller.signal.aborted) setError('Failed to load revenue data') })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
   }, [period, reloadKey])
 
   if (error) {
@@ -284,7 +286,7 @@ function RevenueTab() {
               </ResponsiveContainer>
             </div>
           ) : (
-            <p className="text-[#555555] text-sm text-center py-16">No revenue data for this period</p>
+            <p className="text-muted text-sm text-center py-16">No revenue data for this period</p>
           )}
         </CardContent>
       </Card>
@@ -303,20 +305,23 @@ function ItemsTab() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
     setError('')
     const { startDate, endDate } = getDateRange(period)
     api
       .get<{ items: ItemPerformance[]; meta?: { risingItems?: MoverItem[]; decliningItems?: MoverItem[] } }>(
-        `/analytics/items?startDate=${startDate}&endDate=${endDate}`
+        `/analytics/items?startDate=${startDate}&endDate=${endDate}`,
+        { signal: controller.signal }
       )
       .then(({ data }) => {
         setItems(data.items || [])
         setRisingItems(data.meta?.risingItems || [])
         setDecliningItems(data.meta?.decliningItems || [])
       })
-      .catch(() => setError('Failed to load item data'))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!controller.signal.aborted) setError('Failed to load item data') })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
   }, [period])
 
   const sorted = useMemo(() => [...items].sort((a, b) => b.totalQty - a.totalQty), [items])
@@ -351,14 +356,14 @@ function ItemsTab() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Movers</CardTitle>
-            <p className="text-[#555555] text-xs mt-0.5">Comparing last 7 days to the prior 7</p>
+            <p className="text-muted text-xs mt-0.5">Comparing last 7 days to the prior 7</p>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-guava-green text-xs font-semibold uppercase tracking-wider mb-2">Rising</p>
                 {rising.length === 0 ? (
-                  <p className="text-[#555555] text-xs">No rising items</p>
+                  <p className="text-muted text-xs">No rising items</p>
                 ) : (
                   <ul className="space-y-1.5">
                     {rising.map((item) => (
@@ -375,7 +380,7 @@ function ItemsTab() {
               <div>
                 <p className="text-guava-red text-xs font-semibold uppercase tracking-wider mb-2">Declining</p>
                 {declining.length === 0 ? (
-                  <p className="text-[#555555] text-xs">No declining items</p>
+                  <p className="text-muted text-xs">No declining items</p>
                 ) : (
                   <ul className="space-y-1.5">
                     {declining.map((item) => (
@@ -427,7 +432,7 @@ function ItemsTab() {
               </ResponsiveContainer>
             </div>
           ) : (
-            <p className="text-[#555555] text-sm text-center py-16">No item data available</p>
+            <p className="text-muted text-sm text-center py-16">No item data available</p>
           )}
         </CardContent>
       </Card>
@@ -490,7 +495,7 @@ function ItemsTab() {
               </table>
             </div>
           ) : (
-            <p className="text-[#555555] text-sm text-center py-16">No item data available</p>
+            <p className="text-muted text-sm text-center py-16">No item data available</p>
           )}
         </CardContent>
       </Card>
@@ -508,14 +513,16 @@ function HeatmapTab() {
   const [hoveredCell, setHoveredCell] = useState<HeatmapCell | null>(null)
 
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
     setError('')
     const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ heatmap: HeatmapCell[]; data?: HeatmapCell[] }>(`/analytics/heatmap?startDate=${startDate}&endDate=${endDate}`)
+      .get<{ heatmap: HeatmapCell[]; data?: HeatmapCell[] }>(`/analytics/heatmap?startDate=${startDate}&endDate=${endDate}`, { signal: controller.signal })
       .then(({ data }) => setCells(data.heatmap || data.data || []))
-      .catch(() => setError('Failed to load heatmap data'))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!controller.signal.aborted) setError('Failed to load heatmap data') })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
   }, [period])
 
   const cellMap = useMemo(() => {
@@ -564,9 +571,9 @@ function HeatmapTab() {
                     {DAY_LABELS_BY_INDEX[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
                   </p>
                   <p className="text-muted">{formatZAR(hoveredCell.revenue)} avg</p>
-                  <p className="text-[#555555]">{formatCount(hoveredCell.transactions)} avg transactions</p>
+                  <p className="text-muted">{formatCount(hoveredCell.transactions)} avg transactions</p>
                   {(hoveredCell.observedDays ?? 0) > 0 && (
-                    <p className="text-[#555555]">{hoveredCell.observedDays} observed days</p>
+                    <p className="text-muted">{hoveredCell.observedDays} observed days</p>
                   )}
                 </div>
               )}
@@ -576,7 +583,7 @@ function HeatmapTab() {
                   <div className="flex items-center mb-1">
                     <div className="w-10 shrink-0" />
                     {HOURS.map((h) => (
-                      <div key={h} className="flex-1 text-center text-[10px] text-[#555555]">
+                      <div key={h} className="flex-1 text-center text-[10px] text-muted">
                         {String(h).padStart(2, '0')}
                       </div>
                     ))}
@@ -607,15 +614,15 @@ function HeatmapTab() {
               </div>
               {/* Legend */}
               <div className="flex items-center justify-end gap-1 mt-3">
-                <span className="text-[10px] text-[#555555] mr-1">Less</span>
+                <span className="text-[10px] text-muted mr-1">Less</span>
                 {['#1A1A1A', '#1E2A1E', '#2A4A2A', '#3A6A3A', '#4DA63B'].map((color) => (
                   <div key={color} className="w-3 h-3 rounded-sm" style={{ backgroundColor: color }} />
                 ))}
-                <span className="text-[10px] text-[#555555] ml-1">More</span>
+                <span className="text-[10px] text-muted ml-1">More</span>
               </div>
             </div>
           ) : (
-            <p className="text-[#555555] text-sm text-center py-16">No heatmap data available</p>
+            <p className="text-muted text-sm text-center py-16">No heatmap data available</p>
           )}
         </CardContent>
       </Card>
@@ -634,14 +641,16 @@ function CustomersTab() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
     setError('')
     const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ insights: CustomerInsights; data?: CustomerInsights }>(`/analytics/customers?startDate=${startDate}&endDate=${endDate}`)
+      .get<{ insights: CustomerInsights; data?: CustomerInsights }>(`/analytics/customers?startDate=${startDate}&endDate=${endDate}`, { signal: controller.signal })
       .then(({ data: res }) => setData(res.insights ?? res.data ?? null))
-      .catch(() => setError('Failed to load customer insights'))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!controller.signal.aborted) setError('Failed to load customer insights') })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
   }, [period])
 
   if (error) {
@@ -762,14 +771,16 @@ function CombosTab() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
     setError('')
     const { startDate, endDate } = getDateRange(period)
     api
-      .get<{ data: ComboItem[] }>(`/analytics/combos?startDate=${startDate}&endDate=${endDate}`)
+      .get<{ data: ComboItem[] }>(`/analytics/combos?startDate=${startDate}&endDate=${endDate}`, { signal: controller.signal })
       .then(({ data: res }) => setCombos(res.data || []))
-      .catch(() => setError('Failed to load combo data'))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!controller.signal.aborted) setError('Failed to load combo data') })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
   }, [period])
 
   if (error) {
@@ -788,7 +799,7 @@ function CombosTab() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Frequently Bought Together</CardTitle>
-          <p className="text-[#555555] text-xs mt-1">
+          <p className="text-muted text-xs mt-1">
             Use these to design bundle deals or stock paired items together.
           </p>
         </CardHeader>
@@ -823,7 +834,7 @@ function CombosTab() {
               </table>
             </div>
           ) : (
-            <p className="text-[#555555] text-sm text-center py-16">
+            <p className="text-muted text-sm text-center py-16">
               Need more transactions with 2+ items to surface combos.
             </p>
           )}
@@ -855,7 +866,7 @@ function KpiCard({
           <div>
             <p className="text-muted text-xs font-medium uppercase tracking-wider mb-1">{label}</p>
             <p className="text-text text-2xl font-bold tracking-tight">{value}</p>
-            {sub && <p className="text-[#555555] text-xs mt-1">{sub}</p>}
+            {sub && <p className="text-muted text-xs mt-1">{sub}</p>}
           </div>
           <div
             className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"

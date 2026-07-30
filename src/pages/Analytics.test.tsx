@@ -18,7 +18,7 @@ vi.mock('recharts', () => {
 
   return {
     ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div data-testid="responsive-container">{children}</div>,
-    AreaChart: ({ children }: { children: React.ReactNode }) => <div data-testid="area-chart">{children}</div>,
+    AreaChart: ({ children }: { children: React.ReactNode }) => <svg data-testid="area-chart">{children}</svg>,
     Area: () => <div data-testid="area" />,
     BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
     Bar: ({ activeBar }: { activeBar?: unknown }) => <div data-testid="bar" data-active-fill={fillFrom(activeBar)} />,

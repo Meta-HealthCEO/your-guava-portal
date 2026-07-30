@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { toLocalDateOnly } from '@/lib/date'
 import type { Shift, StaffMember, ShiftSummary } from '@/types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -27,7 +28,7 @@ function getWeekStart(date: Date): Date {
   const day = d.getDay()
   const diff = d.getDate() - day + (day === 0 ? -6 : 1)
   d.setDate(diff)
-  d.setHours(0, 0, 0, 0)
+  d.setHours(12, 0, 0, 0)
   return d
 }
 
@@ -38,7 +39,7 @@ function addDays(date: Date, days: number): Date {
 }
 
 function formatDateISO(date: Date): string {
-  return date.toISOString().split('T')[0]
+  return toLocalDateOnly(date)
 }
 
 function formatDateShort(date: Date): string {
@@ -89,7 +90,7 @@ function AddShiftForm({ date, staffList, onSubmit, onCancel }: AddShiftFormProps
     <form onSubmit={handleSubmit} className="bg-[#111111] border border-border rounded-lg p-3 mt-2 space-y-2">
       <div className="flex items-center justify-between">
         <p className="text-text text-xs font-medium">Add Shift</p>
-        <button type="button" onClick={onCancel} className="text-[#555555] hover:text-text">
+        <button type="button" onClick={onCancel} className="text-muted hover:text-text">
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -148,10 +149,10 @@ function ShiftCard({ shift }: { shift: Shift }) {
         <span className="text-[10px]">
           {shift.startTime} — {shift.endTime}
         </span>
-        <span className="text-[10px] text-[#555555] ml-auto">{shift.hoursWorked}h</span>
+        <span className="text-[10px] text-muted ml-auto">{shift.hoursWorked}h</span>
       </div>
       {shift.notes && (
-        <p className="text-[10px] text-[#555555] mt-1 truncate">{shift.notes}</p>
+        <p className="text-[10px] text-muted mt-1 truncate">{shift.notes}</p>
       )}
     </div>
   )
@@ -226,7 +227,7 @@ function StaffSidebar({
             })}
           </div>
         ) : (
-          <p className="text-[#555555] text-xs text-center py-4">No staff found</p>
+          <p className="text-muted text-xs text-center py-4">No staff found</p>
         )}
       </CardContent>
     </Card>
@@ -253,11 +254,13 @@ export default function Roster() {
       const [shiftsRes, staffRes, summaryRes] = await Promise.all([
         api.get<{ shifts: Shift[] }>(`/shifts?startDate=${startDate}&endDate=${endDate}`).catch(() => null),
         api.get<{ staff: StaffMember[] }>('/staff').catch(() => null),
-        api.get<{ summaries: ShiftSummary[] }>('/shifts/summary').catch(() => null),
+        api.get<{ summary: ShiftSummary[]; summaries?: ShiftSummary[] }>(
+          `/shifts/summary?startDate=${startDate}&endDate=${endDate}`
+        ).catch(() => null),
       ])
       setShifts(shiftsRes?.data?.shifts ?? [])
       setStaffList(staffRes?.data?.staff ?? [])
-      setSummaries(summaryRes?.data?.summaries ?? [])
+      setSummaries(summaryRes?.data?.summary ?? summaryRes?.data?.summaries ?? [])
     } finally {
       setLoading(false)
     }
@@ -332,7 +335,7 @@ export default function Roster() {
                   <p className={cn('text-xs font-bold', isToday ? 'text-guava-red' : 'text-text')}>
                     {dayLabel}
                   </p>
-                  <p className="text-[10px] text-[#555555]">{formatDateShort(dayDate)}</p>
+                  <p className="text-[10px] text-muted">{formatDateShort(dayDate)}</p>
                 </div>
 
                 {/* Shifts */}
@@ -348,7 +351,7 @@ export default function Roster() {
                         <ShiftCard key={shift._id} shift={shift} />
                       ))}
                       {dayShifts.length === 0 && (
-                        <p className="text-[10px] text-[#555555] text-center py-4">No shifts</p>
+                        <p className="text-[10px] text-muted text-center py-4">No shifts</p>
                       )}
 
                       {/* Add Shift */}
@@ -362,7 +365,7 @@ export default function Roster() {
                       ) : (
                         <button
                           onClick={() => setAddingDay(dateStr)}
-                          className="w-full flex items-center justify-center gap-1 text-[10px] text-[#555555] hover:text-guava-green py-1.5 mt-1 rounded border border-dashed border-border hover:border-guava-green/30 transition-colors"
+                          className="w-full flex items-center justify-center gap-1 text-[10px] text-muted hover:text-guava-green py-1.5 mt-1 rounded border border-dashed border-border hover:border-guava-green/30 transition-colors"
                         >
                           <Plus className="w-3 h-3" />
                           Add Shift
