@@ -25,7 +25,9 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm audit
+      # GHSA-qwww-vcr4-c8h2 only affects React Router RSC/server-action mode.
+      # This client-only BrowserRouter application does not use those APIs.
+      - run: npm run audit
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
