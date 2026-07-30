@@ -1,9 +1,10 @@
 import { TrendingUp, Star, Target } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Forecast } from '@/types'
+import { forecastDateKey, parseDateOnly } from '@/lib/date'
 
 function getDayName(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseDateOnly(dateStr)
   return date.toLocaleDateString('en-ZA', { weekday: 'long' })
 }
 
@@ -65,7 +66,7 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
               <p className="text-muted text-xs mb-1">Peak day</p>
               {peakDay ? (
                 <p className="text-text text-xl font-semibold">
-                  {getDayName(peakDay.date)}{' '}
+                  {getDayName(forecastDateKey(peakDay))}{' '}
                   <span className="text-sm text-muted font-normal">
                     — R {peakDay.totalPredictedRevenue.toLocaleString('en-ZA')}
                   </span>

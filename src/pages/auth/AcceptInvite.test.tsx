@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { BrowserRouter } from 'react-router-dom'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { BrowserRouter } from 'react-router'
 import { StrictMode } from 'react'
 import AcceptInvite from './AcceptInvite'
 
@@ -48,7 +47,6 @@ describe('AcceptInvite', () => {
   })
 
   it('scrubs the fragment, previews the invite, and submits the chosen password', async () => {
-    const user = userEvent.setup()
     renderPage()
 
     expect(window.location.hash).toBe('')
@@ -60,9 +58,13 @@ describe('AcceptInvite', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
 
-    await user.type(screen.getByLabelText('Choose a password'), 'secure-password-123')
-    await user.type(screen.getByLabelText('Confirm password'), 'secure-password-123')
-    await user.click(screen.getByRole('button', { name: 'Create account' }))
+    fireEvent.change(screen.getByLabelText('Choose a password'), {
+      target: { value: 'secure-password-123' },
+    })
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'secure-password-123' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
 
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith('/team/invitations/accept', {
@@ -84,13 +86,16 @@ describe('AcceptInvite', () => {
   })
 
   it('blocks mismatched passwords before acceptance', async () => {
-    const user = userEvent.setup()
     renderPage()
     await screen.findByText('Welcome, New Manager')
 
-    await user.type(screen.getByLabelText('Choose a password'), 'secure-password-123')
-    await user.type(screen.getByLabelText('Confirm password'), 'different-password')
-    await user.click(screen.getByRole('button', { name: 'Create account' }))
+    fireEvent.change(screen.getByLabelText('Choose a password'), {
+      target: { value: 'secure-password-123' },
+    })
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'different-password' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
 
     expect(screen.getByText(/confirmation do not match/i)).toBeInTheDocument()
     expect(mockPost).not.toHaveBeenCalledWith('/team/invitations/accept', expect.anything())

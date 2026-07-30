@@ -23,6 +23,7 @@ interface Props {
   initialMapping: ColumnMapping
   initialItemsMode: ItemsMode
   errorMessage?: string | null
+  assistiveNotice?: string | null
   onConfirm: (mapping: ColumnMapping, itemsMode: ItemsMode) => void | Promise<void>
   onCancel: () => void
 }
@@ -34,6 +35,7 @@ export function ColumnMappingWizard({
   initialMapping,
   initialItemsMode,
   errorMessage,
+  assistiveNotice,
   onConfirm,
   onCancel,
 }: Props) {
@@ -119,6 +121,11 @@ export function ColumnMappingWizard({
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {assistiveNotice && (
+            <div className="rounded-lg border border-guava-red/25 bg-guava-red/10 px-3 py-2 text-sm text-text" role="status">
+              {assistiveNotice}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             {CANONICAL_FIELDS.map(({ key, label, required }) => {
               const fieldRequired = required || (key === 'receiptId' && receiptRequired)

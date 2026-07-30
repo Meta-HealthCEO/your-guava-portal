@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react'
-import { useLocation, useNavigate, Link } from 'react-router-dom'
+import { useLocation, useNavigate, Link } from 'react-router'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AlertCircle, ArrowRight } from 'lucide-react'
 import logo from '@/assets/logo.png'
+import api from '@/lib/api'
 
 export default function Login() {
   const { login } = useAuth()
@@ -20,16 +21,32 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [needsVerification, setNeedsVerification] = useState(false)
+  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
+    setNeedsVerification(false)
+    setResendStatus('idle')
     setIsLoading(true)
 
     try {
       await login(email, password)
       navigate(returnTo, { replace: true })
     } catch (err: unknown) {
+      const responseData =
+        err &&
+        typeof err === 'object' &&
+        'response' in err &&
+        err.response &&
+        typeof err.response === 'object' &&
+        'data' in err.response &&
+        err.response.data &&
+        typeof err.response.data === 'object'
+          ? (err.response.data as { message?: string; code?: string })
+          : null
+      setNeedsVerification(responseData?.code === 'EMAIL_VERIFICATION_REQUIRED')
       if (
         err &&
         typeof err === 'object' &&
@@ -47,6 +64,18 @@ export default function Login() {
       }
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const resendVerification = async () => {
+    setResendStatus('sending')
+    try {
+      await api.post('/auth/resend-verification', { email })
+      setResendStatus('sent')
+      setError('A fresh verification link has been sent if registration is still pending.')
+    } catch {
+      setResendStatus('idle')
+      setError('Could not resend the verification email. Please try again.')
     }
   }
 
@@ -107,6 +136,21 @@ export default function Login() {
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
+            {needsVerification && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mb-5 w-full"
+                onClick={resendVerification}
+                disabled={resendStatus !== 'idle'}
+              >
+                {resendStatus === 'sending'
+                  ? 'Sending...'
+                  : resendStatus === 'sent'
+                    ? 'Verification email sent'
+                    : 'Resend verification email'}
+              </Button>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
@@ -124,7 +168,12 @@ export default function Login() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="password">Password</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">Password</Label>
+                  <Link to="/forgot-password" className="text-xs text-guava-green hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
                 <Input
                   id="password"
                   type="password"

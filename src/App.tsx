@@ -1,11 +1,14 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router'
 import { useAuth } from '@/hooks/useAuth'
 import { WORKFORCE_ENABLED } from '@/lib/features'
 
 const Login = lazy(() => import('@/pages/auth/Login'))
 const Signup = lazy(() => import('@/pages/auth/Signup'))
 const AcceptInvite = lazy(() => import('@/pages/auth/AcceptInvite'))
+const VerifyEmail = lazy(() => import('@/pages/auth/VerifyEmail'))
+const ForgotPassword = lazy(() => import('@/pages/auth/ForgotPassword'))
+const ResetPassword = lazy(() => import('@/pages/auth/ResetPassword'))
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
 const Connect = lazy(() => import('@/pages/Connect'))
 const Insights = lazy(() => import('@/pages/Insights'))
@@ -73,6 +76,9 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/accept-invite" element={<AcceptInvite />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       <Route path="/" element={<Navigate to="/today" replace />} />
 

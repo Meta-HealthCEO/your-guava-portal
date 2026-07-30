@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import History from './History'
@@ -90,6 +90,33 @@ const historyPayload = {
     overallRevenueAccuracy: 83.3,
     avgDailyRevenueAccuracy: 83.3,
     avgRevenueAccuracy: 83.3,
+    liveAccuracy: {
+      rowCount: 1,
+      overallRevenueAccuracy: 83.3,
+      avgDailyRevenueAccuracy: 83.3,
+      totalPredictedRevenue: 1000,
+      totalActualRevenue: 1200,
+      variance: 200,
+      variancePct: 20,
+    },
+    backtestAccuracy: {
+      rowCount: 0,
+      overallRevenueAccuracy: null,
+      avgDailyRevenueAccuracy: null,
+      totalPredictedRevenue: 0,
+      totalActualRevenue: 0,
+      variance: 0,
+      variancePct: null,
+    },
+    combinedAccuracy: {
+      rowCount: 1,
+      overallRevenueAccuracy: 83.3,
+      avgDailyRevenueAccuracy: 83.3,
+      totalPredictedRevenue: 1000,
+      totalActualRevenue: 1200,
+      variance: 200,
+      variancePct: 20,
+    },
     totalPredictedRevenue: 1000,
     totalActualRevenue: 1200,
     variance: 200,
@@ -129,8 +156,11 @@ describe('History page', () => {
 
     expect(screen.getByText(/Patchy rain nearby/)).toBeInTheDocument()
     expect(screen.getByText(/Local Market/)).toBeInTheDocument()
-    expect(screen.getByText('Overall accuracy')).toBeInTheDocument()
-    expect(screen.getByText('Daily avg 83.3%')).toBeInTheDocument()
+    expect(screen.getByText('Live forecast accuracy')).toBeInTheDocument()
+    expect(screen.getByText('Backtest accuracy')).toBeInTheDocument()
+    expect(screen.getByText(/1 live day · daily avg 83.3%/)).toBeInTheDocument()
+    expect(screen.getByText(/No retrospective backtests/i)).toBeInTheDocument()
+    expect(screen.queryByText('Overall accuracy')).not.toBeInTheDocument()
     expect(screen.getByText('Model Learning')).toBeInTheDocument()
     expect(screen.getByText('Flat White')).toBeInTheDocument()
     expect(screen.getAllByText('83.3%').length).toBeGreaterThan(0)
@@ -215,6 +245,7 @@ describe('History page', () => {
   })
 
   it('shows a preparing state instead of blocking when backfill is pending', async () => {
+    const user = userEvent.setup()
     mockGet.mockResolvedValueOnce({
       data: {
         success: true,
@@ -242,5 +273,17 @@ describe('History page', () => {
 
     expect(await screen.findByText('Preparing history')).toBeInTheDocument()
     expect(screen.getByText(/Showing 0 of 12 completed trading days/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /build next 14/i }))
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenLastCalledWith('/forecasts/history', {
+        params: {
+          days: 90,
+          page: 1,
+          limit: 30,
+          backfill: 'sync',
+          backfillLimit: 14,
+        },
+      })
+    )
   })
 })

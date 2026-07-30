@@ -1,9 +1,10 @@
 import type { Forecast } from '@/types'
+import { forecastDateKey, parseDateOnly } from '@/lib/date'
 
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 function shortDay(dateStr: string): string {
-  return SHORT_DAYS[new Date(dateStr).getDay()]
+  return SHORT_DAYS[parseDateOnly(dateStr).getDay()]
 }
 
 interface Props {
@@ -26,7 +27,7 @@ export function ItemsHeatmap({ forecasts }: Props) {
     .map(([name]) => name)
 
   // Build matrix: rows = items, cols = days
-  const dayLabels = forecasts.map((f) => shortDay(f.date))
+  const dayLabels = forecasts.map((f) => shortDay(forecastDateKey(f)))
   const matrix: number[][] = topItems.map((itemName) =>
     forecasts.map((f) => {
       const found = f.items.find((i) => i.itemName === itemName)

@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthProvider, AuthContext } from './AuthContext'
 import { useContext } from 'react'
+import { clearAccessToken, getAccessToken } from '@/lib/accessToken'
 
 // Mock the api module
 const mockGet = vi.fn()
@@ -44,6 +45,8 @@ describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    clearAccessToken()
+    mockGet.mockRejectedValue(new Error('No refresh session'))
   })
 
   it('provides user as null initially when no token', async () => {
@@ -91,7 +94,8 @@ describe('AuthContext', () => {
       expect(screen.getByTestId('user')).toHaveTextContent('Test User')
     })
 
-    expect(localStorage.getItem('accessToken')).toBe('token123')
+    expect(getAccessToken()).toBe('token123')
+    expect(localStorage.getItem('accessToken')).toBeNull()
   })
 
   it('clears user after logout', async () => {
@@ -134,6 +138,7 @@ describe('AuthContext', () => {
     })
 
     expect(localStorage.getItem('accessToken')).toBeNull()
+    expect(getAccessToken()).toBeNull()
   })
 
   it('isOwner returns true for owner role', async () => {
@@ -246,7 +251,8 @@ describe('AuthContext', () => {
       expect(mockPost).toHaveBeenCalledWith('/team/switch-cafe', { cafeId: 'cafe456' })
     })
 
-    expect(localStorage.getItem('accessToken')).toBe('newtoken')
+    expect(getAccessToken()).toBe('newtoken')
+    expect(localStorage.getItem('accessToken')).toBeNull()
     expect(reloadMock).toHaveBeenCalled()
   })
 })

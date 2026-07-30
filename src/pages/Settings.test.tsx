@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import { BrowserRouter } from 'react-router-dom'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { BrowserRouter } from 'react-router'
 import { AuthContext } from '@/contexts/AuthContext'
 import userEvent from '@testing-library/user-event'
 import Settings from './Settings'
@@ -209,21 +209,21 @@ describe('Settings', () => {
       expect(screen.getByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
     })
 
-    await userEvent.click(screen.getByRole('button', { name: /edit cafe details/i }))
+    fireEvent.click(screen.getByRole('button', { name: /edit cafe details/i }))
 
     const suburb = await screen.findByLabelText(/^Suburb$/i)
-    await userEvent.type(suburb, 'Sea Point')
+    fireEvent.change(suburb, { target: { value: 'Sea Point' } })
 
     const postal = screen.getByLabelText(/^Postal Code$/i)
-    await userEvent.type(postal, '8005')
+    fireEvent.change(postal, { target: { value: '8005' } })
 
     const province = screen.getByLabelText(/^Province$/i) as HTMLSelectElement
-    await userEvent.selectOptions(province, 'Western Cape')
+    fireEvent.change(province, { target: { value: 'Western Cape' } })
 
-    await userEvent.type(screen.getByLabelText(/^Latitude$/i), '-33.9249')
-    await userEvent.type(screen.getByLabelText(/^Longitude$/i), '18.4241')
+    fireEvent.change(screen.getByLabelText(/^Latitude$/i), { target: { value: '-33.9249' } })
+    fireEvent.change(screen.getByLabelText(/^Longitude$/i), { target: { value: '18.4241' } })
 
-    await userEvent.click(screen.getByText('Save Cafe Details'))
+    fireEvent.click(screen.getByText('Save Cafe Details'))
 
     await waitFor(() => {
       expect(mockPut).toHaveBeenCalledWith(

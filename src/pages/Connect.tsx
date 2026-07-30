@@ -1,9 +1,15 @@
 import { useState, useRef, useEffect, type DragEvent, type ChangeEvent } from 'react'
 import { Upload, CheckCircle, AlertCircle, Clock, TrendingUp, LoaderCircle } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import { UploadHistoryCard } from '@/components/upload/UploadHistoryCard'
-import type { ColumnMapping, ItemsMode, StageUploadResponse } from '@/types/upload'
+import type {
+  ColumnMapping,
+  ItemsMode,
+  StageUploadResponse,
+  Upload as UploadRecord,
+  UploadRowError,
+} from '@/types/upload'
 
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -26,9 +32,28 @@ function extractErrorMsg(err: unknown, fallback: string): string {
 interface ImportResult {
   imported: number
   skipped: number
+  errors: number
   total: number
   firstDate: string
   lastDate: string
+  rowErrors: UploadRowError[]
+  maintenanceStatus?: 'not_started' | 'queued' | 'running' | 'completed' | 'partial_failure'
+  replayed?: boolean
+}
+
+interface ConfirmUploadResponse {
+  success: true
+  uploadId: string
+  stats: { imported: number; skipped: number; errors: number; totalRows: number }
+  dateRange?: {
+    firstDate?: string
+    lastDate?: string
+    firstDateKey?: string
+    lastDateKey?: string
+  }
+  rowErrors?: UploadRowError[]
+  maintenance?: UploadRecord['maintenance']
+  replayed?: boolean
 }
 
 interface DataStatus {
@@ -281,6 +306,108 @@ export default function Connect() {
   const [stageResponse, setStageResponse] = useState<StageUploadResponse | null>(null)
   const [stageErrorMsg, setStageErrorMsg] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const confirmationKeysRef = useRef(new Map<string, string>())
+
+  const confirmationKeyFor = (uploadId: string) => {
+    const existing = confirmationKeysRef.current.get(uploadId)
+    if (existing) return existing
+    const generated = typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    confirmationKeysRef.current.set(uploadId, generated)
+    return generated
+  }
+
+  const recoverCompletedConfirmation = async (
+    uploadId: string,
+    originalError: unknown
+  ): Promise<ConfirmUploadResponse> => {
+    const status = originalError && typeof originalError === 'object' && 'response' in originalError
+      ? (originalError as { response?: { status?: number } }).response?.status
+      : undefined
+    if (status != null && ![408, 504].includes(status)) throw originalError
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const { data } = await api.get<{ upload: UploadRecord }>(`/uploads/${uploadId}`, {
+          timeout: 10_000,
+        })
+        if (data.upload.status === 'completed') {
+          return {
+            success: true,
+            uploadId,
+            stats: data.upload.stats,
+            dateRange: data.upload.dateRange,
+            rowErrors: data.upload.rowErrors,
+            maintenance: data.upload.maintenance,
+            replayed: true,
+          }
+        }
+        if (data.upload.status !== 'parsing') break
+      } catch {
+        // A transient status-read failure should not hide a commit that may
+        // already have succeeded. Retry within this short bounded window.
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    }
+    throw originalError
+  }
+
+  const confirmUpload = async (
+    uploadId: string,
+    columnMapping: ColumnMapping,
+    itemsMode: ItemsMode,
+    allowPartialImport = false
+  ): Promise<ConfirmUploadResponse> => {
+    try {
+      const { data } = await api.post<ConfirmUploadResponse>(
+        `/uploads/${uploadId}/confirm`,
+        { columnMapping, itemsMode, allowPartialImport },
+        {
+          timeout: 120_000,
+          headers: { 'Idempotency-Key': confirmationKeyFor(uploadId) },
+        }
+      )
+      return data
+    } catch (error) {
+      const response = error && typeof error === 'object' && 'response' in error
+        ? (error as {
+            response?: {
+              status?: number
+              data?: { details?: { errors?: number; totalRows?: number } }
+            }
+          }).response
+        : undefined
+      if (response?.status === 422 && !allowPartialImport) {
+        const failed = response.data?.details?.errors
+        const total = response.data?.details?.totalRows
+        const proceed = window.confirm(
+          `${failed ?? 'Many'} of ${total ?? 'the'} rows could not be imported. ` +
+          'Import only the valid rows anyway? You can review the rejected-row report afterward.'
+        )
+        if (proceed) return confirmUpload(uploadId, columnMapping, itemsMode, true)
+        throw error
+      }
+      return recoverCompletedConfirmation(uploadId, error)
+    }
+  }
+
+  const finishConfirmation = (confirmed: ConfirmUploadResponse) => {
+    setResult({
+      imported: confirmed.stats.imported,
+      skipped: confirmed.stats.skipped,
+      errors: confirmed.stats.errors,
+      total: confirmed.stats.totalRows,
+      firstDate: confirmed.dateRange?.firstDateKey ?? confirmed.dateRange?.firstDate ?? '',
+      lastDate: confirmed.dateRange?.lastDateKey ?? confirmed.dateRange?.lastDate ?? '',
+      rowErrors: confirmed.rowErrors || [],
+      maintenanceStatus: confirmed.maintenance?.status,
+      replayed: confirmed.replayed,
+    })
+    setUploadState('success')
+    setHistoryRefreshKey((key) => key + 1)
+    setLastUpload(new Date().toISOString())
+  }
 
   // ── Fetch data status ────────────────────────────────────────────
   const fetchDataStatus = async (signal?: AbortSignal) => {
@@ -356,23 +483,14 @@ export default function Connect() {
           setUploadPhase('validating')
           setProgress(75)
         }, 600)
-        const confirmRes = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
-          `/uploads/${data.uploadId}/confirm`,
-          { columnMapping: data.columnMapping, itemsMode: data.itemsMode },
-          { timeout: 120_000 }
+        const confirmed = await confirmUpload(
+          data.uploadId,
+          data.columnMapping,
+          data.itemsMode
         )
         setUploadPhase('forecasting')
         setProgress(95)
-        setResult({
-          imported: confirmRes.data.stats.imported,
-          skipped: confirmRes.data.stats.skipped,
-          total: confirmRes.data.stats.totalRows,
-          firstDate: confirmRes.data.dateRange?.firstDate ?? '',
-          lastDate: confirmRes.data.dateRange?.lastDate ?? '',
-        })
-        setUploadState('success')
-        setHistoryRefreshKey((k) => k + 1)
-        setLastUpload(new Date().toISOString())
+        finishConfirmation(confirmed)
       }
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, 'Upload failed. Please try again.')
@@ -409,7 +527,7 @@ export default function Connect() {
 
   // Detect whether any of the uploaded date range is in the past
   const actualsWereFilled = result?.firstDate
-    ? new Date(result.firstDate) < new Date(new Date().toISOString().slice(0, 10))
+    ? parseDateOnly(result.firstDate) < parseDateOnly(toLocalDateOnly(new Date()))
     : false
 
   const importedDaysCount =
@@ -417,7 +535,7 @@ export default function Connect() {
       ? Math.max(
           1,
           Math.round(
-            (new Date(result.lastDate).getTime() - new Date(result.firstDate).getTime()) /
+            (parseDateOnly(result.lastDate).getTime() - parseDateOnly(result.firstDate).getTime()) /
               86400000
           ) + 1
         )
@@ -452,7 +570,8 @@ export default function Connect() {
               <CardTitle>Upload Sales Data</CardTitle>
             </div>
             <CardDescription>
-              Upload a POS CSV or XLSX export. Unknown formats are mapped automatically when possible.
+              Upload a POS CSV or XLSX export. Unknown formats can use AI-assisted mapping when permitted;
+              a new AI mapping uses 10 Guava Credits.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -521,11 +640,18 @@ export default function Connect() {
                 <div className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 text-guava-green shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <p className="text-text font-medium mb-1">Import successful</p>
-                    <p className="text-muted text-sm mb-4">
-                      Your transaction data has been processed and forecasts are being generated.
+                    <p className="text-text font-medium mb-1">
+                      {result.errors > 0 ? 'Import completed with rejected rows' : 'Import successful'}
                     </p>
-                    <div className="grid grid-cols-3 gap-3 mb-4">
+                    <p className="text-muted text-sm mb-4">
+                      Your committed transaction data is safe. Forecast maintenance continues in the background when needed.
+                    </p>
+                    {result.replayed && (
+                      <p className="mb-4 rounded-lg border border-guava-green/20 bg-guava-green/5 px-3 py-2 text-xs text-guava-green">
+                        The original response was interrupted, so this completed import was recovered from server status.
+                      </p>
+                    )}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                       <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
                         <p className="text-guava-green text-xl font-bold">{result.imported.toLocaleString()}</p>
                         <p className="text-muted text-xs">imported</p>
@@ -535,14 +661,39 @@ export default function Connect() {
                         <p className="text-muted text-xs">skipped</p>
                       </div>
                       <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
+                        <p className={cn('text-xl font-bold', result.errors > 0 ? 'text-amber-300' : 'text-muted')}>
+                          {result.errors.toLocaleString()}
+                        </p>
+                        <p className="text-muted text-xs">rejected</p>
+                      </div>
+                      <div className="bg-[#111111] border border-border rounded-lg p-3 text-center">
                         <p className="text-text text-xl font-bold">{result.total.toLocaleString()}</p>
                         <p className="text-muted text-xs">total rows</p>
                       </div>
                     </div>
                     {result.firstDate && result.lastDate && (
                       <p className="text-muted text-xs mb-4">
-                        Date range: {new Date(result.firstDate).toLocaleDateString('en-ZA')} → {new Date(result.lastDate).toLocaleDateString('en-ZA')}
+                        Date range: {parseDateOnly(result.firstDate).toLocaleDateString('en-ZA')} → {parseDateOnly(result.lastDate).toLocaleDateString('en-ZA')}
                       </p>
+                    )}
+                    {result.errors > 0 && (
+                      <div className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3" role="status">
+                        <p className="text-sm font-medium text-amber-200">
+                          {result.errors.toLocaleString()} row{result.errors === 1 ? '' : 's'} {result.errors === 1 ? 'was' : 'were'} not imported
+                        </p>
+                        <p className="mt-1 text-xs text-muted">
+                          Review Upload History for up to the first 50 rejected-row details.
+                        </p>
+                        {result.rowErrors.length > 0 && (
+                          <ul className="mt-2 space-y-1 text-xs text-amber-100">
+                            {result.rowErrors.slice(0, 5).map((rowError, index) => (
+                              <li key={`${rowError.rowNumber ?? 'row'}-${index}`}>
+                                {rowError.rowNumber ? `Row ${rowError.rowNumber}: ` : ''}{rowError.reason}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     )}
 
                     {/* What this did */}
@@ -569,7 +720,11 @@ export default function Connect() {
                         )}
                         <li className="flex items-start gap-2 text-muted text-sm">
                           <span className="text-guava-green mt-0.5">•</span>
-                          <span>Updated next 7-day forecasts using fresh data</span>
+                          <span>
+                            {result.maintenanceStatus === 'completed'
+                              ? 'Refreshed forecast inputs and the next planning week'
+                              : 'Queued a durable forecast and actuals refresh'}
+                          </span>
                         </li>
                       </ul>
                     </div>
@@ -620,6 +775,13 @@ export default function Connect() {
           initialMapping={stageResponse.columnMapping}
           initialItemsMode={stageResponse.itemsMode}
           errorMessage={stageErrorMsg}
+          assistiveNotice={
+            stageResponse.mappingAssistedByAi
+              ? stageResponse.mappingCreditsUsed
+                ? `AI suggested the preselected column matches and used ${stageResponse.mappingCreditsUsed} Guava Credits. Review every match before importing.`
+                : 'AI suggested the preselected column matches without a new credit charge. Review every match before importing.'
+              : null
+          }
           onCancel={() => {
             setStageResponse(null)
             setStageErrorMsg(null)
@@ -634,23 +796,14 @@ export default function Connect() {
                 setUploadPhase('validating')
                 setProgress(75)
               }, 600)
-              const res = await api.post<{ stats: { imported: number; skipped: number; errors: number; totalRows: number }; dateRange?: { firstDate?: string; lastDate?: string } }>(
-                `/uploads/${stageResponse.uploadId}/confirm`,
-                { columnMapping: mapping, itemsMode },
-                { timeout: 120_000 }
+              const confirmed = await confirmUpload(
+                stageResponse.uploadId,
+                mapping,
+                itemsMode
               )
               setUploadPhase('forecasting')
               setProgress(95)
-              setResult({
-                imported: res.data.stats.imported,
-                skipped: res.data.stats.skipped,
-                total: res.data.stats.totalRows,
-                firstDate: res.data.dateRange?.firstDate ?? '',
-                lastDate: res.data.dateRange?.lastDate ?? '',
-              })
-              setUploadState('success')
-              setHistoryRefreshKey((k) => k + 1)
-              setLastUpload(new Date().toISOString())
+              finishConfirmation(confirmed)
               setStageResponse(null)
               setStageErrorMsg(null)
             } catch (err: unknown) {

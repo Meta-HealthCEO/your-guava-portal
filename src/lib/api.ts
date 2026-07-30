@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { clearAccessToken, getAccessToken, setAccessToken } from './accessToken'
 
 const REQUEST_TIMEOUT_MS = 20_000
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
@@ -26,6 +27,14 @@ const api = axios.create({
   withCredentials: true,
   timeout: REQUEST_TIMEOUT_MS,
 })
+
+// Remove tokens left by earlier portal versions. Access tokens now live only
+// in module memory; the durable session is the HttpOnly refresh cookie.
+try {
+  localStorage.removeItem('accessToken')
+} catch {
+  // Storage can be unavailable in hardened/private browser contexts.
+}
 
 const REFRESH_EXCLUDED_PATHS = new Set([
   '/auth/login',
@@ -64,7 +73,7 @@ function refreshAccessToken() {
         if (!token || typeof token !== 'string') {
           throw new Error('Refresh response did not include an access token')
         }
-        localStorage.setItem('accessToken', token)
+        setAccessToken(token)
         return token
       })
       .finally(() => {
@@ -110,7 +119,7 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
     }
   }
 
-  let response = await send(localStorage.getItem('accessToken'))
+  let response = await send(getAccessToken())
   if (response.status !== 401 || !shouldAttemptRefresh(path)) return response
 
   try {
@@ -118,15 +127,15 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
     response = await send(token)
     return response
   } catch (error) {
-    localStorage.removeItem('accessToken')
+    clearAccessToken()
     window.location.assign('/login')
     throw error
   }
 }
 
-// Request interceptor: attach access token from localStorage
+// Request interceptor: attach the short-lived access token from module memory.
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('accessToken')
+  const token = getAccessToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -146,8 +155,10 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`
         return api(original)
       } catch (refreshError) {
-        localStorage.removeItem('accessToken')
-        window.location.href = '/login'
+        clearAccessToken()
+        if (normaliseApiPath(original.url) !== '/auth/me') {
+          window.location.href = '/login'
+        }
         return Promise.reject(refreshError)
       }
     }

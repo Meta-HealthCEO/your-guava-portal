@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ComponentType, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router'
 import {
   AlertCircle,
   ArrowRight,

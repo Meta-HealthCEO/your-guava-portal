@@ -16,13 +16,14 @@ import {
   Trash2,
   Edit3,
 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import api, { authenticatedFetch } from '@/lib/api'
+import { publishGuavaCredits, type GuavaCreditSnapshot } from '@/lib/creditEvents'
 import { secureRandomId } from '@/lib/idempotency'
 import { cn } from '@/lib/utils'
 import { getInsightChatStorageKeys, readScopedStorage, writeScopedStorage } from '@/lib/chatStorage'
@@ -47,8 +48,8 @@ interface InsightReadResponse {
 }
 
 interface InsightRefreshResponse extends Omit<InsightReadResponse, 'cacheStatus'> {
-  guavaCredits?: { available?: number }
-  aiCredits?: { available?: number }
+  guavaCredits?: GuavaCreditSnapshot
+  aiCredits?: GuavaCreditSnapshot
   meta?: { replayed?: boolean; coalesced?: boolean }
 }
 
@@ -144,7 +145,14 @@ function sortChats(chats: InsightChat[]) {
 function mergeChats(primary: InsightChat[], fallback: InsightChat[]) {
   const byId = new Map<string, InsightChat>()
   fallback.forEach((chat) => byId.set(chat._id, chat))
-  primary.forEach((chat) => byId.set(chat._id, chat))
+  primary.forEach((chat) => {
+    const cached = byId.get(chat._id)
+    byId.set(chat._id, {
+      ...cached,
+      ...chat,
+      messages: chat.messages.length > 0 ? chat.messages : cached?.messages || [],
+    })
+  })
   return sortChats(Array.from(byId.values()))
 }
 
@@ -450,7 +458,7 @@ function ChatComposer({
             <Database className="h-4 w-4" />
           </button>
           <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-[#666666] sm:inline">Guava AI business analyst</span>
+            <span className="text-xs text-[#777777]">3 credits per answer</span>
             <Button type="submit" size="icon" disabled={!input.trim() || isChatLoading} aria-label="Send message">
               <Send className="w-4 h-4" />
             </Button>
@@ -470,8 +478,10 @@ function ChatHistoryPanel({
   chats,
   activeChatId,
   isLoading,
+  hasMore,
   notice,
   onNewChat,
+  onLoadMore,
   onSelectChat,
   onRenameChat,
   onArchiveChat,
@@ -480,9 +490,11 @@ function ChatHistoryPanel({
   chats: InsightChat[]
   activeChatId: string | null
   isLoading: boolean
+  hasMore: boolean
   notice: string | null
   onNewChat: () => void
-  onSelectChat: (chat: InsightChat) => void
+  onLoadMore: () => void | Promise<void>
+  onSelectChat: (chat: InsightChat) => void | Promise<void>
   onRenameChat: (chat: InsightChat) => void
   onArchiveChat: (chat: InsightChat, archived: boolean) => void
   onDeleteChat: (chat: InsightChat) => void
@@ -571,6 +583,18 @@ function ChatHistoryPanel({
             {archivedChats.map(renderChat)}
           </div>
         )}
+        {hasMore && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => onLoadMore()}
+            disabled={isLoading}
+          >
+            {isLoading ? 'Loading...' : 'Load older chats'}
+          </Button>
+        )}
       </CardContent>
     </Card>
   )
@@ -618,6 +642,8 @@ export default function Insights() {
   const [chats, setChats] = useState<InsightChat[]>(() => loadLocalChatList(listStorageKey, storageScopeId))
   const [activeChatId, setActiveChatId] = useState<string | null>(initialStoredChat?.activeChatId || null)
   const [isChatsLoading, setIsChatsLoading] = useState(false)
+  const [chatPage, setChatPage] = useState(1)
+  const [hasMoreChats, setHasMoreChats] = useState(false)
   const [contextStats, setContextStats] = useState<ChatContextStats | null>(initialStoredChat?.contextStats || null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatScrollRef = useRef<HTMLDivElement>(null)
@@ -630,6 +656,7 @@ export default function Insights() {
   const contextStatsRef = useRef<ChatContextStats | null>(contextStats)
   const isChatLoadingRef = useRef(false)
   const insightRefreshKeyRef = useRef<string | null>(null)
+  const activeStreamAbortRef = useRef<AbortController | null>(null)
   const didInitialChatSelectionRef = useRef(false)
   const hasConversation = messages.some((message) => message.id !== 'welcome')
   const hasConversationRef = useRef(hasConversation)
@@ -719,6 +746,28 @@ export default function Insights() {
     requestScrollToBottom('auto')
   }, [cancelAssistantTyping, requestScrollToBottom, setActiveChat, setTrackedMessages])
 
+  const openChat = useCallback(async (chat: InsightChat) => {
+    if (isLocalChat(chat._id)) {
+      applyChat(chat)
+      return
+    }
+
+    // Cached scoped messages keep selection responsive, while the detail read
+    // remains authoritative and prevents list responses from carrying every
+    // conversation transcript.
+    if (chat.messages.length > 0) applyChat(chat)
+    try {
+      const { data } = await api.get(`/insight-chats/${chat._id}`)
+      const detailedChat = withMessageIds(data.chat)
+      setChats((current) => mergeChats([detailedChat], current))
+      applyChat(detailedChat)
+    } catch {
+      if (chat.messages.length === 0) {
+        setChatNotice('Could not load this chat. Please try again.')
+      }
+    }
+  }, [applyChat])
+
   const applyInsightPayload = useCallback((
     data: { insights?: unknown; generatedAt?: unknown },
     nextCacheStatus: InsightCacheStatus
@@ -770,11 +819,13 @@ export default function Insights() {
       const { data } = await api.post<InsightRefreshResponse>(
         '/forecasts/insights/refresh',
         {},
-        { headers: { 'Idempotency-Key': idempotencyKey } }
+        { headers: { 'Idempotency-Key': idempotencyKey }, timeout: 90_000 }
       )
       applyInsightPayload(data, 'fresh')
       setRequiresRefresh(false)
-      setCreditsRemaining(data.guavaCredits?.available ?? data.aiCredits?.available ?? null)
+      const creditSnapshot = data.guavaCredits ?? data.aiCredits
+      setCreditsRemaining(creditSnapshot?.available ?? null)
+      publishGuavaCredits(creditSnapshot)
       insightRefreshKeyRef.current = null
       setInsightsError(false)
     } catch {
@@ -788,10 +839,14 @@ export default function Insights() {
   const loadChats = useCallback(async () => {
     setIsChatsLoading(true)
     try {
-      const { data } = await api.get('/insight-chats', { params: { archived: true } })
+      const { data } = await api.get('/insight-chats', {
+        params: { archived: true, page: 1, limit: 30 },
+      })
       const loadedChats: InsightChat[] = (data.chats || []).map(withMessageIds)
       const mergedChats = mergeChats(loadedChats, loadLocalChatList(listStorageKey, storageScopeId))
       setChats(mergedChats)
+      setChatPage(1)
+      setHasMoreChats(Boolean(data.pagination?.hasMore))
 
       if (isChatLoadingRef.current) return
 
@@ -799,9 +854,9 @@ export default function Insights() {
       const firstActive = mergedChats.find((chat) => !chat.archived)
 
       if (!hasConversationRef.current && savedActive) {
-        applyChat(savedActive)
+        await openChat(savedActive)
       } else if (!didInitialChatSelectionRef.current && !hasConversationRef.current && firstActive) {
-        applyChat(firstActive)
+        await openChat(firstActive)
       }
       didInitialChatSelectionRef.current = true
     } catch {
@@ -809,7 +864,26 @@ export default function Insights() {
     } finally {
       setIsChatsLoading(false)
     }
-  }, [applyChat, listStorageKey, storageScopeId])
+  }, [listStorageKey, openChat, storageScopeId])
+
+  const loadMoreChats = useCallback(async () => {
+    if (isChatsLoading || !hasMoreChats) return
+    setIsChatsLoading(true)
+    const nextPage = chatPage + 1
+    try {
+      const { data } = await api.get('/insight-chats', {
+        params: { archived: true, page: nextPage, limit: 30 },
+      })
+      const loadedChats: InsightChat[] = (data.chats || []).map(withMessageIds)
+      setChats((current) => mergeChats(loadedChats, current))
+      setChatPage(nextPage)
+      setHasMoreChats(Boolean(data.pagination?.hasMore))
+    } catch {
+      setChatNotice('Could not load older chats. Please try again.')
+    } finally {
+      setIsChatsLoading(false)
+    }
+  }, [chatPage, hasMoreChats, isChatsLoading])
 
   useEffect(() => {
     loadInsights()
@@ -885,6 +959,8 @@ export default function Insights() {
   }, [chats, listStorageKey, storageScopeId])
 
   useEffect(() => () => {
+    activeStreamAbortRef.current?.abort()
+    activeStreamAbortRef.current = null
     cancelAssistantTyping()
     if (scrollFrameRef.current != null) {
       window.cancelAnimationFrame(scrollFrameRef.current)
@@ -1019,7 +1095,14 @@ export default function Insights() {
     if (!eventName) return { type: 'ignored' as const }
     if (!dataText) throw new Error(`AI stream ${eventName} event had no data`)
 
-    let data: { text?: string; message?: string; contextStats?: ChatContextStats | null }
+    let data: {
+      text?: string
+      message?: string
+      contextStats?: ChatContextStats | null
+      guavaCredits?: GuavaCreditSnapshot
+      aiCredits?: GuavaCreditSnapshot
+      replayed?: boolean
+    }
     try {
       data = JSON.parse(dataText)
     } catch {
@@ -1032,6 +1115,9 @@ export default function Insights() {
     }
     if (eventName === 'done') {
       setContextStats(data.contextStats || null)
+      const creditSnapshot = data.guavaCredits ?? data.aiCredits
+      setCreditsRemaining(creditSnapshot?.available ?? null)
+      publishGuavaCredits(creditSnapshot)
       finishAssistantMessage(assistantId)
       return { type: 'done' as const, contextStats: data.contextStats || null }
     }
@@ -1044,10 +1130,12 @@ export default function Insights() {
   const streamAssistantMessage = async (
     assistantId: string,
     payloadMessages: Array<{ role: 'user' | 'assistant'; content: string }>,
-    onFirstDelta: () => void,
-    idempotencyKey: string
+    idempotencyKey: string,
+    chatId: string
   ) => {
     const controller = new AbortController()
+    activeStreamAbortRef.current?.abort()
+    activeStreamAbortRef.current = controller
     const timeoutId = window.setTimeout(() => controller.abort(), 90_000)
     try {
       const response = await authenticatedFetch('/forecasts/insights/chat/stream', {
@@ -1056,7 +1144,7 @@ export default function Insights() {
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey,
         },
-        body: JSON.stringify({ messages: payloadMessages }),
+        body: JSON.stringify({ chatId, messages: payloadMessages }),
         signal: controller.signal,
       })
       if (!response.ok || !response.body) {
@@ -1073,7 +1161,6 @@ export default function Insights() {
       const processEvent = (event: string) => {
         const parsed = handleStreamEvent(event, assistantId)
         if (parsed.type === 'delta') {
-          onFirstDelta()
           answer += parsed.text
         } else if (parsed.type === 'done') {
           sawDone = true
@@ -1102,6 +1189,9 @@ export default function Insights() {
       return { answer, contextStats: streamedContextStats }
     } finally {
       window.clearTimeout(timeoutId)
+      if (activeStreamAbortRef.current === controller) {
+        activeStreamAbortRef.current = null
+      }
     }
   }
 
@@ -1310,12 +1400,14 @@ export default function Insights() {
       const chatId = await ensureActiveChat(nextMessages)
       const payloadMessages = messagesForApi(nextMessages)
       const idempotencyKey = createChatRequestKey()
-      let streamedAny = false
 
       try {
-        const streamed = await streamAssistantMessage(assistantId, payloadMessages, () => {
-          streamedAny = true
-        }, idempotencyKey)
+        const streamed = await streamAssistantMessage(
+          assistantId,
+          payloadMessages,
+          idempotencyKey,
+          chatId
+        )
         const stats = streamed.contextStats || contextStatsRef.current
         const finalMessages = [
           ...nextMessages,
@@ -1323,18 +1415,18 @@ export default function Insights() {
         ]
         await saveChat(chatId, finalMessages, stats)
       } catch {
-        if (streamedAny) {
-          appendAssistantDelta(assistantId, '\n\nThe AI stream stopped before it finished.')
-          finishAssistantMessage(assistantId)
-          return
-        }
-
         const { data } = await api.post(
           '/forecasts/insights/chat',
-          { messages: payloadMessages },
+          { chatId, messages: payloadMessages },
           { headers: { 'Idempotency-Key': idempotencyKey } }
         )
+        const creditSnapshot = data.guavaCredits ?? data.aiCredits
+        setCreditsRemaining(creditSnapshot?.available ?? null)
+        publishGuavaCredits(creditSnapshot)
         setContextStats(data.contextStats || null)
+        // A retry with the same idempotency key either replays the already
+        // committed full result or safely reruns a refunded stream. Replace any
+        // partial stream rather than leaving a truncated paid answer visible.
         revealAssistantMessage(assistantId, data.answer || 'I could not generate an answer.')
         await saveChat(
           chatId,
@@ -1389,6 +1481,11 @@ export default function Insights() {
                 <Stat icon={MapPin} label="Locations" value={contextStats?.locations ?? '-'} />
                 <Stat icon={BarChart3} label="Forecasts" value={contextStats?.forecasts ?? '-'} />
               </div>
+              {contextStats?.contextWindow && (
+                <p className="pt-2 text-xs text-muted">
+                  Analysis window: {contextStats.contextWindow}
+                </p>
+              )}
             </CardHeader>
 
             <CardContent className="flex min-h-0 flex-1 flex-col p-0">
@@ -1467,9 +1564,11 @@ export default function Insights() {
               chats={chats}
               activeChatId={activeChatId}
               isLoading={isChatsLoading}
+              hasMore={hasMoreChats}
               notice={chatNotice}
               onNewChat={startNewChat}
-              onSelectChat={applyChat}
+              onLoadMore={loadMoreChats}
+              onSelectChat={openChat}
               onRenameChat={requestRenameChat}
               onArchiveChat={archiveChat}
               onDeleteChat={requestDeleteChat}

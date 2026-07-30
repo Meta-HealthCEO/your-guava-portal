@@ -10,7 +10,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import type { Forecast } from '@/types'
-import { parseDateOnly, toLocalDateOnly } from '@/lib/date'
+import { forecastDateKey, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -84,7 +84,7 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
   pastForecasts.forEach((f) => {
     const actualRevenue =
       hasMatchedActuals(f) && f.actualRevenue != null ? f.actualRevenue : undefined
-    pastMap.set(f.date.slice(0, 10), {
+    pastMap.set(forecastDateKey(f).slice(0, 10), {
       predicted: f.totalPredictedRevenue,
       actual: actualRevenue,
     })
@@ -92,8 +92,8 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
 
   // Combine into a single sorted 14-day series
   const allDates = new Set<string>()
-  pastForecasts.forEach((f) => allDates.add(f.date.slice(0, 10)))
-  futureForecasts.forEach((f) => allDates.add(f.date.slice(0, 10)))
+  pastForecasts.forEach((f) => allDates.add(forecastDateKey(f).slice(0, 10)))
+  futureForecasts.forEach((f) => allDates.add(forecastDateKey(f).slice(0, 10)))
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -105,7 +105,7 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
       d.setHours(0, 0, 0, 0)
       const isPast = d < today
       const past = pastMap.get(dateStr)
-      const future = futureForecasts.find((f) => f.date.slice(0, 10) === dateStr)
+      const future = futureForecasts.find((f) => forecastDateKey(f).slice(0, 10) === dateStr)
 
       const predicted = past?.predicted ?? future?.totalPredictedRevenue ?? 0
       const actual = past?.actual

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { AlertCircle, CheckCircle, Coffee, EyeOff, Link2, Plus, Save, Search, Sparkles, Tags } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { useAuth } from '@/hooks/useAuth'
 import api from '@/lib/api'
+import { publishGuavaCredits, type GuavaCreditSnapshot } from '@/lib/creditEvents'
+import { secureRandomId } from '@/lib/idempotency'
 import { cn } from '@/lib/utils'
 import type { SalesItem, SalesItemCategory } from '@/types'
 
@@ -62,17 +65,21 @@ function suggestionLabel(item: SalesItem) {
 }
 
 export default function MenuItems() {
+  const { user } = useAuth()
   const [tab, setTab] = useState<Tab>('review')
   const [items, setItems] = useState<SalesItem[]>([])
   const [reviewItems, setReviewItems] = useState<SalesItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [aiReviewId, setAiReviewId] = useState<string | null>(null)
+  const aiReviewKeysRef = useRef(new Map<string, string>())
   const [notice, setNotice] = useState<Notice>(null)
   const [query, setQuery] = useState('')
   const [mapTargets, setMapTargets] = useState<Record<string, string>>({})
   const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({})
   const [newItem, setNewItem] = useState({ name: '', category: 'coffee' as SalesItemCategory, expectedPrice: '', priceTolerancePct: '10' })
+  const canSpendCredits = user?.role === 'owner' || Boolean(user?.permissions?.canSpendCredits)
 
   const showNotice = (type: 'success' | 'error', message: string) => {
     setNotice({ type, message })
@@ -195,7 +202,7 @@ export default function MenuItems() {
     const suggestion = item.aiSuggestion
     if (!suggestion) return
     if (suggestion.action === 'map_to' && !suggestion.targetItemId) {
-      showNotice('error', 'The AI recommendation needs a menu item target before it can be approved.')
+      showNotice('error', 'This recommendation needs a menu item target before it can be approved.')
       return
     }
     setSavingId(item._id)
@@ -208,12 +215,58 @@ export default function MenuItems() {
         aliases: suggestion.aliases,
         notes: suggestion.reason,
       })
-      showNotice('success', 'AI recommendation approved.')
+      showNotice('success', 'Recommendation approved.')
       refresh()
     } catch (err) {
-      showNotice('error', apiError(err, 'Could not approve AI recommendation.'))
+      showNotice('error', apiError(err, 'Could not approve this recommendation.'))
     } finally {
       setSavingId(null)
+    }
+  }
+
+  const runAiReview = async (item: SalesItem) => {
+    if (!canSpendCredits) {
+      showNotice('error', 'Your role does not have permission to spend Guava credits.')
+      return
+    }
+
+    setAiReviewId(item._id)
+    const idempotencyKey =
+      aiReviewKeysRef.current.get(item._id) || `menu-review:${secureRandomId()}`
+    aiReviewKeysRef.current.set(item._id, idempotencyKey)
+    try {
+      const { data } = await api.post<{
+        items: SalesItem[]
+        guavaCredits?: GuavaCreditSnapshot
+        meta?: { paidAiUsed?: boolean; creditsCharged?: number }
+      }>(
+        '/items/reconciliation/suggestions',
+        { itemIds: [item._id] },
+        {
+          headers: { 'Idempotency-Key': idempotencyKey },
+          timeout: 90_000,
+        }
+      )
+      const reviewed = data.items?.[0]
+      if (reviewed) {
+        setReviewItems((current) =>
+          current.map((candidate) => candidate._id === reviewed._id ? reviewed : candidate)
+        )
+      }
+      aiReviewKeysRef.current.delete(item._id)
+      publishGuavaCredits(data.guavaCredits)
+      if (data.meta?.paidAiUsed) {
+        showNotice(
+          'success',
+          `AI review complete. ${data.meta.creditsCharged ?? 1} Guava credit used.`
+        )
+      } else {
+        showNotice('error', 'AI review was unavailable. A free smart check is shown and no credits were charged.')
+      }
+    } catch (err) {
+      showNotice('error', apiError(err, 'Could not run the AI review. No credits were charged.'))
+    } finally {
+      setAiReviewId(null)
     }
   }
 
@@ -374,13 +427,31 @@ export default function MenuItems() {
                           </div>
                         </div>
 
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface/50 px-3 py-2">
+                          <p className="text-xs text-muted">
+                            Smart checks are free. An AI review uses 1 Guava credit for this item.
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => runAiReview(item)}
+                            disabled={!canSpendCredits || aiReviewId === item._id}
+                            title={!canSpendCredits ? 'Your role cannot spend Guava credits' : undefined}
+                          >
+                            <Sparkles className={cn('h-3.5 w-3.5', aiReviewId === item._id && 'animate-pulse')} />
+                            {aiReviewId === item._id ? 'Reviewing...' : 'Run AI review (1 credit)'}
+                          </Button>
+                        </div>
+
                         {aiSuggestion && (
                           <div className="mt-3 rounded-lg border border-guava-green/20 bg-guava-green/10 p-3">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Sparkles className="h-3.5 w-3.5 text-guava-green" />
-                                  <p className="text-sm font-semibold text-text">AI recommendation</p>
+                                  <p className="text-sm font-semibold text-text">
+                                    {aiSuggestion.source === 'ai' ? 'AI recommendation' : 'Smart recommendation'}
+                                  </p>
                                   <Badge variant="secondary">{Math.round((aiSuggestion.confidence || 0) * 100)}% confidence</Badge>
                                   <Badge variant={aiSuggestion.source === 'ai' ? 'success' : 'secondary'}>
                                     {aiSuggestion.source === 'ai' ? 'AI' : 'Smart check'}

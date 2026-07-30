@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { AlertCircle, CheckCircle, Loader2, ShieldCheck } from 'lucide-react'
 import api from '@/lib/api'
 import { Button } from '@/components/ui/button'

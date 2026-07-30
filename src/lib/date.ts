@@ -22,6 +22,14 @@ export function parseDateOnly(value: string): Date {
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)
 }
 
+/**
+ * Returns the explicit cafe-local API calendar key when present. The fallback
+ * supports legacy responses and date-only test fixtures.
+ */
+export function forecastDateKey(value: { date: string; dateKey?: string }): string {
+  return value.dateKey || value.date
+}
+
 export function getLocalMonthBounds(date: Date): { startDate: string; endDate: string } {
   return {
     startDate: toLocalDateOnly(new Date(date.getFullYear(), date.getMonth(), 1, 12)),

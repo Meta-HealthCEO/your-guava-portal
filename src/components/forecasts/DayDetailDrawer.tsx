@@ -3,7 +3,7 @@ import { X, Coffee, Droplets, UtensilsCrossed, Waves, Sparkles } from 'lucide-re
 import { Separator } from '@/components/ui/separator'
 import { ModifierBreakdown } from './ModifierBreakdown'
 import type { Forecast } from '@/types'
-import { parseDateOnly } from '@/lib/date'
+import { forecastDateKey, parseDateOnly } from '@/lib/date'
 
 function getDayLabel(dateStr: string): string {
   const today = new Date()
@@ -73,12 +73,14 @@ interface Props {
 
 export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
-  const { date, items, totalPredictedRevenue } = forecast
+  const { items, totalPredictedRevenue } = forecast
+  const calendarDate = forecastDateKey(forecast)
+  const isClosed = forecast.availability?.status === 'closed'
 
   // Determine if this is a past day
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const forecastDate = parseDateOnly(date)
+  const forecastDate = parseDateOnly(calendarDate)
   forecastDate.setHours(0, 0, 0, 0)
   const isPast = forecastDate < today
 
@@ -179,9 +181,9 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
         <div className="sticky top-0 bg-surface border-b border-border px-5 py-4 flex items-start justify-between gap-4 z-10">
           <div>
             <p id="day-forecast-dialog-title" className="text-text font-semibold text-base">
-              {isPast ? 'Day review' : 'Day forecast'} — {getDayLabel(date)}
+              {isClosed ? 'Closed day' : isPast ? 'Day review' : 'Day forecast'} — {getDayLabel(calendarDate)}
             </p>
-            <p className="text-muted text-xs mt-0.5">{fullDate(date)}</p>
+            <p className="text-muted text-xs mt-0.5">{fullDate(calendarDate)}</p>
           </div>
           <button
             onClick={onClose}
@@ -195,7 +197,15 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
         <div className="px-5 py-4 space-y-5">
           {/* Revenue tile */}
           <div className="rounded-lg bg-[#111111] border border-border p-4">
-            {isPast && hasActuals && actualRevenue != null ? (
+            {isClosed ? (
+              <>
+                <p className="text-guava-red text-xs font-semibold uppercase tracking-wide">Closed</p>
+                <p className="mt-2 text-text text-lg font-semibold">No trading forecast</p>
+                <p className="mt-1 text-sm text-muted">
+                  {forecast.availability?.reason || 'This café is closed for the day.'}
+                </p>
+              </>
+            ) : isPast && hasActuals && actualRevenue != null ? (
               <>
                 <div className="flex items-end justify-between gap-4">
                   <div>
@@ -261,7 +271,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           </div>
 
           {/* ── PAST: What we missed ────────────────────────────────────────── */}
-          {isPast && worstMiss.length > 0 && (
+          {!isClosed && isPast && worstMiss.length > 0 && (
             <div>
               <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 What we missed
@@ -286,7 +296,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           )}
 
           {/* ── FUTURE: Why this prediction ────────────────────────────────── */}
-          {!isPast && (
+          {!isClosed && !isPast && (
             <div>
               <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 Why this prediction?
@@ -295,10 +305,10 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
             </div>
           )}
 
-          <Separator className="bg-border" />
+          {!isClosed && <Separator className="bg-border" />}
 
           {/* Item breakdown */}
-          <div>
+          {!isClosed && <div>
             <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
               Item breakdown
             </p>
@@ -364,10 +374,10 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                 })}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* ── FUTURE only: Inventory rollup + AI insight ─────────────────── */}
-          {!isPast && SHOW_INVENTORY_ROLLUP && (
+          {!isClosed && !isPast && SHOW_INVENTORY_ROLLUP && (
             <>
               <Separator className="bg-border" />
 

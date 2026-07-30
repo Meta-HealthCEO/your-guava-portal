@@ -1,6 +1,7 @@
 import { createContext, useEffect, useState, type ReactNode } from 'react'
 import api from '@/lib/api'
 import { clearInsightChatStorage } from '@/lib/chatStorage'
+import { clearAccessToken, setAccessToken } from '@/lib/accessToken'
 import type { User } from '@/types'
 
 interface AuthContextType {
@@ -9,8 +10,15 @@ interface AuthContextType {
   isOwner: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
-  register: (email: string, password: string, name: string, cafeName: string, orgName?: string) => Promise<void>
+  register: (
+    email: string,
+    password: string,
+    name: string,
+    cafeName: string,
+    orgName?: string
+  ) => Promise<{ email: string; message: string }>
   switchCafe: (cafeId: string) => Promise<void>
+  updateCurrentUser?: (user: User) => void
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null)
@@ -23,27 +31,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // On mount: validate session via /auth/me if token exists
+  // /auth/me bootstraps through the HttpOnly refresh cookie when a page load
+  // has no in-memory access token.
   useEffect(() => {
-    const token = localStorage.getItem('accessToken')
-    if (!token) {
-      setIsLoading(false)
-      return
+    let active = true
+    const restoreSession = async () => {
+      try {
+        const response = await api.get<User>('/auth/me')
+        if (active && response?.data) setUser(response.data)
+      } catch {
+        clearAccessToken()
+      } finally {
+        if (active) setIsLoading(false)
+      }
     }
-
-    api
-      .get<User>('/auth/me')
-      .then(({ data }) => {
-        setUser(data)
-      })
-      .catch(() => {
-        // Token invalid or expired — interceptor will try refresh.
-        // If refresh also fails the interceptor redirects to /login.
-        localStorage.removeItem('accessToken')
-      })
-      .finally(() => {
-        setIsLoading(false)
-      })
+    void restoreSession()
+    return () => {
+      active = false
+    }
   }, [])
 
   const login = async (email: string, password: string) => {
@@ -52,7 +57,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       password,
     })
     clearInsightChatStorage()
-    localStorage.setItem('accessToken', data.accessToken)
+    setAccessToken(data.accessToken)
     setUser(data.user)
   }
 
@@ -60,7 +65,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       await api.post('/auth/logout')
     } finally {
-      localStorage.removeItem('accessToken')
+      clearAccessToken()
       clearInsightChatStorage()
       setUser(null)
     }
@@ -73,7 +78,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     cafeName: string,
     orgName?: string
   ) => {
-    const { data } = await api.post<{ accessToken: string; user: User }>('/auth/register', {
+    const { data } = await api.post<{
+      verificationRequired: boolean
+      email: string
+      message: string
+    }>('/auth/register', {
       email,
       password,
       name,
@@ -81,8 +90,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       ...(orgName ? { orgName } : {}),
     })
     clearInsightChatStorage()
-    localStorage.setItem('accessToken', data.accessToken)
-    setUser(data.user)
+    clearAccessToken()
+    setUser(null)
+    return { email: data.email, message: data.message }
   }
 
   const switchCafe = async (cafeId: string) => {
@@ -90,16 +100,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
       '/team/switch-cafe',
       { cafeId }
     )
-    clearInsightChatStorage()
-    localStorage.setItem('accessToken', data.accessToken)
-    // Reload the page so all data refetches for the new cafe
+    setAccessToken(data.accessToken)
     window.location.reload()
   }
 
   const isOwner = user?.role === 'owner'
+  const updateCurrentUser = (nextUser: User) => setUser(nextUser)
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isOwner, login, logout, register, switchCafe }}>
+    <AuthContext.Provider
+      value={{ user, isLoading, isOwner, login, logout, register, switchCafe, updateCurrentUser }}
+    >
       {children}
     </AuthContext.Provider>
   )

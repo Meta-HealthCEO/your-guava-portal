@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router'
 import { AuthContext } from '@/contexts/AuthContext'
 import userEvent from '@testing-library/user-event'
 import Account from './Account'
 import type { ReactNode } from 'react'
+import type { User } from '@/types'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
@@ -109,7 +110,12 @@ function renderWithAuth(
   {
     logout = vi.fn().mockResolvedValue(undefined),
     role = 'owner',
-  }: { logout?: () => Promise<void>; role?: 'owner' | 'manager' } = {}
+    updateCurrentUser = vi.fn((_user: User) => undefined),
+  }: {
+    logout?: () => Promise<void>
+    role?: 'owner' | 'manager'
+    updateCurrentUser?: (user: User) => void
+  } = {}
 ) {
   const user = {
     id: 'user123',
@@ -132,6 +138,7 @@ function renderWithAuth(
           logout,
           register: vi.fn(),
           switchCafe: vi.fn(),
+          updateCurrentUser,
         }}
       >
         {ui}
@@ -207,9 +214,12 @@ describe('Account', () => {
   }, 10000)
 
   it('saves profile and organisation details', async () => {
-    mockPatch.mockResolvedValueOnce({ data: { success: true, account: accountPayload() } })
+    const updatedAccount = accountPayload()
+    updatedAccount.user.name = 'Updated Owner'
+    const updateCurrentUser = vi.fn((_user: User) => undefined)
+    mockPatch.mockResolvedValueOnce({ data: { success: true, account: updatedAccount } })
 
-    renderWithAuth(<Account />)
+    renderWithAuth(<Account />, { updateCurrentUser })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument()
@@ -226,6 +236,7 @@ describe('Account', () => {
       expect(mockPatch).toHaveBeenCalledWith('/account/profile', expect.objectContaining({
         name: 'Updated Owner',
       }))
+      expect(updateCurrentUser).toHaveBeenCalledWith(updatedAccount.user)
     })
   })
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 import {
   AlertCircle,
   CheckCircle,
@@ -180,7 +180,7 @@ function PlanCard({
 export type AccountSettingsSection = 'all' | 'account' | 'billing'
 
 export function AccountSettingsContent({ section = 'all' }: { section?: AccountSettingsSection }) {
-  const { user, isOwner, logout } = useAuth()
+  const { user, isOwner, logout, updateCurrentUser } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [account, setAccount] = useState<Account | null>(null)
@@ -283,6 +283,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
         : { name: profileName }
       const { data } = await api.patch<{ success: boolean; account: Account }>('/account/profile', profilePayload)
       setAccount(data.account)
+      updateCurrentUser?.(data.account.user)
       setProfileState('success')
       setIsEditingProfile(false)
       setTimeout(() => setProfileState('idle'), 3000)
@@ -516,7 +517,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                   <ReadOnlyField label="Full Name" value={displayName} />
                   <ReadOnlyField label="Email Address" value={displayEmail} />
                   <ReadOnlyField label="Organisation Name" value={displayOrgName} />
-                  <ReadOnlyField label="Billing Email" value={displayBillingEmail} />
+                  {isOwner && <ReadOnlyField label="Billing Email" value={displayBillingEmail} />}
                 </div>
                 <StatusBanner state={profileState} />
               </div>
@@ -599,7 +600,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="success">{account.organization.billingStatus || 'trialing'}</Badge>
                   <Badge variant="secondary">{account.organization.plan} plan</Badge>
-                  {account.organization.paymentMethod && (
+                  {isOwner && account.organization.paymentMethod && (
                     <Badge variant="outline">
                       {account.organization.paymentMethod.brand} ending {account.organization.paymentMethod.last4}
                     </Badge>
@@ -615,7 +616,11 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                 <p className="text-text text-2xl font-semibold mt-2">
                   {account ? `${account.usage.seats.used}/${account.usage.seats.included}` : '—'}
                 </p>
-                <p className="text-muted text-xs mt-1">Organisation users</p>
+                <p className="text-muted text-xs mt-1">
+                  {account?.usage.seats.pending
+                    ? `${account.usage.seats.active ?? 0} active, ${account.usage.seats.pending} invited`
+                    : 'Active organisation users'}
+                </p>
               </div>
               <div className="rounded-lg border border-border bg-[#111111] p-4">
                 <p className="text-muted text-sm">Locations</p>
@@ -704,7 +709,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              {(account?.plans || []).map((plan) => (
+              {(isOwner ? account?.plans || [] : []).map((plan) => (
                 <PlanCard
                   key={plan.id}
                   plan={plan}

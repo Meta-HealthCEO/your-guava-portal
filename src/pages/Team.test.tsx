@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router'
 import { AuthContext } from '@/contexts/AuthContext'
 import Team from './Team'
 import type { ReactNode } from 'react'
@@ -191,7 +191,8 @@ describe('Team', () => {
     await userEvent.click(addButtons[0])
 
     const checkboxes = screen.getAllByRole('checkbox')
-    expect(checkboxes.length).toBe(2)
+    expect(checkboxes.length).toBe(3)
+    expect(screen.getByText(/allow guava credit spending/i)).toBeInTheDocument()
   })
 
   it('submits a pending invitation without displaying secrets', async () => {
@@ -232,6 +233,7 @@ describe('Team', () => {
         name: 'New Manager',
         email: 'new@example.com',
         cafeIds: ['c1'],
+        canSpendCredits: false,
       })
     })
     expect(screen.getByText(/account is created after they accept/i)).toBeInTheDocument()
@@ -252,6 +254,7 @@ describe('Team', () => {
               cafeIds: [{ _id: 'c1', name: 'Blouberg Coffee' }],
               expiresAt: '2026-08-01T12:00:00.000Z',
               createdAt: '2026-07-30T12:00:00.000Z',
+              status: 'pending',
             }],
             seats: { plan: 'starter', used: 2, active: 1, pending: 1, included: 2, remaining: 0 },
           },
@@ -269,7 +272,7 @@ describe('Team', () => {
     renderWithAuth(<Team />)
 
     expect(await screen.findByText('Pending Manager')).toBeInTheDocument()
-    expect(screen.getByText(/1 seat reserved/i)).toBeInTheDocument()
+    expect(screen.getByText(/pending invitations reserve seats/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /resend/i }))
     await waitFor(() => {
@@ -277,6 +280,9 @@ describe('Team', () => {
     })
 
     await user.click(screen.getByRole('button', { name: /revoke/i }))
+    const revokeDialog = screen.getByRole('dialog', { name: /revoke invitation/i })
+    expect(mockDelete).not.toHaveBeenCalled()
+    await user.click(within(revokeDialog).getByRole('button', { name: /^revoke invitation$/i }))
     await waitFor(() => {
       expect(mockDelete).toHaveBeenCalledWith('/team/invitations/invite1')
     })

@@ -31,12 +31,19 @@ vi.mock('axios', () => ({
 const loadApi = async () => {
   vi.resetModules()
   const mod = await import('./api')
+  const tokenStore = await import('./accessToken')
   const requestHandler = axiosMock.requestUse.mock.calls[axiosMock.requestUse.mock.calls.length - 1]?.[0]
   const responseRejected = axiosMock.responseUse.mock.calls[axiosMock.responseUse.mock.calls.length - 1]?.[1]
   if (!requestHandler || !responseRejected) {
     throw new Error('API interceptors were not registered')
   }
-  return { api: mod.default, authenticatedFetch: mod.authenticatedFetch, requestHandler, responseRejected }
+  return {
+    api: mod.default,
+    authenticatedFetch: mod.authenticatedFetch,
+    requestHandler,
+    responseRejected,
+    ...tokenStore,
+  }
 }
 
 describe('api interceptors', () => {
@@ -55,17 +62,23 @@ describe('api interceptors', () => {
     })
   })
 
-  it('attaches the stored access token to outgoing requests', async () => {
-    const { requestHandler } = await loadApi()
-    localStorage.setItem('accessToken', 'access-token')
+  it('attaches the in-memory access token to outgoing requests', async () => {
+    const { requestHandler, setAccessToken } = await loadApi()
+    setAccessToken('access-token')
 
     const config = requestHandler({ headers: {} })
 
     expect(config.headers.Authorization).toBe('Bearer access-token')
   })
 
+  it('removes a legacy persisted access token during migration', async () => {
+    localStorage.setItem('accessToken', 'legacy-token')
+    await loadApi()
+    expect(localStorage.getItem('accessToken')).toBeNull()
+  })
+
   it('does not refresh when login credentials are rejected', async () => {
-    const { responseRejected } = await loadApi()
+    const { responseRejected, getAccessToken } = await loadApi()
     const error = {
       config: { url: '/auth/login', headers: {} },
       response: { status: 401, data: { message: 'Invalid credentials' } },
@@ -75,12 +88,12 @@ describe('api interceptors', () => {
 
     expect(axiosMock.post).not.toHaveBeenCalled()
     expect(axiosMock.instance).not.toHaveBeenCalled()
-    expect(localStorage.getItem('accessToken')).toBeNull()
+    expect(getAccessToken()).toBeNull()
   })
 
   it('does not refresh when change-password rejects the current password', async () => {
-    const { responseRejected } = await loadApi()
-    localStorage.setItem('accessToken', 'old-token')
+    const { responseRejected, setAccessToken, getAccessToken } = await loadApi()
+    setAccessToken('old-token')
     const error = {
       config: { url: 'http://localhost:5000/api/auth/change-password', headers: {} },
       response: { status: 401, data: { message: 'Current password is incorrect' } },
@@ -90,11 +103,11 @@ describe('api interceptors', () => {
 
     expect(axiosMock.post).not.toHaveBeenCalled()
     expect(axiosMock.instance).not.toHaveBeenCalled()
-    expect(localStorage.getItem('accessToken')).toBe('old-token')
+    expect(getAccessToken()).toBe('old-token')
   })
 
   it('refreshes and retries ordinary API requests after a 401', async () => {
-    const { responseRejected } = await loadApi()
+    const { responseRejected, getAccessToken } = await loadApi()
     axiosMock.post.mockResolvedValueOnce({ data: { accessToken: 'new-token' } })
     const original: { url: string; headers: Record<string, string> } = { url: '/account', headers: {} }
 
@@ -107,14 +120,15 @@ describe('api interceptors', () => {
       {},
       { withCredentials: true, timeout: 20_000 }
     )
-    expect(localStorage.getItem('accessToken')).toBe('new-token')
+    expect(getAccessToken()).toBe('new-token')
+    expect(localStorage.getItem('accessToken')).toBeNull()
     expect(original.headers.Authorization).toBe('Bearer new-token')
     expect(axiosMock.instance).toHaveBeenCalledWith(original)
   })
 
   it('refreshes and retries an authenticated streaming fetch exactly once', async () => {
-    const { authenticatedFetch } = await loadApi()
-    localStorage.setItem('accessToken', 'old-token')
+    const { authenticatedFetch, setAccessToken, getAccessToken } = await loadApi()
+    setAccessToken('old-token')
     axiosMock.post.mockResolvedValueOnce({ data: { accessToken: 'stream-token' } })
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ status: 401 })
@@ -127,7 +141,8 @@ describe('api interceptors', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const retriedInit = fetchMock.mock.calls[1][1] as RequestInit
     expect(new Headers(retriedInit.headers).get('Authorization')).toBe('Bearer stream-token')
-    expect(localStorage.getItem('accessToken')).toBe('stream-token')
+    expect(getAccessToken()).toBe('stream-token')
+    expect(localStorage.getItem('accessToken')).toBeNull()
     expect(axiosMock.post).toHaveBeenCalledWith(
       'http://localhost:5000/api/auth/refresh',
       {},
@@ -136,8 +151,13 @@ describe('api interceptors', () => {
   })
 
   it('shares one refresh rotation between Axios and streaming requests', async () => {
-    const { authenticatedFetch, responseRejected } = await loadApi()
-    localStorage.setItem('accessToken', 'old-token')
+    const {
+      authenticatedFetch,
+      responseRejected,
+      setAccessToken,
+      getAccessToken,
+    } = await loadApi()
+    setAccessToken('old-token')
     let finishRefresh!: (value: { data: { accessToken: string } }) => void
     axiosMock.post.mockImplementationOnce(() => new Promise((resolve) => {
       finishRefresh = resolve
@@ -160,7 +180,7 @@ describe('api interceptors', () => {
     expect(axiosMock.post).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(axiosMock.instance).toHaveBeenCalledTimes(1)
-    expect(localStorage.getItem('accessToken')).toBe('shared-token')
+    expect(getAccessToken()).toBe('shared-token')
   })
 
   it('times out while waiting for streaming response headers', async () => {

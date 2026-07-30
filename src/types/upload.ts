@@ -36,6 +36,8 @@ export interface UploadRowError {
 export interface UploadDateRange {
   firstDate?: string;
   lastDate?: string;
+  firstDateKey?: string;
+  lastDateKey?: string;
 }
 
 export interface Upload {
@@ -57,6 +59,15 @@ export interface Upload {
   sampleRows?: Record<string, string>[];
   createdAt: string;
   completedAt?: string;
+  maintenance?: {
+    status: 'not_started' | 'queued' | 'running' | 'completed' | 'partial_failure';
+    attempts?: number;
+    errors?: string[];
+    startedAt?: string;
+    completedAt?: string;
+    nextRetryAt?: string;
+    retryExhaustedAt?: string;
+  };
 }
 
 export interface StageUploadResponse {
@@ -68,4 +79,6 @@ export interface StageUploadResponse {
   headers: string[];
   preview: Record<string, string>[];
   needsConfirmation: boolean;
+  mappingAssistedByAi?: boolean;
+  mappingCreditsUsed?: number;
 }

@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
-import { MemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router'
 import { TopToolbar } from './TopToolbar'
 import { AuthContext } from '@/contexts/AuthContext'
 import api from '@/lib/api'
+import { GUAVA_CREDITS_UPDATED_EVENT } from '@/lib/creditEvents'
 
 vi.mock('@/lib/api', () => ({
   default: { get: vi.fn() },
@@ -81,6 +82,21 @@ describe('TopToolbar', () => {
 
     expect(screen.getByText(/credits running low/i)).toBeInTheDocument()
     expect(screen.getByText(/42 Guava Credits available/i)).toBeInTheDocument()
+  })
+
+  it('keeps a post-spend credit event newer than an in-flight balance read', async () => {
+    renderToolbar({ available: 1234 })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(GUAVA_CREDITS_UPDATED_EVENT, {
+        detail: { available: 1200, used: 300 },
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /guava credits balance/i }))
+        .toHaveTextContent(/1\s?200/)
+    })
   })
 
   it('opens the user menu and signs out', async () => {

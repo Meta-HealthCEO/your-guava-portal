@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   Bell,
   ChevronDown,
@@ -9,6 +9,10 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import api from '@/lib/api'
+import {
+  GUAVA_CREDITS_UPDATED_EVENT,
+  type GuavaCreditSnapshot,
+} from '@/lib/creditEvents'
 import { cn } from '@/lib/utils'
 
 interface CreditBalance {
@@ -51,12 +55,16 @@ export function TopToolbar() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const toolbarRef = useRef<HTMLDivElement | null>(null)
+  const latestCreditSnapshotRef = useRef<GuavaCreditSnapshot | null>(null)
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const [credits, setCredits] = useState<CreditBalance | null>(null)
+  const [creditSnapshotOverride, setCreditSnapshotOverride] = useState<GuavaCreditSnapshot | null>(null)
   const [creditsLoading, setCreditsLoading] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
 
   useEffect(() => {
+    latestCreditSnapshotRef.current = null
+    setCreditSnapshotOverride(null)
     if (!user) {
       setCredits(null)
       return
@@ -79,10 +87,20 @@ export function TopToolbar() {
     api
       .get<CreditBalance>('/account/credits')
       .then(({ data }) => {
+        const latestSnapshot = latestCreditSnapshotRef.current
+        const resolvedData = latestSnapshot
+          ? {
+              ...data,
+              credits: {
+                ...data.credits,
+                ...latestSnapshot,
+              },
+            }
+          : data
         if (USE_CREDIT_CACHE) {
-          creditBalanceCache = { orgId, data, fetchedAt: Date.now() }
+          creditBalanceCache = { orgId, data: resolvedData, fetchedAt: Date.now() }
         }
-        if (!cancelled) setCredits(data)
+        if (!cancelled) setCredits(resolvedData)
       })
       .catch(() => {
         if (!cancelled) setCredits(null)
@@ -95,6 +113,29 @@ export function TopToolbar() {
       cancelled = true
     }
   }, [user?.orgId])
+
+  useEffect(() => {
+    const updateCredits = (event: Event) => {
+      const snapshot = (event as CustomEvent<GuavaCreditSnapshot>).detail
+      if (!snapshot) return
+      creditBalanceCache = null
+      latestCreditSnapshotRef.current = snapshot
+      setCreditSnapshotOverride(snapshot)
+      setCredits((current) => {
+        if (!current) return current
+        return {
+          ...current,
+          credits: {
+            ...current.credits,
+            ...snapshot,
+          },
+        }
+      })
+    }
+
+    window.addEventListener(GUAVA_CREDITS_UPDATED_EVENT, updateCredits)
+    return () => window.removeEventListener(GUAVA_CREDITS_UPDATED_EVENT, updateCredits)
+  }, [])
 
   useEffect(() => {
     const closeMenus = (event: MouseEvent) => {
@@ -130,7 +171,7 @@ export function TopToolbar() {
     }
   }
 
-  const availableCredits = credits?.credits?.available
+  const availableCredits = creditSnapshotOverride?.available ?? credits?.credits?.available
   const lowCredits = typeof availableCredits === 'number' && availableCredits <= 100
   const notificationCount = lowCredits ? 1 : 0
   const initials = initialsFor(user?.name, user?.email)

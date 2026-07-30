@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import {
   AlertCircle,
   ArrowDownRight,
@@ -33,6 +33,7 @@ const PERIODS = [
 ]
 
 const HISTORY_PAGE_SIZE = 30
+const HISTORY_BACKFILL_BATCH_SIZE = 14
 
 const currency = new Intl.NumberFormat('en-ZA', {
   style: 'currency',
@@ -140,6 +141,7 @@ export default function History() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
+  const [buildingHistory, setBuildingHistory] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -172,15 +174,29 @@ export default function History() {
     }
   }, [days, page, refreshNonce])
 
-  useEffect(() => {
-    if (loading || error || !meta?.pendingDays) return
-
-    const timer = window.setTimeout(() => {
-      setRefreshNonce((value) => value + 1)
-    }, history.length === 0 ? 3000 : 8000)
-
-    return () => window.clearTimeout(timer)
-  }, [error, history.length, loading, meta?.pendingDays])
+  const buildNextHistoryBatch = async () => {
+    if (buildingHistory) return
+    setBuildingHistory(true)
+    setError(null)
+    try {
+      const { data } = await api.get<ForecastHistoryResponse>('/forecasts/history', {
+        params: {
+          days,
+          page,
+          limit: HISTORY_PAGE_SIZE,
+          backfill: 'sync',
+          backfillLimit: meta?.backfill?.batchSize || HISTORY_BACKFILL_BATCH_SIZE,
+        },
+      })
+      setHistory(data.history || data.rows || [])
+      setMeta(data.meta)
+      setPagination(data.pagination || null)
+    } catch {
+      setError('The next history batch could not be built. Existing history is unchanged.')
+    } finally {
+      setBuildingHistory(false)
+    }
+  }
 
   const varianceTone = useMemo(() => {
     if (!meta || meta.variance === 0) return 'neutral'
@@ -206,7 +222,7 @@ export default function History() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2 text-sm text-[#777777]">
             <HistoryIcon className="h-4 w-4 text-guava-red" />
-            Prediction history from completed trading days
+            Live prediction history and clearly marked retrospective estimates
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {PERIODS.map((period) => (
@@ -242,15 +258,18 @@ export default function History() {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="font-medium text-guava-yellow">
-                  {history.length === 0 ? 'Preparing history' : 'Older history is still being prepared'}
+                  {history.length === 0 ? 'Preparing history' : 'More historical estimates are available'}
                 </p>
                 <p className="mt-1 text-sm text-muted">
-                  Showing {meta.totalRows} of {meta.totalTradingDays} completed trading days. Missing days are being built in the background.
+                  Showing {meta.totalRows} of {meta.totalTradingDays} completed trading days.
+                  Building a batch creates retrospective estimates marked as backtests; they are not original live predictions.
                 </p>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setRefreshNonce((value) => value + 1)}>
+              <Button variant="outline" size="sm" disabled={buildingHistory} onClick={buildNextHistoryBatch}>
                 <RefreshCw className="h-4 w-4" />
-                Refresh
+                {buildingHistory
+                  ? 'Building…'
+                  : `Build next ${meta.backfill?.batchSize || HISTORY_BACKFILL_BATCH_SIZE}`}
               </Button>
             </div>
           </div>
@@ -269,16 +288,35 @@ export default function History() {
 
         {!loading && !error && history.length > 0 && meta && (
           <>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+              {meta.liveAccuracy || meta.backtestAccuracy ? (
+                <>
+                  <StatPanel
+                    label="Live forecast accuracy"
+                    value={formatPercent(meta.liveAccuracy?.overallRevenueAccuracy)}
+                    detail={meta.liveAccuracy?.rowCount
+                      ? `${meta.liveAccuracy.rowCount} live day${meta.liveAccuracy.rowCount === 1 ? '' : 's'} · daily avg ${formatPercent(meta.liveAccuracy.avgDailyRevenueAccuracy)}`
+                      : 'No completed live forecasts in this period'}
+                  />
+                  <StatPanel
+                    label="Backtest accuracy"
+                    value={formatPercent(meta.backtestAccuracy?.overallRevenueAccuracy)}
+                    detail={meta.backtestAccuracy?.rowCount
+                      ? `${meta.backtestAccuracy.rowCount} retrospective day${meta.backtestAccuracy.rowCount === 1 ? '' : 's'} · daily avg ${formatPercent(meta.backtestAccuracy.avgDailyRevenueAccuracy)}`
+                      : 'No retrospective backtests in this period'}
+                  />
+                </>
+              ) : (
+                <StatPanel
+                  label="Combined accuracy"
+                  value={formatPercent(meta.overallRevenueAccuracy ?? meta.avgRevenueAccuracy)}
+                  detail={`Live/backtest split unavailable · daily avg ${formatPercent(meta.avgDailyRevenueAccuracy ?? meta.avgRevenueAccuracy)}`}
+                />
+              )}
+              <StatPanel label="Combined predicted" value={formatCurrency(meta.totalPredictedRevenue)} />
+              <StatPanel label="Combined actual" value={formatCurrency(meta.totalActualRevenue)} />
               <StatPanel
-                label="Overall accuracy"
-                value={formatPercent(meta.overallRevenueAccuracy ?? meta.avgRevenueAccuracy)}
-                detail={`Daily avg ${formatPercent(meta.avgDailyRevenueAccuracy ?? meta.avgRevenueAccuracy)}`}
-              />
-              <StatPanel label="Predicted" value={formatCurrency(meta.totalPredictedRevenue)} />
-              <StatPanel label="Actual" value={formatCurrency(meta.totalActualRevenue)} />
-              <StatPanel
-                label="Variance"
+                label="Combined variance"
                 value={`${formatCurrency(meta.variance)} (${formatPercent(meta.variancePct, true)})`}
                 tone={varianceTone}
               />
@@ -325,7 +363,14 @@ export default function History() {
 
                       return (
                         <tr key={`${row.forecastId}-${row.date}`} className="hover:bg-white/[0.03]">
-                          <td className="whitespace-nowrap px-4 py-3 font-medium text-text">{formatDate(row.date)}</td>
+                          <td className="whitespace-nowrap px-4 py-3 font-medium text-text">
+                            <div>{formatDate(row.dateKey || row.date)}</div>
+                            {row.origin === 'backfill' && (
+                              <span className="mt-1 inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-normal text-amber-200">
+                                Retrospective backtest
+                              </span>
+                            )}
+                          </td>
                           <td className="min-w-52 px-4 py-3 text-muted">
                             <div className="flex items-center gap-2">
                               <CloudRain className="h-4 w-4 shrink-0 text-[#777777]" />

@@ -6,6 +6,10 @@ export interface User {
   orgId: string
   cafeIds: string[]
   activeCafeId: string
+  emailVerified?: boolean
+  permissions?: {
+    canSpendCredits: boolean
+  }
 }
 
 export interface Organization {
@@ -26,6 +30,9 @@ export interface TeamMember {
   role: 'owner' | 'manager'
   cafeIds: { _id: string; name: string }[]
   createdAt: string
+  permissions?: {
+    canSpendCredits: boolean
+  }
 }
 
 export interface BillingPlan {
@@ -58,7 +65,7 @@ export interface CreditLedgerSummary {
 }
 
 export interface AccountUsage {
-  seats: { used: number; included: number; remaining: number }
+  seats: { used: number; active?: number; pending?: number; included: number; remaining: number }
   locations: { used: number; included: number; remaining: number }
   aiCredits: { included: number; bonus: number; used: number; available: number; resetAt: string | null }
   guavaCredits?: { included: number; bonus: number; used: number; available: number; resetAt: string | null }
@@ -140,6 +147,14 @@ export interface ForecastWeatherSignal {
 export interface Forecast {
   _id: string
   date: string
+  dateKey?: string
+  origin?: 'live' | 'backfill' | 'manual'
+  modelVersion?: string
+  trainingCutoff?: string
+  availability?: {
+    status: 'ready' | 'insufficient_data' | 'closed'
+    reason?: string
+  }
   items: ForecastItem[]
   signals: {
     weather: ForecastWeatherSignal
@@ -157,6 +172,13 @@ export interface Forecast {
   factorEntitlements?: ForecastFactorEntitlements
   calibration?: ForecastCalibration
   totalPredictedRevenue: number
+  forecastCoverage?: {
+    itemCount: number
+    storedItemCount: number
+    totalPredictedQty: number
+    includesAllRevenue: boolean
+    accuracyMethod?: string
+  }
   actualRevenue?: number | null
   actualTransactionCount?: number | null
   actualsUpdatedAt?: string | null
@@ -191,6 +213,10 @@ export interface ForecastCalibration {
 export interface ForecastHistoryRow {
   forecastId: string
   date: string
+  dateKey?: string
+  origin?: 'live' | 'backfill' | 'manual'
+  modelVersion?: string
+  trainingCutoff?: string
   predictedRevenue: number
   actualRevenue: number
   variance: number
@@ -221,6 +247,16 @@ export interface ForecastHistoryRow {
   actualsUpdatedAt?: string
 }
 
+export interface ForecastHistoryAccuracySummary {
+  rowCount: number
+  overallRevenueAccuracy: number | null
+  avgDailyRevenueAccuracy: number | null
+  totalPredictedRevenue: number
+  totalActualRevenue: number
+  variance: number
+  variancePct: number | null
+}
+
 export interface ForecastHistoryMeta {
   days: number
   startDate: string
@@ -231,13 +267,18 @@ export interface ForecastHistoryMeta {
   pendingDays: number
   isPartial: boolean
   backfill?: {
-    status: 'complete' | 'started' | 'running'
+    status: 'complete' | 'pending'
     pendingDays: number
     batchSize: number
+    resumable?: boolean
+    nextRequest?: string | null
   }
   overallRevenueAccuracy: number | null
   avgDailyRevenueAccuracy: number | null
   avgRevenueAccuracy: number | null
+  liveAccuracy?: ForecastHistoryAccuracySummary
+  backtestAccuracy?: ForecastHistoryAccuracySummary
+  combinedAccuracy?: ForecastHistoryAccuracySummary
   totalPredictedRevenue: number
   totalActualRevenue: number
   variance: number
@@ -400,6 +441,9 @@ export interface SalesItem {
     reason: string
     source: 'ai' | 'rules'
     needsApproval: boolean
+    aiCreditsCharged?: number
+    replayed?: boolean
+    aiUnavailableReason?: 'insufficient_credits' | 'permission_required' | 'provider_unavailable'
   }
 }
 

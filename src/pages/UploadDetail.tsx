@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router'
 import { useAuth } from '@/hooks/useAuth'
 import { Loader2, Download, Trash2, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
@@ -42,6 +42,22 @@ const extractApiError = (err: unknown, fallback: string) => {
     if (msg) return msg
   }
   return fallback
+}
+
+const severePartialDetails = (err: unknown) => {
+  if (!err || typeof err !== 'object' || !('response' in err)) return null
+  const response = (err as {
+    response?: {
+      status?: number
+      data?: {
+        code?: string
+        details?: { errors?: number; totalRows?: number }
+      }
+    }
+  }).response
+
+  if (response?.status !== 422) return null
+  return response.data?.details || {}
 }
 
 const normalisePagination = (
@@ -91,6 +107,33 @@ export default function UploadDetail() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [remapping, setRemapping] = useState(false)
   const [remapError, setRemapError] = useState<string | null>(null)
+
+  const saveRemapping = async (
+    mapping: ColumnMapping,
+    itemsMode: ItemsMode,
+    allowPartialImport = false
+  ): Promise<void> => {
+    try {
+      await api.patch(`/uploads/${id}/mapping`, {
+        columnMapping: mapping,
+        itemsMode,
+        allowPartialImport,
+      })
+    } catch (err: unknown) {
+      const details = severePartialDetails(err)
+      if (details && !allowPartialImport) {
+        const proceed = window.confirm(
+          `${details.errors ?? 'Many'} of ${details.totalRows ?? 'the'} rows could not be imported. ` +
+          'Import only the valid rows anyway? You can review the rejected-row report afterward.'
+        )
+        if (proceed) {
+          await saveRemapping(mapping, itemsMode, true)
+          return
+        }
+      }
+      throw err
+    }
+  }
 
   const setRowsFromResponse = (
     data: { transactions: Row[]; pagination?: Partial<RowsPagination> },
@@ -432,7 +475,7 @@ export default function UploadDetail() {
           onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
             try {
               setRemapError(null)
-              await api.patch(`/uploads/${id}/mapping`, { columnMapping: mapping, itemsMode })
+              await saveRemapping(mapping, itemsMode)
               window.location.reload()
             } catch (err: unknown) {
               setRemapError(extractApiError(err, 'Re-map failed. Check the column choices and try again.'))

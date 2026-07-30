@@ -33,6 +33,25 @@ describe('DayCard', () => {
     expect(screen.getByText(/24°C/)).toBeInTheDocument()
   })
 
+  it('uses the explicit cafe-local dateKey instead of the UTC instant prefix', () => {
+    render(
+      <DayCard
+        forecast={{
+          ...mockForecast,
+          _id: 'f-date-contract',
+          date: '2026-03-29T22:00:00.000Z',
+          dateKey: '2026-03-30',
+        }}
+        weekAvg={20000}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/30 Mar/i)).toBeInTheDocument()
+    expect(screen.queryByText(/29 Mar/i)).not.toBeInTheDocument()
+  })
+
   it('review mode shows actual qty and delta when actuals are present', () => {
     const forecastWithActuals = {
       ...mockForecast,
@@ -94,5 +113,31 @@ describe('DayCard', () => {
 
     expect(screen.getByText(/Awaiting sales data/i)).toBeInTheDocument()
     expect(screen.queryByText(/actual: 0/)).not.toBeInTheDocument()
+  })
+
+  it('renders a closed day as a valid planning state with its reason', () => {
+    render(
+      <DayCard
+        forecast={{
+          ...mockForecast,
+          _id: 'f-closed',
+          date: '2026-04-05',
+          availability: {
+            status: 'closed',
+            reason: 'Scheduled weekly closure',
+          },
+          totalPredictedRevenue: 0,
+          items: [],
+        }}
+        weekAvg={0}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.getByText('Closed')).toBeInTheDocument()
+    expect(screen.getByText('No trading forecast')).toBeInTheDocument()
+    expect(screen.getByText('Scheduled weekly closure')).toBeInTheDocument()
+    expect(screen.queryByText(/Awaiting sales data/i)).not.toBeInTheDocument()
   })
 })

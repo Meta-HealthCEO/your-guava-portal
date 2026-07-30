@@ -236,4 +236,58 @@ describe('Connect', () => {
 
     expect(screen.getByText('Map your CSV columns')).toBeInTheDocument()
   })
+
+  it('recovers a completed import after the confirmation response is lost', async () => {
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/transactions/upload') {
+        return Promise.resolve({
+          data: {
+            uploadId: 'mock-id',
+            posType: 'yoco',
+            columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+            itemsMode: 'packed',
+            headers: ['Date', 'Items', 'Total'],
+            preview: [],
+            needsConfirmation: false,
+          },
+        })
+      }
+      if (url === '/uploads/mock-id/confirm') return Promise.reject(new Error('timeout'))
+      return Promise.reject(new Error('Unknown URL'))
+    })
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/transactions/status')) {
+        return Promise.resolve({
+          data: { data: { latestDataDate: null, earliestDataDate: null, daysSinceLatest: null, totalTransactions: 0, coverage30d: [] } },
+        })
+      }
+      if (url === '/uploads/mock-id') {
+        return Promise.resolve({
+          data: {
+            upload: {
+              _id: 'mock-id',
+              status: 'completed',
+              stats: { imported: 12, skipped: 0, errors: 1, totalRows: 13 },
+              dateRange: {},
+              rowErrors: [{ rowNumber: 4, reason: 'Invalid total' }],
+              maintenance: { status: 'queued' },
+            },
+          },
+        })
+      }
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Connect />)
+    await screen.findByText(/drop your sales csv/i)
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, {
+      target: { files: [new File(['Date,Items,Total'], 'data.csv', { type: 'text/csv' })] },
+    })
+
+    expect(await screen.findByText(/recovered from server status/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 row was not imported/i)).toBeInTheDocument()
+    expect(screen.getByText(/Row 4: Invalid total/i)).toBeInTheDocument()
+  })
 })

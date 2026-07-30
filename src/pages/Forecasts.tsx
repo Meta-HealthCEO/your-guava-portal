@@ -23,6 +23,15 @@ interface AccuracyPayload {
   }[]
 }
 
+interface WeekMeta {
+  expectedDays: number
+  generatedDays: number
+  failedDays: { dateKey: string; message: string }[]
+  isPartial: boolean
+  insufficientData: boolean
+  insufficientDays: string[]
+}
+
 function formatTrainingDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-ZA', {
     day: 'numeric',
@@ -35,6 +44,7 @@ export default function Forecasts() {
   const [futureForecasts, setFutureForecasts] = useState<Forecast[]>([])
   const [pastForecasts, setPastForecasts] = useState<Forecast[]>([])
   const [accuracy, setAccuracy] = useState<AccuracyPayload | null>(null)
+  const [weekMeta, setWeekMeta] = useState<WeekMeta | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [supportingDataError, setSupportingDataError] = useState(false)
@@ -48,7 +58,7 @@ export default function Forecasts() {
     setSupportingDataError(false)
 
     Promise.allSettled([
-      api.get<{ forecasts: Forecast[] }>('/forecasts/week', { signal: controller.signal }),
+      api.get<{ forecasts: Forecast[]; meta?: WeekMeta }>('/forecasts/week', { signal: controller.signal }),
       api.get<{ forecasts: Forecast[] }>('/forecasts/recent', { signal: controller.signal }),
       api.get<AccuracyPayload>('/forecasts/accuracy', { signal: controller.signal }),
     ]).then(([weekResult, recentResult, accuracyResult]) => {
@@ -59,6 +69,7 @@ export default function Forecasts() {
       }
 
       setFutureForecasts(weekResult.value.data.forecasts || [])
+      setWeekMeta(weekResult.value.data.meta || null)
       setPastForecasts(recentResult.status === 'fulfilled' ? recentResult.value.data.forecasts || [] : [])
       setAccuracy(accuracyResult.status === 'fulfilled' ? accuracyResult.value.data : null)
       setSupportingDataError(recentResult.status === 'rejected' || accuracyResult.status === 'rejected')
@@ -69,21 +80,33 @@ export default function Forecasts() {
     return () => controller.abort()
   }, [reloadKey])
 
-  const weekTotal = futureForecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
-  const peakDay = futureForecasts.reduce(
+  const usableForecasts = futureForecasts.filter(
+    (forecast) => forecast.availability?.status !== 'insufficient_data'
+  )
+  const tradingForecasts = usableForecasts.filter(
+    (forecast) => forecast.availability?.status !== 'closed'
+  )
+  const allForecastsInsufficient =
+    futureForecasts.length > 0 && usableForecasts.length === 0
+  const allForecastGenerationFailed =
+    futureForecasts.length === 0 &&
+    weekMeta?.isPartial === true &&
+    (weekMeta.failedDays?.length || 0) > 0
+  const weekTotal = usableForecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
+  const peakDay = tradingForecasts.reduce(
     (best, f) => (!best || f.totalPredictedRevenue > best.totalPredictedRevenue ? f : best),
     null as Forecast | null
   )
-  const weekAvg = futureForecasts.length > 0 ? weekTotal / futureForecasts.length : 0
-  const latestTrainingDate = futureForecasts
-    .map((f) => f.trainingData?.lastTransactionDate)
+  const weekAvg = tradingForecasts.length > 0 ? weekTotal / tradingForecasts.length : 0
+  const oldestTrainingDate = futureForecasts
+    .map((forecast) => forecast.trainingData?.lastTransactionDate)
     .filter((date): date is string => Boolean(date))
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0]
-  const freshestStaleDays = futureForecasts
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0]
+  const worstStaleDays = futureForecasts
     .map((f) => f.trainingData?.staleDays)
     .filter((days): days is number => typeof days === 'number')
-    .sort((a, b) => a - b)[0]
-  const showStaleDataNotice = latestTrainingDate != null && freshestStaleDays != null && freshestStaleDays > 30
+    .sort((a, b) => b - a)[0]
+  const showStaleDataNotice = oldestTrainingDate != null && worstStaleDays != null && worstStaleDays > 30
 
   // Look up selected forecast from either array
   const selectedForecast =
@@ -120,16 +143,40 @@ export default function Forecasts() {
           </div>
         )}
 
-        {!loading && !loadError && futureForecasts.length === 0 && (
+        {!loading && !loadError && allForecastGenerationFailed && (
+          <div className="rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-4" role="alert">
+            <p className="text-sm text-red-300">
+              No forecast days could be generated. Your uploaded sales data is still safe.
+            </p>
+            <Button className="mt-3" type="button" variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>
+              Try again
+            </Button>
+          </div>
+        )}
+
+        {!loading && !loadError && !allForecastGenerationFailed && (futureForecasts.length === 0 || allForecastsInsufficient) && (
           <div className="text-center py-12">
-            <p className="text-muted">
-              No forecast data yet. Upload sales data in Data Health to get started.
+            <p className="text-text font-medium">No forecast data yet</p>
+            <p className="text-muted text-sm mt-1">
+              Not enough matching sales history is available. Upload at least three comparable trading weeks
+              before using forecasts for ordering or staffing.
             </p>
           </div>
         )}
 
-        {!loading && !loadError && futureForecasts.length > 0 && (
+        {!loading && !loadError && usableForecasts.length > 0 && (
           <>
+            {weekMeta?.isPartial && (
+              <div className="rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 text-sm text-red-300" role="alert">
+                Only {weekMeta.generatedDays} of {weekMeta.expectedDays} forecast days are available.
+                Do not treat this as a complete weekly plan. Try again before ordering or staffing.
+              </div>
+            )}
+            {weekMeta?.insufficientData && (
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="status">
+                Some days are hidden because they do not yet have three comparable weeks of sales history.
+              </div>
+            )}
             {supportingDataError && (
               <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="status">
                 Forecasts are current, but recent comparisons or accuracy metrics are temporarily unavailable.
@@ -140,16 +187,16 @@ export default function Forecasts() {
               peakDay={peakDay}
               accuracy={accuracy?.avgAccuracy ?? null}
             />
-            {showStaleDataNotice && latestTrainingDate && (
+            {showStaleDataNotice && oldestTrainingDate && (
               <div className="rounded-lg border border-guava-yellow/30 bg-guava-yellow/10 px-4 py-3">
                 <p className="text-guava-yellow text-sm font-medium">Forecast data is getting stale</p>
                 <p className="text-muted text-xs mt-1">
-                  This week is based on sales history ending {formatTrainingDate(latestTrainingDate)}.
+                  Some days are based on sales history ending as early as {formatTrainingDate(oldestTrainingDate)}.
                   Upload newer transactions before relying on these numbers for ordering or staffing.
                 </p>
               </div>
             )}
-            <WeekTrajectoryChart futureForecasts={futureForecasts} pastForecasts={pastForecasts} />
+            <WeekTrajectoryChart futureForecasts={usableForecasts} pastForecasts={pastForecasts} />
 
             {/* This week's plan */}
             <div className="space-y-3">
@@ -160,7 +207,7 @@ export default function Forecasts() {
                 </p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {futureForecasts.map((f) => (
+                {usableForecasts.map((f) => (
                   <DayCard
                     key={f._id}
                     forecast={f}
@@ -200,7 +247,7 @@ export default function Forecasts() {
               )}
             </div>
 
-            <ItemsHeatmap forecasts={futureForecasts} />
+            <ItemsHeatmap forecasts={usableForecasts} />
           </>
         )}
 

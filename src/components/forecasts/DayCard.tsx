@@ -2,7 +2,7 @@ import { Cloud, Zap, Calendar, Banknote, Megaphone } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Forecast } from '@/types'
-import { parseDateOnly } from '@/lib/date'
+import { forecastDateKey, parseDateOnly } from '@/lib/date'
 import {
   isLoadSheddingAvailable,
   isWeatherAvailable,
@@ -51,7 +51,8 @@ interface Props {
 }
 
 export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
-  const { signals, items, totalPredictedRevenue, date } = forecast
+  const { signals, items, totalPredictedRevenue } = forecast
+  const calendarDate = forecastDateKey(forecast)
   const weatherAvailable = isWeatherAvailable(signals.weather)
   const loadSheddingAvailable = isLoadSheddingAvailable(signals)
   const hasActuals = hasMatchedActuals(forecast)
@@ -86,6 +87,40 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
       ? 'text-guava-yellow'
       : 'text-guava-red'
 
+  if (forecast.availability?.status === 'closed') {
+    return (
+      <Card
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onClick()
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={`Open forecast details for ${getDayLabel(calendarDate)}`}
+        className="cursor-pointer hover:border-[#444444] transition-colors"
+      >
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-text font-semibold text-sm">{getDayLabel(calendarDate)}</p>
+              <p className="text-muted text-xs">{formatDate(calendarDate)}</p>
+            </div>
+            <Badge variant="destructive">Closed</Badge>
+          </div>
+          <div className="rounded-lg border border-border bg-[#111111] px-3 py-3">
+            <p className="text-sm font-medium text-text">No trading forecast</p>
+            <p className="mt-1 text-xs text-muted">
+              {forecast.availability.reason || 'This café is closed for the day.'}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <Card
       onClick={onClick}
@@ -97,15 +132,15 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
       }}
       role="button"
       tabIndex={0}
-      aria-label={`Open forecast details for ${getDayLabel(date)}`}
+      aria-label={`Open forecast details for ${getDayLabel(calendarDate)}`}
       className="cursor-pointer hover:border-[#444444] transition-colors"
     >
       <CardContent className="p-4 space-y-3">
         {/* Header row */}
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-text font-semibold text-sm">{getDayLabel(date)}</p>
-            <p className="text-muted text-xs">{formatDate(date)}</p>
+            <p className="text-text font-semibold text-sm">{getDayLabel(calendarDate)}</p>
+            <p className="text-muted text-xs">{formatDate(calendarDate)}</p>
           </div>
           <div className="text-right">
             {mode === 'review' && hasActuals && actualRevenue != null ? (

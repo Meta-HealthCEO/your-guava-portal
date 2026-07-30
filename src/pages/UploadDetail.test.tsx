@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import UploadDetail from './UploadDetail'
 import api from '@/lib/api'
 
@@ -14,7 +14,11 @@ vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { role: 'owner' }, isLoading: false, isOwner: true }),
 }))
 
-const apiMock = api as unknown as { get: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> }
+const apiMock = api as unknown as {
+  get: ReturnType<typeof vi.fn>
+  delete: ReturnType<typeof vi.fn>
+  patch: ReturnType<typeof vi.fn>
+}
 
 function mockUploadDetail() {
   apiMock.get.mockImplementation((url: string) => {
@@ -32,6 +36,10 @@ function mockUploadDetail() {
           createdAt: new Date().toISOString(),
           uploadedBy: { name: 'Shaun', email: 's@x.za' },
           dateRange: { firstDate: '2026-04-01', lastDate: '2026-04-02' },
+          headers: ['Date', 'Items', 'Total'],
+          sampleRows: [{ Date: '2026-04-01', Items: 'Flat White', Total: '42' }],
+          columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+          itemsMode: 'packed',
         },
         downloadUrl: 'https://test.r2.local/foo',
       },
@@ -54,6 +62,7 @@ describe('UploadDetail', () => {
   beforeEach(() => {
     apiMock.get.mockReset()
     apiMock.delete.mockReset()
+    apiMock.patch.mockReset()
   })
 
   it('renders upload metadata and a download link', async () => {
@@ -219,5 +228,67 @@ describe('UploadDetail', () => {
     await waitFor(() => expect(screen.getByText(/Long White/)).toBeInTheDocument())
     expect(screen.getByText(/Showing 51-100 of 101/i)).toBeInTheDocument()
     expect(apiMock.get).toHaveBeenCalledWith('/uploads/u1/rows', { params: { page: 2, limit: 50 } })
+  })
+
+  it('asks before a severe partial remap and retries with explicit partial-import approval', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiMock.patch
+      .mockRejectedValueOnce({
+        response: {
+          status: 422,
+          data: {
+            code: 'SEVERE_PARTIAL_IMPORT',
+            details: { errors: 7, totalRows: 10 },
+          },
+        },
+      })
+      .mockImplementationOnce(() => new Promise(() => {}))
+    mockUploadDetail()
+    renderUploadDetail()
+
+    await screen.findByText('export.csv')
+    fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /confirm and import/i }))
+
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/7 of 10 rows could not be imported/i)
+    ))
+    await waitFor(() => expect(apiMock.patch).toHaveBeenCalledTimes(2))
+    expect(apiMock.patch).toHaveBeenNthCalledWith(1, '/uploads/u1/mapping', {
+      columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+      itemsMode: 'packed',
+      allowPartialImport: false,
+    })
+    expect(apiMock.patch).toHaveBeenNthCalledWith(2, '/uploads/u1/mapping', {
+      columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+      itemsMode: 'packed',
+      allowPartialImport: true,
+    })
+
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps the existing import unchanged when a severe partial remap is declined', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    apiMock.patch.mockRejectedValueOnce({
+      response: {
+        status: 422,
+        data: {
+          message: 'Fix the mapping or explicitly allow a partial import.',
+          details: { errors: 7, totalRows: 10 },
+        },
+      },
+    })
+    mockUploadDetail()
+    renderUploadDetail()
+
+    await screen.findByText('export.csv')
+    fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /confirm and import/i }))
+
+    expect(await screen.findByText(/fix the mapping or explicitly allow a partial import/i)).toBeInTheDocument()
+    expect(apiMock.patch).toHaveBeenCalledTimes(1)
+
+    confirmSpy.mockRestore()
   })
 })

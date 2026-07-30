@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render as rtlRender, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router'
 import { AuthContext } from '@/contexts/AuthContext'
 import Insights from './Insights'
 
@@ -421,7 +421,10 @@ describe('Insights', () => {
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith(
         '/forecasts/insights/chat',
-        { messages: [{ role: 'user', content: 'What are my best sellers?' }] },
+        {
+          chatId: 'chat-first',
+          messages: [{ role: 'user', content: 'What are my best sellers?' }],
+        },
         { headers: { 'Idempotency-Key': expect.stringMatching(/^ask-guava-/) } }
       )
     })
@@ -434,35 +437,72 @@ describe('Insights', () => {
     expect(assistantReply.closest('[data-message-role="assistant"]')).toBeInTheDocument()
   })
 
-  it('does not save a partial stream without done', async () => {
+  it('recovers a partial stream with the same idempotency key and full answer', async () => {
     mockBaseRequests()
     vi.mocked(fetch).mockResolvedValue(streamResponse(
       'event: delta\ndata: ' + JSON.stringify({ text: 'Partial answer' }) + '\n\n'
     ))
-    mockPost.mockResolvedValue({ data: { chat: chat({ _id: 'chat-partial' }) } })
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-partial', messages: [] }) } })
+      }
+      if (url === '/forecasts/insights/chat') {
+        return Promise.resolve({
+          data: {
+            answer: 'Complete recovered answer',
+            contextStats,
+            guavaCredits: { available: 97 },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
     render(<Insights />)
     const input = await screen.findByPlaceholderText(/how can i help/i)
     await userEvent.type(input, 'Interrupt this answer')
     fireEvent.submit(input.closest('form')!)
-    expect(await screen.findByText(/partial answer/i)).toBeInTheDocument()
-    expect(await screen.findByText(/stream stopped before it finished/i)).toBeInTheDocument()
-    expect(mockPatch).not.toHaveBeenCalled()
-    expect(mockPost.mock.calls.some(([url]) => url === '/forecasts/insights/chat')).toBe(false)
+    expect(await screen.findByText(/complete recovered answer/i)).toBeInTheDocument()
+
+    const streamInit = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    const streamHeaders = streamInit.headers as Record<string, string>
+    expect(mockPost).toHaveBeenCalledWith(
+      '/forecasts/insights/chat',
+      {
+        chatId: 'chat-partial',
+        messages: [{ role: 'user', content: 'Interrupt this answer' }],
+      },
+      { headers: { 'Idempotency-Key': streamHeaders['Idempotency-Key'] } }
+    )
+    expect(screen.queryByText(/stream stopped before it finished/i)).not.toBeInTheDocument()
   })
 
-  it('does not save partial output followed by an SSE error event', async () => {
+  it('recovers partial output followed by an SSE error event', async () => {
     mockBaseRequests()
     const body = 'event: delta\ndata: ' + JSON.stringify({ text: 'Partial error answer' })
       + '\n\nevent: error\ndata: ' + JSON.stringify({ message: 'Provider failed' }) + '\n\n'
     vi.mocked(fetch).mockResolvedValue(streamResponse(body))
-    mockPost.mockResolvedValue({ data: { chat: chat({ _id: 'chat-error' }) } })
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-error', messages: [] }) } })
+      }
+      if (url === '/forecasts/insights/chat') {
+        return Promise.resolve({
+          data: {
+            answer: 'Full answer after provider retry',
+            contextStats,
+            guavaCredits: { available: 94 },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
     render(<Insights />)
     const input = await screen.findByPlaceholderText(/how can i help/i)
     await userEvent.type(input, 'Fail this stream')
     fireEvent.submit(input.closest('form')!)
-    expect(await screen.findByText(/partial error answer/i)).toBeInTheDocument()
-    expect(await screen.findByText(/stream stopped before it finished/i)).toBeInTheDocument()
-    expect(mockPatch).not.toHaveBeenCalled()
+    expect(await screen.findByText(/full answer after provider retry/i)).toBeInTheDocument()
+    expect(screen.queryByText(/partial error answer/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/stream stopped before it finished/i)).not.toBeInTheDocument()
   })
 
   it('starts a blank thread when New is clicked instead of reselecting the previous chat', async () => {

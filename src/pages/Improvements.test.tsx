@@ -149,7 +149,6 @@ describe('Improvements', () => {
   })
 
   it('lets an owner change a ticket status', async () => {
-    localStorage.setItem('accessToken', 'test-token')
     mockGet.mockImplementation(mockApiGet([sampleTicket], true))
     mockPatch.mockResolvedValue({ data: { improvement: { ...sampleTicket, status: 'in_progress' } } })
 
@@ -187,7 +186,6 @@ describe('Improvements', () => {
   })
 
   it('lets an owner delete after an inline confirm', async () => {
-    localStorage.setItem('accessToken', 'test-token')
     mockGet.mockImplementation(mockApiGet([sampleTicket], true))
     mockDelete.mockResolvedValue({ data: { success: true } })
 

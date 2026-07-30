@@ -1,51 +1,134 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, ArrowRight } from 'lucide-react'
+import { AlertCircle, ArrowRight, CheckCircle, Mail } from 'lucide-react'
+import api from '@/lib/api'
 import logo from '@/assets/logo.png'
+
+type RegistrationErrorPayload = {
+  code?: string
+  email?: string
+  message?: string
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null
+
+const registrationErrorPayload = (error: unknown): RegistrationErrorPayload | null => {
+  const errorRecord = asRecord(error)
+  const responseRecord = asRecord(errorRecord?.response)
+  const responseData = asRecord(responseRecord?.data)
+  const nestedData = asRecord(responseData?.data)
+  const payload = nestedData || responseData || errorRecord
+  if (!payload) return null
+
+  return {
+    code: typeof payload.code === 'string' ? payload.code : undefined,
+    email: typeof payload.email === 'string' ? payload.email : undefined,
+    message: typeof payload.message === 'string' ? payload.message : undefined,
+  }
+}
 
 export default function Signup() {
   const { register } = useAuth()
-  const navigate = useNavigate()
 
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [cafeName, setCafeName] = useState('')
   const [orgName, setOrgName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
+  const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
+  const [resending, setResending] = useState(false)
+  const [resent, setResent] = useState(false)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.')
+      return
+    }
     setIsLoading(true)
+    const submittedEmail = email.trim().toLowerCase()
 
     try {
-      await register(email, password, name, cafeName, orgName.trim() || undefined)
-      navigate('/today')
+      const result = await register(submittedEmail, password, name, cafeName, orgName.trim() || undefined)
+      setVerificationMessage(result.message)
+      setPendingEmail(result.email?.trim().toLowerCase() || submittedEmail)
     } catch (err: unknown) {
+      const payload = registrationErrorPayload(err)
       if (
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        err.response &&
-        typeof err.response === 'object' &&
-        'data' in err.response &&
-        err.response.data &&
-        typeof err.response.data === 'object' &&
-        'message' in err.response.data
+        payload?.code === 'VERIFICATION_EMAIL_FAILED' ||
+        payload?.code === 'REGISTRATION_PENDING'
       ) {
-        setError(String((err.response.data as { message: string }).message))
+        setVerificationMessage(
+          payload.message || 'Your registration is pending. Request a fresh verification link below.'
+        )
+        setPendingEmail(payload.email?.trim().toLowerCase() || submittedEmail)
+      } else if (payload?.message) {
+        setError(payload.message)
       } else {
         setError('Could not create account. Please try again.')
       }
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const resendVerification = async () => {
+    if (!pendingEmail) return
+    setError(null)
+    setResent(false)
+    setResending(true)
+    try {
+      await api.post('/auth/resend-verification', { email: pendingEmail })
+      setResent(true)
+    } catch {
+      setError('Could not resend the verification email. Please try again.')
+    } finally {
+      setResending(false)
+    }
+  }
+
+  if (pendingEmail) {
+    return (
+      <div className="min-h-screen bg-[#0A0808] flex items-center justify-center px-6">
+        <div className="w-full max-w-md rounded-2xl border border-white/8 bg-[#111111] p-8 text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-guava-green/10">
+            <Mail className="h-6 w-6 text-guava-green" />
+          </div>
+          <h1 className="text-xl font-bold text-text">Verify your email</h1>
+          <p className="mt-3 text-sm leading-6 text-muted">
+            {verificationMessage || 'Open the verification link to finish creating your account.'}
+          </p>
+          <p className="mt-2 text-sm text-muted">
+            Verification email: <span className="font-medium text-text">{pendingEmail}</span>
+          </p>
+          {resent && (
+            <div className="mt-5 flex items-center justify-center gap-2 text-sm text-guava-green" role="status">
+              <CheckCircle className="h-4 w-4" />
+              A fresh link has been sent.
+            </div>
+          )}
+          {error && <p className="mt-5 text-sm text-red-400" role="alert">{error}</p>}
+          <Button className="mt-6 w-full" variant="outline" onClick={resendVerification} disabled={resending}>
+            {resending ? 'Sending...' : 'Resend verification email'}
+          </Button>
+          <Link className="mt-5 inline-block text-sm text-guava-green hover:underline" to="/login">
+            Back to sign in
+          </Link>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -142,6 +225,20 @@ export default function Signup() {
                   placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="confirm-password">Confirm password</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  placeholder="Repeat your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   minLength={8}
                   autoComplete="new-password"

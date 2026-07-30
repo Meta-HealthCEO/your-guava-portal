@@ -1,9 +1,11 @@
 import { useEffect, useState, type ComponentType, type FormEvent } from 'react'
+import { useNavigate } from 'react-router'
 import {
   AlertCircle,
   Building2,
   CheckCircle,
   Clock3,
+  Crown,
   Edit3,
   Mail,
   MapPin,
@@ -37,6 +39,8 @@ type PendingInvitation = {
   cafeIds: CafeBasic[]
   expiresAt: string
   createdAt: string
+  status: 'pending' | 'expired'
+  permissions?: { canSpendCredits: boolean }
 }
 
 function Toast({ toast }: { toast: ToastState }) {
@@ -202,7 +206,8 @@ function Initials({ name }: { name: string }) {
 }
 
 export default function Team() {
-  const { isOwner } = useAuth()
+  const { isOwner, logout } = useAuth()
+  const navigate = useNavigate()
 
   const [members, setMembers] = useState<TeamMember[]>([])
   const [invitations, setInvitations] = useState<PendingInvitation[]>([])
@@ -215,15 +220,22 @@ export default function Team() {
   const [invName, setInvName] = useState('')
   const [invEmail, setInvEmail] = useState('')
   const [invCafeIds, setInvCafeIds] = useState<string[]>([])
+  const [invCanSpendCredits, setInvCanSpendCredits] = useState(false)
   const [inviting, setInviting] = useState(false)
   const [invitationActionId, setInvitationActionId] = useState<string | null>(null)
 
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
   const [editName, setEditName] = useState('')
   const [editCafeIds, setEditCafeIds] = useState<string[]>([])
+  const [editCanSpendCredits, setEditCanSpendCredits] = useState(false)
   const [savingMember, setSavingMember] = useState(false)
   const [memberPendingRemoval, setMemberPendingRemoval] = useState<TeamMember | null>(null)
   const [removingMember, setRemovingMember] = useState(false)
+  const [invitationPendingRevoke, setInvitationPendingRevoke] =
+    useState<PendingInvitation | null>(null)
+  const [ownershipTarget, setOwnershipTarget] = useState<TeamMember | null>(null)
+  const [ownershipPassword, setOwnershipPassword] = useState('')
+  const [transferringOwnership, setTransferringOwnership] = useState(false)
 
   const [locationOpen, setLocationOpen] = useState(false)
   const [newCafeName, setNewCafeName] = useState('')
@@ -275,6 +287,7 @@ export default function Team() {
     setInvName('')
     setInvEmail('')
     setInvCafeIds(cafes.length === 1 ? [cafes[0]._id] : [])
+    setInvCanSpendCredits(false)
     setInviteOpen(true)
   }
 
@@ -301,6 +314,7 @@ export default function Team() {
     setEditingMember(member)
     setEditName(member.name)
     setEditCafeIds(member.cafeIds.map((cafe) => cafe._id))
+    setEditCanSpendCredits(Boolean(member.permissions?.canSpendCredits))
   }
 
   const handleInvite = async (e: FormEvent) => {
@@ -319,6 +333,7 @@ export default function Team() {
         name,
         email,
         cafeIds: invCafeIds,
+        canSpendCredits: invCanSpendCredits,
       })
       showToast('success', `Invitation sent to ${email}. Their account is created after they accept it.`)
       setInviteOpen(false)
@@ -343,11 +358,14 @@ export default function Team() {
     }
   }
 
-  const handleRevokeInvitation = async (invitation: PendingInvitation) => {
+  const handleRevokeInvitation = async () => {
+    const invitation = invitationPendingRevoke
+    if (!invitation) return
     setInvitationActionId(invitation._id)
     try {
       await api.delete(`/team/invitations/${invitation._id}`)
       showToast('success', `Invitation for ${invitation.email} was revoked.`)
+      setInvitationPendingRevoke(null)
       await fetchData()
     } catch (err: any) {
       showToast('error', err?.response?.data?.message || 'Failed to revoke invitation.')
@@ -367,7 +385,11 @@ export default function Team() {
 
     setSavingMember(true)
     try {
-      await api.patch(`/team/${editingMember._id}`, { name, cafeIds: editCafeIds })
+      await api.patch(`/team/${editingMember._id}`, {
+        name,
+        cafeIds: editCafeIds,
+        canSpendCredits: editCanSpendCredits,
+      })
       showToast('success', `${name} was updated.`)
       setEditingMember(null)
       await fetchData()
@@ -399,8 +421,8 @@ export default function Team() {
     e.preventDefault()
     const name = newCafeName.trim()
 
-    if (!name) {
-      showToast('error', 'Cafe name is required.')
+    if (name.length < 2 || name.length > 120) {
+      showToast('error', 'Cafe name must be between 2 and 120 characters.')
       return
     }
 
@@ -418,6 +440,27 @@ export default function Team() {
       showToast('error', err?.response?.data?.message || 'Failed to add cafe.')
     } finally {
       setAddingCafe(false)
+    }
+  }
+
+  const beginOwnershipTransfer = (member: TeamMember) => {
+    setOwnershipTarget(member)
+    setOwnershipPassword('')
+  }
+
+  const handleOwnershipTransfer = async () => {
+    if (!ownershipTarget || !ownershipPassword) return
+    setTransferringOwnership(true)
+    try {
+      await api.post('/team/transfer-ownership', {
+        userId: ownershipTarget._id,
+        currentPassword: ownershipPassword,
+      })
+      await logout()
+      navigate('/login', { replace: true })
+    } catch (err: any) {
+      showToast('error', err?.response?.data?.message || 'Failed to transfer ownership.')
+      setTransferringOwnership(false)
     }
   }
 
@@ -549,11 +592,31 @@ export default function Team() {
                         ) : (
                           <span className="text-xs text-[#666666]">No cafe access</span>
                         )}
+                        {member.role === 'manager' && (
+                          <div className="mt-2">
+                            <Badge
+                              variant={member.permissions?.canSpendCredits ? 'warning' : 'secondary'}
+                            >
+                              {member.permissions?.canSpendCredits
+                                ? 'Can spend Guava Credits'
+                                : 'No credit spending'}
+                            </Badge>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1 lg:justify-end">
                         {member.role === 'manager' ? (
                           <>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => beginOwnershipTransfer(member)}
+                              aria-label={`Transfer ownership to ${member.name}`}
+                            >
+                              <Crown className="h-4 w-4" />
+                            </Button>
                             <Button
                               type="button"
                               variant="ghost"
@@ -642,10 +705,10 @@ export default function Team() {
             <CardHeader className="border-b border-border">
               <CardTitle className="flex items-center gap-2">
                 <Clock3 className="h-4 w-4 text-amber-300" />
-                Pending invitations
+                Invitations
               </CardTitle>
               <CardDescription>
-                {invitations.length} seat{invitations.length === 1 ? '' : 's'} reserved until accepted or revoked
+                Pending invitations reserve seats. Expired invitations can be resent or revoked.
               </CardDescription>
             </CardHeader>
             <CardContent className="divide-y divide-border p-0">
@@ -656,6 +719,14 @@ export default function Team() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-text">{invitation.name}</p>
                       <p className="mt-1 truncate text-xs text-muted">{invitation.email}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge variant={invitation.status === 'expired' ? 'destructive' : 'warning'}>
+                          {invitation.status}
+                        </Badge>
+                        {invitation.permissions?.canSpendCredits && (
+                          <Badge variant="secondary">Can spend credits</Badge>
+                        )}
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {invitation.cafeIds.map((cafe) => (
@@ -667,7 +738,7 @@ export default function Team() {
                         <RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} />
                         Resend
                       </Button>
-                      <Button type="button" variant="ghost" size="sm" disabled={busy} className="text-red-400" onClick={() => handleRevokeInvitation(invitation)}>
+                      <Button type="button" variant="ghost" size="sm" disabled={busy} className="text-red-400" onClick={() => setInvitationPendingRevoke(invitation)}>
                         Revoke
                       </Button>
                     </div>
@@ -726,6 +797,20 @@ export default function Team() {
             <Label>Assigned cafes</Label>
             <CafeAccessPicker cafes={cafes} selectedIds={invCafeIds} onToggle={toggleInviteCafe} />
           </div>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-[#111111] p-3">
+            <input
+              type="checkbox"
+              checked={invCanSpendCredits}
+              onChange={(event) => setInvCanSpendCredits(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red"
+            />
+            <span>
+              <span className="block text-sm font-medium text-text">Allow Guava Credit spending</span>
+              <span className="mt-1 block text-xs leading-5 text-muted">
+                This manager may run AI and other metered tools for assigned cafes.
+              </span>
+            </span>
+          </label>
         </form>
       </Dialog>
 
@@ -754,6 +839,20 @@ export default function Team() {
             <Label>Assigned cafes</Label>
             <CafeAccessPicker cafes={cafes} selectedIds={editCafeIds} onToggle={toggleEditCafe} />
           </div>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-[#111111] p-3">
+            <input
+              type="checkbox"
+              checked={editCanSpendCredits}
+              onChange={(event) => setEditCanSpendCredits(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red"
+            />
+            <span>
+              <span className="block text-sm font-medium text-text">Allow Guava Credit spending</span>
+              <span className="mt-1 block text-xs leading-5 text-muted">
+                Permission applies immediately to metered AI and data tools.
+              </span>
+            </span>
+          </label>
         </div>
       </Dialog>
 
@@ -785,6 +884,86 @@ export default function Team() {
           Remove <span className="font-medium text-text">{memberPendingRemoval?.name}</span> from your organisation?
           They will lose access to assigned cafe data.
         </p>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(invitationPendingRevoke)}
+        title="Revoke invitation"
+        description={invitationPendingRevoke?.email}
+        onClose={() => {
+          if (!invitationActionId) setInvitationPendingRevoke(null)
+        }}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setInvitationPendingRevoke(null)}
+              disabled={Boolean(invitationActionId)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleRevokeInvitation}
+              disabled={Boolean(invitationActionId)}
+            >
+              {invitationActionId ? 'Revoking...' : 'Revoke invitation'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-6 text-muted">
+          This link will stop working immediately. The reserved seat will be released.
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(ownershipTarget)}
+        title="Transfer account ownership"
+        description={ownershipTarget?.email}
+        onClose={() => {
+          if (!transferringOwnership) setOwnershipTarget(null)
+        }}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setOwnershipTarget(null)}
+              disabled={transferringOwnership}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleOwnershipTransfer}
+              disabled={transferringOwnership || !ownershipPassword}
+            >
+              <Crown className="h-4 w-4" />
+              {transferringOwnership ? 'Transferring...' : 'Transfer ownership'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm leading-6 text-muted">
+            <span className="font-medium text-text">{ownershipTarget?.name}</span> will become
+            the sole owner. You will become a manager, and both users will be signed out.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="ownership-password">Confirm your current password</Label>
+            <Input
+              id="ownership-password"
+              type="password"
+              value={ownershipPassword}
+              onChange={(event) => setOwnershipPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
+        </div>
       </Dialog>
 
       <Dialog
