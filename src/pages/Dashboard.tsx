@@ -80,16 +80,16 @@ function getItemColor(name: string): string {
   if (n.includes('long white')) return '#D43D3D'
   if (n.includes('flat white') && !n.includes('honey')) return '#E06040'
   if (n.includes('flat white') && n.includes('honey')) return '#D4A43D'
-  if (n.includes('black coffee')) return '#A0522D'
+  if (n.includes('black coffee')) return '#C07A3E'
   if (n.includes('cortado')) return '#CC7744'
-  if (n.includes('espresso')) return '#8B4513'
-  if (n.includes('mocha')) return '#6B3A2A'
+  if (n.includes('espresso')) return '#B5651D'
+  if (n.includes('mocha')) return '#A5654E'
   if (n.includes('hot choc')) return '#8B6B47'
   if (n.includes('pour over')) return '#B8860B'
   if (n.includes('red espresso')) return '#C62828'
   if (n.includes('muffin') || n.includes('banana')) return '#E58A3C'
   if (n.includes('croissant')) return '#D4A43D'
-  if (n.includes('brownie')) return '#7B5B3A'
+  if (n.includes('brownie')) return '#A8845C'
   if (n.includes('cake')) return '#C4853A'
   if (n.includes('cookie') || n.includes('crunch') || n.includes('simple square')) return '#D4A43D'
   if (n.includes('sandwich')) return '#7CB87A'
@@ -199,7 +199,7 @@ function ForecastStatusCard({
     <Card>
       <CardContent className="flex flex-col items-center justify-center py-10 text-center">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-[#111111]">
-          <AlertTriangle className="h-6 w-6 text-[#777777]" />
+          <AlertTriangle className="h-6 w-6 text-[#9E9E9E]" />
         </div>
         <h2 className="mb-1 text-base font-semibold text-text">{title}</h2>
         <p className="max-w-md text-sm text-muted">{message}</p>
@@ -366,12 +366,12 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
                 <CircularGauge value={f.pct} color={f.active ? f.color : '#2A2A2A'} size={48} />
                 <span
                   className="absolute inset-0 flex items-center justify-center px-1 text-[10px] font-bold leading-none"
-                  style={{ color: f.active ? f.color : f.locked || f.off ? '#777777' : '#555555' }}
+                  style={{ color: f.active ? f.color : f.locked || f.off ? '#9E9E9E' : '#8A8A8A' }}
                 >
                   {f.impact}
                 </span>
               </div>
-              <span className={cn('max-w-full text-[10px] leading-tight', f.locked || f.off ? 'text-[#666666]' : 'text-muted')}>
+              <span className={cn('max-w-full text-[10px] leading-tight', f.locked || f.off ? 'text-[#949494]' : 'text-muted')}>
                 {f.label}
               </span>
             </div>
@@ -380,6 +380,70 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
         )}
       </CardContent>
     </Card>
+  )
+}
+
+type ForecastConfidence = 'high' | 'medium' | 'low'
+
+interface PredictedItem {
+  itemName: string
+  predictedQty: number
+  confidence?: ForecastConfidence
+}
+
+/**
+ * Splits the day's items by how much the number can be trusted.
+ *
+ * Roughly two thirds of a cafe's menu sells under two units a day, where
+ * day-to-day randomness swamps any forecast (measured error above 100%).
+ * Printing "1" next to those in the same card as a 37-unit flat white implies
+ * a precision that does not exist, and buries the handful of lines that
+ * actually drive the order. The quiet ones move to a compact list with honest
+ * wording instead of a hero number.
+ */
+function PredictedOutput({ items }: { items: PredictedItem[] }) {
+  const planned = items.filter((item) => (item.confidence ?? 'low') !== 'low')
+  const occasional = items.filter((item) => (item.confidence ?? 'low') === 'low')
+
+  return (
+    <div className="space-y-5">
+      {planned.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+          {planned.map((item) => (
+            <ItemCard key={item.itemName} itemName={item.itemName} predictedQty={item.predictedQty} />
+          ))}
+        </div>
+      )}
+
+      {occasional.length > 0 && (
+        <div>
+          <div className="flex items-baseline gap-2 mb-2">
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[#8A8A8A]">
+              Occasional sellers
+            </h4>
+            <span className="text-[11px] text-[#8A8A8A]">
+              under 2 a day — keep a few on hand rather than ordering to a number
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {occasional.map((item) => (
+              <span
+                key={item.itemName}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-[#161616] px-2.5 py-1 text-xs text-muted"
+                title={`${item.itemName} — typically ${item.predictedQty} a day`}
+              >
+                <span className="truncate max-w-45">{item.itemName}</span>
+                {/* "~0" reads as broken; for these lines the honest signal is
+                    "some days none", not a number to order against. */}
+                <span className="tabular-nums text-[#949494]">
+                  {item.predictedQty > 0 ? `~${item.predictedQty}` : 'rare'}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -398,8 +462,11 @@ function ItemCard({ itemName, predictedQty }: { itemName: string; predictedQty: 
       <div className="text-3xl font-bold mb-1 tabular-nums" style={{ color }}>
         {predictedQty}
       </div>
+      {/* Keep the variant. "Iced Coffee (Vanilla)" and "Iced Coffee (None)" are
+          different products with different numbers; stripping the bracket
+          rendered them as identical cards nobody could act on. */}
       <div className="text-muted text-[11px] leading-tight truncate" title={itemName}>
-        {itemName.replace(/\s*\(.*?\)\s*/g, '')}
+        {itemName}
       </div>
     </div>
   )
@@ -509,7 +576,7 @@ export default function Dashboard() {
     },
     {
       label: 'Top Item',
-      value: topItem ? topItem.itemName.replace(/\s*\(.*?\)\s*/g, '') : '-',
+      value: topItem ? topItem.itemName : '-',
       sub: topItem ? `${topItem.predictedQty} units predicted` : undefined,
       icon: Crown,
       accent: '#D43D3D',
@@ -544,7 +611,7 @@ export default function Dashboard() {
   return (
     <AppLayout title="Today">
       {/* KPI Row */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         {isLoading
           ? Array.from({ length: 4 }).map((_, i) => (
               <Card key={i}><CardContent className="pt-5 pb-5"><Skeleton className="h-3 w-24 mb-3" /><Skeleton className="h-7 w-32 mb-2" /><Skeleton className="h-3 w-20" /></CardContent></Card>
@@ -619,11 +686,7 @@ export default function Dashboard() {
             </div>
           </div>
           {activeForecastHasItems ? (
-            <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {activeForecast.items.map((item) => (
-                <ItemCard key={item.itemName} itemName={item.itemName} predictedQty={item.predictedQty} />
-              ))}
-            </div>
+            <PredictedOutput items={activeForecast.items} />
           ) : (
             <ForecastStatusCard
               title="No item predictions for this day"
@@ -642,7 +705,7 @@ export default function Dashboard() {
             {activeForecast.signals.isPublicHoliday && (
               <div className="flex items-center gap-1.5 bg-guava-red/10 border border-guava-red/20 rounded-md px-3 py-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-guava-red" />
-                <span className="text-guava-red text-xs font-medium">Public Holiday</span>
+                <span className="text-guava-red-text text-xs font-medium">Public Holiday</span>
               </div>
             )}
             {activeForecast.signals.events && activeForecast.signals.events.length > 0 && (
@@ -658,7 +721,7 @@ export default function Dashboard() {
       )}
 
       {isLoading && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
           {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
         </div>
       )}

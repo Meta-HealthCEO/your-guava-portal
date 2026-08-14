@@ -212,7 +212,7 @@ function StaffSidebar({
                     </Badge>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className={cn('text-xs tabular-nums', isOvertime ? 'text-guava-red font-bold' : 'text-muted')}>
+                    <span className={cn('text-xs tabular-nums', isOvertime ? 'text-guava-red-text font-bold' : 'text-muted')}>
                       {totalHours.toFixed(1)}h
                     </span>
                     {isOvertime && (
@@ -332,7 +332,7 @@ export default function Roster() {
                       : 'bg-surface border-border'
                   )}
                 >
-                  <p className={cn('text-xs font-bold', isToday ? 'text-guava-red' : 'text-text')}>
+                  <p className={cn('text-xs font-bold', isToday ? 'text-guava-red-text' : 'text-text')}>
                     {dayLabel}
                   </p>
                   <p className="text-[10px] text-muted">{formatDateShort(dayDate)}</p>

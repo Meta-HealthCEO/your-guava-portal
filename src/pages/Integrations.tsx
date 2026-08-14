@@ -186,7 +186,7 @@ function ConfirmDialog({
           </div>
           <div>
             <p className="text-text font-semibold text-sm">Disconnect {provider}?</p>
-            <p className="text-[#777777] text-sm mt-1">
+            <p className="text-[#9E9E9E] text-sm mt-1">
               You'll need to reconnect to sync sales data.
             </p>
           </div>
@@ -287,7 +287,7 @@ function ProviderCard({
               </div>
               <h3 className={cn('text-base font-semibold', cfg.accentColor)}>{cfg.name}</h3>
             </div>
-            <p className="text-[#777777] text-sm leading-relaxed">{cfg.description}</p>
+            <p className="text-[#9E9E9E] text-sm leading-relaxed">{cfg.description}</p>
           </div>
           <StatusPill connected={state.connected} syncStatus={state.lastSyncStatus} comingSoon={cfg.comingSoon} />
         </div>
@@ -297,15 +297,12 @@ function ProviderCard({
           <div className="space-y-3">
             <ul className="space-y-1.5">
               {cfg.bullets.map((bullet) => (
-                <li key={bullet} className="flex items-start gap-2 text-sm text-[#666666]">
+                <li key={bullet} className="flex items-start gap-2 text-sm text-[#949494]">
                   <span className={cn('mt-0.5 text-base leading-none', cfg.accentColor)}>•</span>
                   <span>{bullet}</span>
                 </li>
               ))}
             </ul>
-            <div className="rounded-lg border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-100/90">
-              Accounting integrations are planned after the MVP. This connection is not available yet.
-            </div>
             <Button
               variant="outline"
               size="sm"
@@ -406,7 +403,7 @@ function ProviderCard({
             {/* What this enables */}
             <ul className="space-y-1.5">
               {cfg.bullets.map((bullet) => (
-                <li key={bullet} className="flex items-start gap-2 text-sm text-[#666666]">
+                <li key={bullet} className="flex items-start gap-2 text-sm text-[#949494]">
                   <span className={cn('mt-0.5 text-base leading-none', cfg.accentColor)}>•</span>
                   <span>{bullet}</span>
                 </li>
@@ -470,10 +467,16 @@ export default function Integrations() {
     <AppLayout title="Integrations">
       <div className="space-y-6">
         {/* Page intro */}
-        <div>
-          <p className="text-[#777777] text-sm mt-1">
+        <div className="space-y-3">
+          <p className="text-[#9E9E9E] text-sm mt-1">
             Connect your accounting software to push sales summaries automatically.
           </p>
+          {/* Stated once for the page rather than repeated identically inside
+              every provider card, which read as three separate warnings. */}
+          <div className="rounded-lg border border-amber-500/15 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-100/90">
+            Accounting integrations are planned after the MVP — none of these connections are live yet.
+            Your sales data continues to import through Data Health in the meantime.
+          </div>
         </div>
 
         {loadError && (

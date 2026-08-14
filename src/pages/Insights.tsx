@@ -444,7 +444,7 @@ function ChatComposer({
           rows={floating ? 2 : 3}
           placeholder={floating ? 'Write a message...' : 'How can I help with your cafe today?'}
           className={cn(
-            'w-full resize-none border-0 bg-transparent px-2 py-2 text-text placeholder:text-[#777777]',
+            'w-full resize-none border-0 bg-transparent px-2 py-2 text-text placeholder:text-[#9E9E9E]',
             'focus-visible:outline-none',
             floating ? 'min-h-12 text-sm' : 'min-h-20 text-base'
           )}
@@ -458,7 +458,7 @@ function ChatComposer({
             <Database className="h-4 w-4" />
           </button>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-[#777777]">3 credits per answer</span>
+            <span className="text-xs text-[#9E9E9E]">3 credits per answer</span>
             <Button type="submit" size="icon" disabled={!input.trim() || isChatLoading} aria-label="Send message">
               <Send className="w-4 h-4" />
             </Button>
@@ -514,13 +514,13 @@ function ChatHistoryPanel({
     >
       <button type="button" onClick={() => onSelectChat(chat)} className="min-w-0 flex-1 text-left">
         <p className="truncate text-sm font-medium text-text">{chat.title}</p>
-        <p className="text-[11px] text-[#666666]">{timeAgo(chat.updatedAt)}</p>
+        <p className="text-[11px] text-[#949494]">{timeAgo(chat.updatedAt)}</p>
       </button>
       <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
         <button
           type="button"
           onClick={() => onRenameChat(chat)}
-          className="rounded-md p-1.5 text-[#777777] hover:bg-border hover:text-text"
+          className="rounded-md p-1.5 text-[#9E9E9E] hover:bg-border hover:text-text"
           aria-label="Rename chat"
         >
           <Edit3 className="h-3.5 w-3.5" />
@@ -528,7 +528,7 @@ function ChatHistoryPanel({
         <button
           type="button"
           onClick={() => onArchiveChat(chat, !chat.archived)}
-          className="rounded-md p-1.5 text-[#777777] hover:bg-border hover:text-text"
+          className="rounded-md p-1.5 text-[#9E9E9E] hover:bg-border hover:text-text"
           aria-label={chat.archived ? 'Unarchive chat' : 'Archive chat'}
         >
           <Archive className="h-3.5 w-3.5" />
@@ -536,7 +536,7 @@ function ChatHistoryPanel({
         <button
           type="button"
           onClick={() => onDeleteChat(chat)}
-          className="rounded-md p-1.5 text-[#777777] hover:bg-border hover:text-guava-red"
+          className="rounded-md p-1.5 text-[#9E9E9E] hover:bg-border hover:text-guava-red-text"
           aria-label="Delete chat"
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -567,19 +567,19 @@ function ChatHistoryPanel({
         )}
         {isLoading && <Skeleton className="h-10 w-full rounded-lg" />}
         {!isLoading && activeChats.length === 0 && archivedChats.length === 0 && (
-          <p className="rounded-lg border border-border px-3 py-3 text-sm text-[#777777]">
+          <p className="rounded-lg border border-border px-3 py-3 text-sm text-[#9E9E9E]">
             Your saved chats will appear here.
           </p>
         )}
         {activeChats.length > 0 && (
           <div className="space-y-1.5">
-            <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-[#666666]">Recent</p>
+            <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-[#949494]">Recent</p>
             {activeChats.map(renderChat)}
           </div>
         )}
         {archivedChats.length > 0 && (
           <div className="space-y-1.5">
-            <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-[#666666]">Archived</p>
+            <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-[#949494]">Archived</p>
             {archivedChats.map(renderChat)}
           </div>
         )}
@@ -1454,7 +1454,7 @@ export default function Insights() {
         title={
           <div className="flex items-center gap-2">
             <span>Ask Guava</span>
-            <Sparkles className="w-4 h-4 text-guava-red" />
+            <Sparkles className="w-4 h-4 text-guava-red-text" />
           </div>
         }
       >
@@ -1493,10 +1493,10 @@ export default function Insights() {
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
                   <div className="mb-8 text-center">
                     <div className="mb-4 flex items-center justify-center gap-3">
-                      <Sparkles className="h-7 w-7 text-guava-red" />
+                      <Sparkles className="h-7 w-7 text-guava-red-text" />
                       <h2 className="text-3xl font-semibold text-text">Ask your business data</h2>
                     </div>
-                    <p className="mx-auto max-w-xl text-sm leading-relaxed text-[#777777]">
+                    <p className="mx-auto max-w-xl text-sm leading-relaxed text-[#9E9E9E]">
                       Query sales, prep, trading windows, locations, forecasts, and recent transactions.
                     </p>
                   </div>
@@ -1521,6 +1521,13 @@ export default function Insights() {
                 </div>
               ) : (
                 <>
+                  {/* The composer floats over this scroll area, so long answers
+                      used to be sliced off mid-table by its opaque edge. The
+                      gradient lets content dissolve into the composer instead. */}
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 h-40 bg-gradient-to-t from-[#0F0F0F] via-[#0F0F0F]/85 to-transparent"
+                  />
                   <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-64">
                     {messages
                       .filter((message) => message.id !== 'welcome')
@@ -1579,7 +1586,7 @@ export default function Insights() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-guava-red" />
+                      <Sparkles className="w-4 h-4 text-guava-red-text" />
                       Auto Analysis
                     </CardTitle>
                     <CardDescription>
@@ -1696,7 +1703,7 @@ export default function Insights() {
             <input
               value={renameTitle}
               onChange={(event) => setRenameTitle(event.target.value)}
-              className="w-full rounded-xl border border-border bg-[#101010] px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-[#666666] focus:border-guava-green"
+              className="w-full rounded-xl border border-border bg-[#101010] px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-[#949494] focus:border-guava-green"
               aria-label="Chat name"
               autoFocus
             />
@@ -1728,7 +1735,7 @@ export default function Insights() {
         >
           <div className="w-full max-w-md rounded-2xl border border-border bg-[#151515] p-5 shadow-2xl shadow-black/40">
             <div className="mb-5 flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-guava-red/12 text-guava-red">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-guava-red/12 text-guava-red-text">
                 <Trash2 className="h-5 w-5" />
               </div>
               <div>

@@ -216,7 +216,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                       className={cn(
                         'w-full text-left px-3 py-2 text-sm transition-colors',
                         cafe._id === user.activeCafeId
-                          ? 'bg-guava-red/10 text-guava-red'
+                          ? 'bg-guava-red/10 text-guava-red-text'
                           : 'text-muted hover:bg-white/5 hover:text-text'
                       )}
                     >
@@ -250,19 +250,19 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                       className={cn(
                         'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group relative',
                         active
-                          ? 'bg-guava-red/10 text-guava-red border-l-2 border-guava-red pl-2.5'
+                          ? 'bg-guava-red/10 text-guava-red-text border-l-2 border-guava-red pl-2.5'
                           : 'text-muted hover:text-text hover:bg-white/5 border-l-2 border-transparent'
                       )}
                     >
                       <Icon
                         className={cn(
                           'w-4 h-4 shrink-0',
-                          active ? 'text-guava-red' : 'text-muted group-hover:text-text'
+                          active ? 'text-guava-red-text' : 'text-muted group-hover:text-text'
                         )}
                       />
                       <span>{label}</span>
                       {badge && (
-                        <span className="ml-auto rounded-full border border-border bg-[#1B1B1B] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#777777]">
+                        <span className="ml-auto rounded-full border border-border bg-[#1B1B1B] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#9E9E9E]">
                           {badge}
                         </span>
                       )}

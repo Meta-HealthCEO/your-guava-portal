@@ -386,9 +386,9 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     }
   }
 
-  const handleBuyCredits = async () => {
+  const handleBuyCredits = async (packCredits: number) => {
     setIsBuyingCredits(true)
-    const intent = 'credits:500'
+    const intent = `credits:${packCredits}`
     if (creditCheckoutRef.current?.intent !== intent) {
       creditCheckoutRef.current = { intent, key: newPaymentIdempotencyKey('credits') }
     }
@@ -396,7 +396,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     try {
       const { data } = await api.post<CreditPurchaseResponse>(
         '/account/ai-credits',
-        { credits: 500 },
+        { credits: packCredits },
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
 
@@ -409,7 +409,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
       if (data.account) {
         setAccount(data.account)
         creditCheckoutRef.current = null
-        showNotice('success', 'Added 500 Guava Credits to this billing period.')
+        showNotice('success', `Added ${packCredits.toLocaleString('en-ZA')} Guava Credits to this billing period.`)
       } else {
         showNotice('error', 'Secure checkout is still being prepared. Try again in a moment.')
       }
@@ -424,8 +424,14 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   }
 
   const selectedPlan = account?.organization.plan || 'starter'
+  const billingRequired =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('billing') === 'required'
   const credits = account?.usage.guavaCredits ?? account?.usage.aiCredits
   const creditTotal = credits ? credits.included + credits.bonus : 0
+  // Pack sizes offered by the organisation's current plan.
+  const currentPlanPacks =
+    (account?.plans || []).find((plan) => plan.id === account?.organization?.plan)?.creditPackOptions ?? []
   const creditLedger = account?.usage.creditLedger
   const showAccountSection = section === 'all' || section === 'account'
   const showBillingSection = section === 'all' || section === 'billing'
@@ -447,7 +453,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <UserIcon className="w-4 h-4 text-guava-red" />
+                  <UserIcon className="w-4 h-4 text-guava-red-text" />
                   <CardTitle>Account Details</CardTitle>
                 </div>
                 <CardDescription className="mt-1">
@@ -528,7 +534,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
         {showAccountSection && <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-guava-red" />
+              <KeyRound className="w-4 h-4 text-guava-red-text" />
               <CardTitle>Password</CardTitle>
             </div>
             <CardDescription className="mt-1">
@@ -584,12 +590,27 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
           </CardContent>
         </Card>}
 
+        {/* Arrived here from a 402 on some other page: say why, so landing on
+            Billing without warning does not read as a random redirect. */}
+        {showBillingSection && billingRequired && (
+          <div
+            role="alert"
+            className="rounded-lg border border-guava-red/30 bg-guava-red/10 px-4 py-3"
+          >
+            <p className="text-sm font-medium text-text">Your billing period has ended</p>
+            <p className="mt-1 text-sm text-muted">
+              Forecasts, analytics and imports are paused until payment is up to date.
+              Your data is safe and returns as soon as billing resumes.
+            </p>
+          </div>
+        )}
+
         {showBillingSection && <Card>
           <CardHeader>
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <WalletCards className="w-4 h-4 text-guava-red" />
+                  <WalletCards className="w-4 h-4 text-guava-red-text" />
                   <CardTitle>Billing and Usage</CardTitle>
                 </div>
                 <CardDescription className="mt-1">
@@ -638,10 +659,26 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
 
             <UsageMeter label="Guava Credit usage this period" used={credits?.used ?? 0} total={creditTotal || 1} />
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" onClick={handleBuyCredits} disabled={!isOwner || isBuyingCredits}>
-                <Sparkles className="w-3.5 h-3.5" />
-                {isBuyingCredits ? 'Opening checkout...' : 'Add 500 Guava Credits'}
-              </Button>
+              {/* The plan offers several pack sizes at different rates; the UI
+                  previously hard-coded the smallest, so larger, better-value
+                  packs were unreachable. */}
+              {(currentPlanPacks.length > 0
+                ? currentPlanPacks
+                : [{ credits: 500, price: 0 }]
+              ).map((pack) => (
+                <Button
+                  key={pack.credits}
+                  type="button"
+                  variant="secondary"
+                  onClick={() => handleBuyCredits(pack.credits)}
+                  disabled={!isOwner || isBuyingCredits}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {isBuyingCredits
+                    ? 'Opening checkout...'
+                    : `${pack.credits.toLocaleString('en-ZA')} credits${pack.price ? ` · ${formatRand(pack.price)}` : ''}`}
+                </Button>
+              ))}
               <p className="text-muted text-xs flex items-center">
                 Included credits reset on {formatDate(credits?.resetAt)}. Bonus credits stay until used.
               </p>

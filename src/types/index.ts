@@ -120,6 +120,8 @@ export interface ForecastItem {
   predictedQty: number
   actualQty?: number | null
   suggestedStock?: number
+  /** How much weight this item's number can bear, driven by sales volume. */
+  confidence?: 'high' | 'medium' | 'low'
   factors?: ForecastFactor[]
 }
 

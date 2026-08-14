@@ -60,7 +60,9 @@ function suggestionLabel(item: SalesItem) {
   if (!suggestion) return ''
   if (suggestion.action === 'map_to') return `Link to ${suggestion.targetName || 'existing menu item'}`
   if (suggestion.action === 'ignore') return 'Ignore POS item'
-  if (hasPriceIssue(item)) return `Use menu price ${formatZar(suggestion.expectedPrice)}`
+  // "Use menu price X" collided with the "Menu price" field shown above it,
+  // which holds the CURRENT price. This value is the proposed replacement.
+  if (hasPriceIssue(item)) return `Change menu price to ${formatZar(suggestion.expectedPrice)}`
   return 'Keep as new menu item'
 }
 
@@ -314,7 +316,7 @@ export default function MenuItems() {
                   <p className="text-muted text-xs uppercase tracking-wide">Need a match</p>
                   <p className="text-text text-2xl font-bold">{loadError ? '—' : reviewCount}</p>
                 </div>
-                <Coffee className="w-5 h-5 text-guava-red" />
+                <Coffee className="w-5 h-5 text-guava-red-text" />
               </div>
             </CardContent>
           </Card>
@@ -531,7 +533,7 @@ export default function MenuItems() {
 
                 <div className="overflow-auto rounded-lg border border-border">
                   <table className="w-full min-w-[980px] text-sm">
-                    <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#777777]">
+                    <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#9E9E9E]">
                       <tr>
                         <th className="px-3 py-2">Item</th>
                         <th className="px-3 py-2">Category</th>

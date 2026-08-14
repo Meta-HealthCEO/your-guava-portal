@@ -113,7 +113,7 @@ export default function IntegrationCallback() {
             )}
             <Link
               to="/integrations"
-              className="inline-block mt-5 text-sm text-guava-red hover:underline"
+              className="inline-block mt-5 text-sm text-guava-red-text hover:underline"
             >
               Back to Integrations
             </Link>

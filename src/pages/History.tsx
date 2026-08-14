@@ -104,12 +104,12 @@ function StatPanel({
 }) {
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-[#777777]">{label}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-[#9E9E9E]">{label}</p>
       <p
         className={cn(
           'mt-2 text-2xl font-semibold text-text',
           tone === 'good' && 'text-guava-green',
-          tone === 'bad' && 'text-guava-red'
+          tone === 'bad' && 'text-guava-red-text'
         )}
       >
         {value}
@@ -220,8 +220,8 @@ export default function History() {
     <AppLayout title="History">
       <div className="space-y-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2 text-sm text-[#777777]">
-            <HistoryIcon className="h-4 w-4 text-guava-red" />
+          <div className="flex items-center gap-2 text-sm text-[#9E9E9E]">
+            <HistoryIcon className="h-4 w-4 text-guava-red-text" />
             Live prediction history and clearly marked retrospective estimates
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -241,7 +241,7 @@ export default function History() {
         {loading && <LoadingState />}
 
         {!loading && error && (
-          <div className="rounded-lg border border-guava-red/30 bg-guava-red/10 p-4 text-guava-red">
+          <div className="rounded-lg border border-guava-red/30 bg-guava-red/10 p-4 text-guava-red-text">
             <div className="flex items-center gap-2 font-medium">
               <AlertCircle className="h-4 w-4" />
               {error}
@@ -277,7 +277,7 @@ export default function History() {
 
         {!loading && !error && history.length === 0 && !meta?.pendingDays && (
           <div className="rounded-lg border border-border bg-surface p-8 text-center">
-            <CalendarDays className="mx-auto h-8 w-8 text-[#777777]" />
+            <CalendarDays className="mx-auto h-8 w-8 text-[#9E9E9E]" />
             <p className="mt-3 font-medium text-text">No completed trading days found</p>
             <p className="mt-1 text-sm text-muted">Upload approved transaction data to start building history.</p>
             <Button asChild className="mt-4" size="sm">
@@ -291,26 +291,32 @@ export default function History() {
             <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
               {meta.liveAccuracy || meta.backtestAccuracy ? (
                 <>
+                  {/* Lead with the average of each day's accuracy, not the
+                      accuracy of the summed totals. Over a month a day forecast
+                      20% high and a day 20% low cancel out to a near-perfect
+                      aggregate, which reads as ~98% while typical days are far
+                      further off. The daily average is what an operator
+                      actually experiences when ordering stock. */}
                   <StatPanel
                     label="Live forecast accuracy"
-                    value={formatPercent(meta.liveAccuracy?.overallRevenueAccuracy)}
+                    value={formatPercent(meta.liveAccuracy?.avgDailyRevenueAccuracy)}
                     detail={meta.liveAccuracy?.rowCount
-                      ? `${meta.liveAccuracy.rowCount} live day${meta.liveAccuracy.rowCount === 1 ? '' : 's'} · daily avg ${formatPercent(meta.liveAccuracy.avgDailyRevenueAccuracy)}`
+                      ? `Typical day across ${meta.liveAccuracy.rowCount} live day${meta.liveAccuracy.rowCount === 1 ? '' : 's'} · ${formatPercent(meta.liveAccuracy.overallRevenueAccuracy)} on period totals`
                       : 'No completed live forecasts in this period'}
                   />
                   <StatPanel
                     label="Backtest accuracy"
-                    value={formatPercent(meta.backtestAccuracy?.overallRevenueAccuracy)}
+                    value={formatPercent(meta.backtestAccuracy?.avgDailyRevenueAccuracy)}
                     detail={meta.backtestAccuracy?.rowCount
-                      ? `${meta.backtestAccuracy.rowCount} retrospective day${meta.backtestAccuracy.rowCount === 1 ? '' : 's'} · daily avg ${formatPercent(meta.backtestAccuracy.avgDailyRevenueAccuracy)}`
+                      ? `Typical day across ${meta.backtestAccuracy.rowCount} retrospective day${meta.backtestAccuracy.rowCount === 1 ? '' : 's'} · ${formatPercent(meta.backtestAccuracy.overallRevenueAccuracy)} on period totals`
                       : 'No retrospective backtests in this period'}
                   />
                 </>
               ) : (
                 <StatPanel
                   label="Combined accuracy"
-                  value={formatPercent(meta.overallRevenueAccuracy ?? meta.avgRevenueAccuracy)}
-                  detail={`Live/backtest split unavailable · daily avg ${formatPercent(meta.avgDailyRevenueAccuracy ?? meta.avgRevenueAccuracy)}`}
+                  value={formatPercent(meta.avgDailyRevenueAccuracy ?? meta.avgRevenueAccuracy)}
+                  detail={`Typical day · ${formatPercent(meta.overallRevenueAccuracy ?? meta.avgRevenueAccuracy)} on period totals`}
                 />
               )}
               <StatPanel label="Combined predicted" value={formatCurrency(meta.totalPredictedRevenue)} />
@@ -343,7 +349,7 @@ export default function History() {
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
-                  <thead className="border-b border-border bg-[#151515] text-left text-xs uppercase tracking-wide text-[#777777]">
+                  <thead className="border-b border-border bg-[#151515] text-left text-xs uppercase tracking-wide text-[#9E9E9E]">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Date</th>
                       <th className="px-4 py-3 font-semibold">Weather</th>
@@ -373,7 +379,7 @@ export default function History() {
                           </td>
                           <td className="min-w-52 px-4 py-3 text-muted">
                             <div className="flex items-center gap-2">
-                              <CloudRain className="h-4 w-4 shrink-0 text-[#777777]" />
+                              <CloudRain className="h-4 w-4 shrink-0 text-[#9E9E9E]" />
                               <span>{weatherLabel(row)}</span>
                             </div>
                           </td>
@@ -407,7 +413,7 @@ export default function History() {
                           <td
                             className={cn(
                               'whitespace-nowrap px-4 py-3 text-right font-medium',
-                              positiveVariance ? 'text-guava-green' : 'text-guava-red'
+                              positiveVariance ? 'text-guava-green' : 'text-guava-red-text'
                             )}
                           >
                             <span className="inline-flex items-center justify-end gap-1">

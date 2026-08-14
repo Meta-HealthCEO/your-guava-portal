@@ -308,7 +308,7 @@ function StaffCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-guava-red hover:text-guava-red"
+                  className="h-7 w-7 text-guava-red-text hover:text-guava-red-text"
                   onClick={handleDeactivate}
                   disabled={deactivating}
                 >

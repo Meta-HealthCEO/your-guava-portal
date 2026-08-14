@@ -14,6 +14,18 @@ const statusColor: Record<string, 'success' | 'secondary' | 'destructive'> = {
   failed: 'destructive',
 }
 
+// Two cases deserve softer treatment than the raw status:
+//   - completed with nothing imported is not a success worth a green tick
+//   - the API rejects a re-upload of an already-imported file as `failed`, but
+//     re-uploading last week's export is routine housekeeping, not an error
+const statusBadge = (status: string, imported: number, errorMessage?: string) => {
+  const alreadyImported = /already exist/i.test(errorMessage || '');
+  if (alreadyImported || (status === 'completed' && !imported)) {
+    return { tone: 'secondary' as const, label: 'no new rows' };
+  }
+  return { tone: statusColor[status] || ('secondary' as const), label: status };
+};
+
 const uploadSourceLabel = (posType: Upload['posType']) =>
   posType === 'yoco' ? 'POS preset' : 'Mapped'
 
@@ -46,7 +58,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <History className="w-4 h-4 text-guava-red" />
+          <History className="w-4 h-4 text-guava-red-text" />
           <CardTitle>Upload history</CardTitle>
         </div>
         <CardDescription>
@@ -74,7 +86,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
           <div className="overflow-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[#777777] text-xs">
+                <tr className="text-left text-[#9E9E9E] text-xs">
                   <th className="py-2">File</th>
                   <th>Mapping</th>
                   <th>Imported</th>
@@ -87,7 +99,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
               <tbody>
                 {uploads.map((u) => (
                   <tr key={u._id} className="border-t border-border">
-                    <td className="py-2 flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-[#777777]" />{u.fileName}</td>
+                    <td className="py-2 flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-[#9E9E9E]" />{u.fileName}</td>
                     <td>{uploadSourceLabel(u.posType)}</td>
                     <td>{u.stats.imported}</td>
                     <td className="text-muted">
@@ -95,10 +107,15 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
                       {' → '}
                       {u.dateRange?.lastDate ? new Date(u.dateRange.lastDate).toLocaleDateString('en-ZA') : '—'}
                     </td>
-                    <td><Badge variant={statusColor[u.status] || 'secondary'}>{u.status}</Badge></td>
+                    <td>
+                      {(() => {
+                        const badge = statusBadge(u.status, u.stats.imported, u.errorMessage)
+                        return <Badge variant={badge.tone}>{badge.label}</Badge>
+                      })()}
+                    </td>
                     <td className="text-muted">{new Date(u.createdAt).toLocaleString('en-ZA')}</td>
                     <td>
-                      <Link to={`/uploads/${u._id}`} className="text-guava-red hover:underline inline-flex items-center gap-1">
+                      <Link to={`/uploads/${u._id}`} className="text-guava-red-text hover:underline inline-flex items-center gap-1">
                         View <ExternalLink className="w-3 h-3" />
                       </Link>
                     </td>

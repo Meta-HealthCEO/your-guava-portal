@@ -509,7 +509,7 @@ export default function Factors() {
 
                   <div className="overflow-auto rounded-lg border border-border">
                     <table className="w-full min-w-[760px] text-sm">
-                      <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#777777]">
+                      <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#9E9E9E]">
                         <tr>
                           <th className="px-3 py-2">Day</th>
                           <th className="px-3 py-2">Forecast</th>
@@ -736,7 +736,7 @@ export default function Factors() {
                     ) : (
                       <div className="overflow-auto rounded-lg border border-border">
                         <table className="w-full min-w-[920px] text-sm">
-                          <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#777777]">
+                          <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#9E9E9E]">
                             <tr>
                               <th className="px-3 py-2">Event</th>
                               <th className="px-3 py-2">Actual sales</th>

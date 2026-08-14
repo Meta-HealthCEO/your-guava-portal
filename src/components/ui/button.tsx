@@ -19,7 +19,7 @@ const buttonVariants = cva(
         ghost:
           'text-muted hover:bg-white/5 hover:text-text',
         link:
-          'text-guava-red underline-offset-4 hover:underline',
+          'text-guava-red-text underline-offset-4 hover:underline',
         success:
           'bg-guava-green text-white hover:bg-[#3E8F2E] active:bg-[#337826]',
       },

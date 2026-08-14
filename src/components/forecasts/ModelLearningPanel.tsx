@@ -90,7 +90,7 @@ export function ModelLearningPanel({ sources, entitlements, settings, compact = 
     <div className="rounded-lg border border-border bg-surface p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex items-start gap-3">
-          <div className="rounded-lg bg-guava-red/10 p-2 text-guava-red">
+          <div className="rounded-lg bg-guava-red/10 p-2 text-guava-red-text">
             <Sparkles className="h-4 w-4" />
           </div>
           <div>
@@ -103,13 +103,13 @@ export function ModelLearningPanel({ sources, entitlements, settings, compact = 
         </div>
         <div className="grid grid-cols-2 gap-3 sm:min-w-72">
           <div>
-            <p className="text-xs uppercase tracking-wide text-[#777777]">Overall correction</p>
-            <p className={cn('mt-1 text-xl font-semibold', (overallCorrection || 0) >= 0 ? 'text-guava-green' : 'text-guava-red')}>
+            <p className="text-xs uppercase tracking-wide text-[#9E9E9E]">Overall correction</p>
+            <p className={cn('mt-1 text-xl font-semibold', (overallCorrection || 0) >= 0 ? 'text-guava-green' : 'text-guava-red-text')}>
               {formatPct(overallCorrection)}
             </p>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wide text-[#777777]">Learning samples</p>
+            <p className="text-xs uppercase tracking-wide text-[#9E9E9E]">Learning samples</p>
             <p className="mt-1 text-xl font-semibold text-text">{sampleSize}</p>
           </div>
         </div>
@@ -137,7 +137,7 @@ function CorrectionList({
   return (
     <div className="rounded-lg border border-border bg-[#111111] p-3">
       <div className="flex items-center gap-2">
-        <TrendingUp className="h-3.5 w-3.5 text-[#777777]" />
+        <TrendingUp className="h-3.5 w-3.5 text-[#9E9E9E]" />
         <p className="text-sm font-medium text-text">{title}</p>
       </div>
       <div className="mt-3 space-y-2">
@@ -147,7 +147,7 @@ function CorrectionList({
           corrections.map((entry) => (
             <div key={entry.label} className="flex items-center justify-between gap-3 text-xs">
               <span className="truncate text-muted">{entry.label}</span>
-              <span className={cn('font-semibold', (entry.correction || 0) >= 0 ? 'text-guava-green' : 'text-guava-red')}>
+              <span className={cn('font-semibold', (entry.correction || 0) >= 0 ? 'text-guava-green' : 'text-guava-red-text')}>
                 {formatPct(entry.correction)}
                 <span className="ml-1 font-normal text-muted">({entry.sampleSize})</span>
               </span>

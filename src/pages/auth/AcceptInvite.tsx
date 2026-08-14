@@ -116,7 +116,7 @@ export default function AcceptInvite() {
             <ShieldCheck className="h-5 w-5 text-guava-green" />
           </div>
           <div>
-            <p className="text-sm font-semibold"><span className="text-guava-green">Your</span> <span className="text-guava-red">Guava</span></p>
+            <p className="text-sm font-semibold"><span className="text-guava-green">Your</span> <span className="text-guava-red-text">Guava</span></p>
             <h1 className="text-xl font-semibold">Accept your invitation</h1>
           </div>
         </div>

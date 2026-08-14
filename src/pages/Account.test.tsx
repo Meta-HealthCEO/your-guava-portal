@@ -293,7 +293,7 @@ describe('Account', () => {
       })
 
     renderWithAuth(<Account />)
-    const button = await screen.findByRole('button', { name: /add 500 guava credits/i })
+    const button = await screen.findByRole('button', { name: /500 credits/i })
     await userEvent.click(button)
     expect(await screen.findByText(/could not start card checkout/i)).toBeInTheDocument()
 

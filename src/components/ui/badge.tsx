@@ -8,7 +8,7 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default:
-          'border-transparent bg-guava-red/20 text-guava-red',
+          'border-transparent bg-guava-red/20 text-guava-red-text',
         secondary:
           'border-transparent bg-surface-2 text-muted',
         destructive:
@@ -20,7 +20,7 @@ const badgeVariants = cva(
         warning:
           'border-transparent bg-guava-yellow/20 text-guava-yellow',
         pro:
-          'border-transparent bg-guava-red/20 text-guava-red uppercase tracking-wide',
+          'border-transparent bg-guava-red/20 text-guava-red-text uppercase tracking-wide',
         basic:
           'border-transparent bg-border text-muted uppercase tracking-wide',
       },

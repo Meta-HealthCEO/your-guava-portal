@@ -139,7 +139,18 @@ const DAY_ROWS = [
   { label: 'Sat', value: 6 },
   { label: 'Sun', value: 0 },
 ]
-const HOURS = Array.from({ length: 17 }, (_, i) => i + 6) // 06:00 - 22:00
+const ALL_HOURS = Array.from({ length: 17 }, (_, i) => i + 6) // 06:00 - 22:00
+
+// Only show hours the cafe actually trades. Rendering a fixed 06:00-22:00 grid
+// left a third of the heatmap as permanently empty columns, which made the
+// busy hours look narrower than they are.
+function tradingHoursFrom(cells: HeatmapCell[]): number[] {
+  const active = cells.filter((cell) => (cell.revenue ?? 0) > 0 || (cell.transactions ?? 0) > 0)
+  if (active.length === 0) return ALL_HOURS
+  const min = Math.min(...active.map((cell) => cell.hour))
+  const max = Math.max(...active.map((cell) => cell.hour))
+  return ALL_HOURS.filter((hour) => hour >= min && hour <= max)
+}
 
 // ── Period Selector ───────────────────────────────────────────────────────────
 
@@ -249,8 +260,8 @@ function RevenueTab() {
           {loading ? (
             <Skeleton className="h-75 rounded-lg" />
           ) : data && data.data.length > 0 ? (
-            <div style={{ height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <AreaChart data={data.data} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
                   <defs>
                     <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
@@ -276,6 +287,10 @@ function RevenueTab() {
                     formatter={(value: unknown) => [formatZAR(numberValue(value)), 'Revenue']}
                   />
                   <Area
+                    // Recharts reveals series with an animated clip rect. On this
+                    // page the clip stayed at width 0, leaving a fully-drawn path
+                    // invisible behind it, so the chart read as "no data".
+                    isAnimationActive={false}
                     type="monotone"
                     dataKey="revenue"
                     stroke="#4DA63B"
@@ -327,13 +342,29 @@ function ItemsTab() {
   const sorted = useMemo(() => [...items].sort((a, b) => b.totalQty - a.totalQty), [items])
   const top10 = sorted.slice(0, 10)
 
+  // A line that went from one unit to eight is "+700%", which crowds out real
+  // movement on lines that matter. Only rank items carrying enough volume for
+  // the percentage to mean something.
+  // Scale with the window: roughly two a day. A flat threshold let a line
+  // selling 0.2/day still qualify over a 90-day range.
+  const moverMinQty = daysForPeriod(period) * 2
+  const substantialNames = useMemo(
+    () => new Set(items.filter((item) => item.totalQty >= moverMinQty).map((item) => item.name)),
+    [items, moverMinQty]
+  )
+  const isSubstantial = (name: string) => substantialNames.size === 0 || substantialNames.has(name)
+
   // Use backend-provided movers; fall back to client-side sort if backend didn't return them
-  const rising = risingItems.length > 0
-    ? risingItems.slice(0, 5)
-    : [...items].sort((a, b) => b.trend - a.trend).slice(0, 5).map(({ name, trend }) => ({ name, trend }))
-  const declining = decliningItems.length > 0
-    ? decliningItems.slice(0, 5)
-    : [...items].sort((a, b) => a.trend - b.trend).slice(0, 5).map(({ name, trend }) => ({ name, trend }))
+  const rising = (risingItems.length > 0
+    ? risingItems
+    : [...items].sort((a, b) => b.trend - a.trend).map(({ name, trend }) => ({ name, trend })))
+    .filter((item) => isSubstantial(item.name))
+    .slice(0, 5)
+  const declining = (decliningItems.length > 0
+    ? decliningItems
+    : [...items].sort((a, b) => a.trend - b.trend).map(({ name, trend }) => ({ name, trend })))
+    .filter((item) => isSubstantial(item.name))
+    .slice(0, 5)
 
   const risingNames = new Set(rising.map((i) => i.name))
   const decliningNames = new Set(declining.map((i) => i.name))
@@ -356,7 +387,10 @@ function ItemsTab() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Movers</CardTitle>
-            <p className="text-muted text-xs mt-0.5">Comparing last 7 days to the prior 7</p>
+            <p className="text-muted text-xs mt-0.5">
+              Last 7 days vs the 7 before — always, regardless of the range above.
+              Only lines averaging 2+ a day, so a jump from 1 to 8 doesn&rsquo;t rank as &ldquo;+700%&rdquo;.
+            </p>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
@@ -378,7 +412,7 @@ function ItemsTab() {
                 )}
               </div>
               <div>
-                <p className="text-guava-red text-xs font-semibold uppercase tracking-wider mb-2">Declining</p>
+                <p className="text-guava-red-text text-xs font-semibold uppercase tracking-wider mb-2">Declining</p>
                 {declining.length === 0 ? (
                   <p className="text-muted text-xs">No declining items</p>
                 ) : (
@@ -386,7 +420,7 @@ function ItemsTab() {
                     {declining.map((item) => (
                       <li key={item.name} className="flex items-center justify-between text-xs">
                         <span className="text-text truncate mr-2">{item.name}</span>
-                        <span className="text-guava-red font-medium tabular-nums shrink-0">
+                        <span className="text-guava-red-text font-medium tabular-nums shrink-0">
                           {item.trend.toFixed(1)}%
                         </span>
                       </li>
@@ -427,7 +461,7 @@ function ItemsTab() {
                     cursor={BAR_HOVER_CURSOR}
                     formatter={(value: unknown) => [formatCount(numberValue(value)), 'Qty Sold']}
                   />
-                  <Bar dataKey="totalQty" fill="#4DA63B" radius={[4, 4, 0, 0]} activeBar={BAR_ACTIVE_STYLE} />
+                  <Bar isAnimationActive={false} dataKey="totalQty" fill="#4DA63B" radius={[4, 4, 0, 0]} activeBar={BAR_ACTIVE_STYLE} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -524,6 +558,8 @@ function HeatmapTab() {
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [period])
+
+  const HOURS = useMemo(() => tradingHoursFrom(cells), [cells])
 
   const cellMap = useMemo(() => {
     const map = new Map<string, HeatmapCell>()
@@ -673,7 +709,7 @@ function CustomersTab() {
       {/* Period Selector */}
       <PeriodSelector period={period} onChange={setPeriod} />
 
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <Card key={i}>
@@ -725,6 +761,7 @@ function CustomersTab() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
+                      isAnimationActive={false}
                       data={donutData}
                       cx="50%"
                       cy="50%"
@@ -750,7 +787,7 @@ function CustomersTab() {
                   <span className="text-text text-sm">Card: {(data.cashVsCardRatio?.card ?? 0).toFixed(1)}%</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Banknote className="w-4 h-4 text-guava-red" />
+                  <Banknote className="w-4 h-4 text-guava-red-text" />
                   <span className="text-text text-sm">Cash: {(data.cashVsCardRatio?.cash ?? 0).toFixed(1)}%</span>
                 </div>
               </div>
@@ -888,7 +925,7 @@ export default function Analytics() {
   return (
     <AppLayout title="Performance">
       {/* Tab Selector */}
-      <div className="flex items-center gap-1 mb-6 border-b border-border pb-px">
+      <div className="flex items-center gap-1 mb-6 border-b border-border pb-px overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -896,7 +933,7 @@ export default function Analytics() {
             className={cn(
               'px-4 py-2.5 text-sm font-medium transition-colors relative',
               activeTab === tab.id
-                ? 'text-guava-red'
+                ? 'text-guava-red-text'
                 : 'text-muted hover:text-text'
             )}
           >

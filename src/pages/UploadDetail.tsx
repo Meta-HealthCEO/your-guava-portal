@@ -315,7 +315,7 @@ export default function UploadDetail() {
             <CardContent className="overflow-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-[#777777] text-xs">
+                  <tr className="text-left text-[#9E9E9E] text-xs">
                     <th className="py-2">Row</th>
                     <th>Reason</th>
                     <th>Raw values</th>
@@ -372,7 +372,7 @@ export default function UploadDetail() {
               ) : (
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-[#777777] text-xs">
+                    <tr className="text-left text-[#9E9E9E] text-xs">
                       <th className="py-2">Date</th>
                       <th>Receipt</th>
                       <th>Items</th>
@@ -446,7 +446,7 @@ export default function UploadDetail() {
             <Button
               variant="ghost"
               size="sm"
-              className="text-guava-red"
+              className="text-guava-red-text"
               onClick={() => {
                 setDeleteError(null)
                 setShowDeleteConfirm(true)
@@ -494,7 +494,7 @@ export default function UploadDetail() {
             className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-2xl"
           >
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 rounded-lg border border-red-900/40 bg-red-900/20 p-2 text-guava-red">
+              <div className="mt-0.5 rounded-lg border border-red-900/40 bg-red-900/20 p-2 text-guava-red-text">
                 <Trash2 className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">

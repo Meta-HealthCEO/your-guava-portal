@@ -118,7 +118,7 @@ export default function Forecasts() {
     <AppLayout title="Planning">
       <div className="space-y-6">
         <div className="flex items-center gap-2 text-muted text-sm">
-          <TrendingUp className="w-4 h-4 text-guava-red" />
+          <TrendingUp className="w-4 h-4 text-guava-red-text" />
           7-day rolling sales forecast · Updated daily
         </div>
 
