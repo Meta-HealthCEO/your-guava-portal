@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { AlertCircle, CheckCircle } from 'lucide-react'
 import api from '@/lib/api'
@@ -6,46 +6,61 @@ import logo from '@/assets/logo.png'
 
 type VerifyState = 'verifying' | 'verified' | 'error'
 
-const tokenFromFragment = () =>
-  new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token')
-
 export default function VerifyEmail() {
   const [state, setState] = useState<VerifyState>('verifying')
   const [message, setMessage] = useState('Verifying your email address...')
+  // undefined = the fragment has not been read yet, null = no usable token.
+  const [token, setToken] = useState<string | null | undefined>(undefined)
+  const captured = useRef(false)
+  const requested = useRef(false)
 
-  useEffect(() => {
-    const token = tokenFromFragment()
+  // The email link carries the token in the fragment, which is never sent to the
+  // hosting server. Capture it before paint, then strip it from history.
+  //
+  // The ref guard matters: this effect removes the fragment it just read, so a
+  // second invocation on the same mount — StrictMode in development, or any
+  // remount — would find nothing and mistake a valid link for a malformed one.
+  useLayoutEffect(() => {
+    if (captured.current) return
+    captured.current = true
+    const candidate =
+      new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token')?.trim() || ''
     window.history.replaceState(
-      {},
-      document.title,
+      window.history.state,
+      '',
       `${window.location.pathname}${window.location.search}`
     )
+    setToken(candidate || null)
+  }, [])
+
+  useEffect(() => {
+    if (token === undefined) return
     if (!token) {
       setState('error')
       setMessage('This verification link is invalid or incomplete.')
       return
     }
 
-    let active = true
+    // Verification spends the token, so it has to happen exactly once. A
+    // cancel-on-cleanup flag would be wrong here: it would discard the result of
+    // an request that has already been redeemed and cannot be repeated.
+    if (requested.current) return
+    requested.current = true
+
     api
       .post<{ message?: string }>('/auth/verify-email', { token })
       .then(({ data }) => {
-        if (!active) return
         setState('verified')
         setMessage(data.message || 'Email verified. You can now sign in.')
       })
       .catch((error) => {
-        if (!active) return
         setState('error')
         setMessage(
           error?.response?.data?.message ||
             'This verification link is invalid or has expired.'
         )
       })
-    return () => {
-      active = false
-    }
-  }, [])
+  }, [token])
 
   return (
     <div className="min-h-screen bg-[#0A0808] flex items-center justify-center px-6">
