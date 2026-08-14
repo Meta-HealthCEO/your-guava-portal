@@ -32,7 +32,7 @@ import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
 import type { Forecast, ForecastFactorSettings, TransactionStats } from '@/types'
 import { cn } from '@/lib/utils'
-import { parseDateOnly } from '@/lib/date'
+import { forecastDateKey, parseDateOnly } from '@/lib/date'
 import {
   isLoadSheddingAvailable,
   isWeatherAvailable,
@@ -569,8 +569,12 @@ export default function Dashboard() {
     },
     {
       label: 'Forecast Day',
-      value: activeForecast ? formatDate(parseDateOnly(activeForecast.date)) : '-',
-      sub: activeForecast ? getDayLabel(parseDateOnly(activeForecast.date)) : undefined,
+      // Use the cafe-local calendar key, not the stored instant. A forecast for
+      // 14 Aug is stored at local midnight (22:00 UTC on the 13th), and
+      // parseDateOnly matches the leading YYYY-MM-DD of that ISO string, so
+      // reading `.date` here labelled every forecast with the previous day.
+      value: activeForecast ? formatDate(parseDateOnly(forecastDateKey(activeForecast))) : '-',
+      sub: activeForecast ? getDayLabel(parseDateOnly(forecastDateKey(activeForecast))) : undefined,
       icon: Clock,
       accent: '#FFD166',
     },
@@ -623,7 +627,7 @@ export default function Dashboard() {
       <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
         {weekForecasts.length > 0
           ? weekForecasts.map((wf, idx) => {
-              const d = parseDateOnly(wf.date)
+              const d = parseDateOnly(forecastDateKey(wf))
               return (
                 <button
                   key={idx}
