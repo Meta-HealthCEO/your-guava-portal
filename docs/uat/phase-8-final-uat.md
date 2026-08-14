@@ -63,7 +63,11 @@ honestly stated is more useful than a clean sheet that quietly omits them.
 State these explicitly rather than letting them read as passes:
 
 - Payment settlement — requires a public callback; **verify in staging**
-- Transactional email — requires `RESEND_API_KEY`
+- Email *delivery* — still requires `RESEND_API_KEY`. The flows that depend on email
+  (signup verification, team invites) are now testable locally: outside production an
+  unconfigured mailer logs the message with its action link, and the token is real and
+  single-use. What remains unverified is the provider hand-off — rendering in a real
+  client, deliverability, bounces. **Verify in staging.**
 - Accounting integrations — pre-MVP by design
 
 ## Exit criteria
