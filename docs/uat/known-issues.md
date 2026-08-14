@@ -7,6 +7,8 @@ audit pass (Aug 2026).
 
 | ID | Sev | Area | Issue |
 | --- | --- | --- | --- |
+| KI-11 | S2 | AI | Ask Guava answers relative dates with the wrong day. The chat context sends `upcomingForecasts` keyed only by date and never states what "today" is, so "what should I prepare tomorrow?" returned today's quantities under a "Tomorrow's" heading. Affects the product's core question. Found in Phase 8 (F2); filed on the improvements board as #3. |
+| KI-12 | S2 | Auth | `VerifyEmail` reads the token from the URL fragment, strips the fragment, and requests — all in one effect, so a StrictMode remount loses the token and reports a false failure over a successful verification. Dev-only today (production React does not double-invoke effects). `AcceptInvite` already solves this with a `useRef` guard plus a StrictMode test; port both. Found in Phase 8 (F1). |
 | KI-03 | S2 | Model | Plan tier silently changes forecast output. `applyPlanEntitlements` forces locked factors off, so identical data yields different numbers by plan. Not surfaced to the user. |
 | KI-05 | S3 | Uploads | Duplicate re-upload is recorded as `failed` with an `errorMessage`. The UI softens this to "no new rows" by regex-matching the message — brittle. Wants a structured reason code, which means revisiting the tested 409 contract. |
 | KI-06 | S3 | Charts | Recharts still logs `width(-1)` container-measurement warnings even where charts now render. Underlying layout-timing issue unresolved. |
