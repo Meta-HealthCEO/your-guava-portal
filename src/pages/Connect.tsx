@@ -110,7 +110,7 @@ function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: 
         </div>
 
         <div className="mt-5 h-2 overflow-hidden rounded-full bg-border">
-          <div className="h-full rounded-full bg-guava-red transition-all duration-500" style={{ width: `${pct}%` }} />
+          <div className="h-full rounded-full bg-guava-red transition-all duration-300" style={{ width: `${pct}%` }} />
         </div>
 
         <div className="mt-5 space-y-2">

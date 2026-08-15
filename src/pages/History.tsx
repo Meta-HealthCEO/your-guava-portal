@@ -253,38 +253,6 @@ export default function History() {
           </div>
         )}
 
-        {!loading && !error && meta?.pendingDays ? (
-          <div className="rounded-lg border border-guava-yellow/30 bg-guava-yellow/10 p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="font-medium text-guava-yellow">
-                  {history.length === 0 ? 'Preparing history' : 'More historical estimates are available'}
-                </p>
-                <p className="mt-1 text-sm text-muted">
-                  Showing {meta.totalRows} of {meta.totalTradingDays} completed trading days.
-                  Building a batch creates retrospective estimates marked as backtests; they are not original live predictions.
-                </p>
-              </div>
-              <Button variant="outline" size="sm" disabled={buildingHistory} onClick={buildNextHistoryBatch}>
-                <RefreshCw className="h-4 w-4" />
-                {buildingHistory
-                  ? 'Building…'
-                  : `Build next ${meta.backfill?.batchSize || HISTORY_BACKFILL_BATCH_SIZE}`}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        {!loading && !error && history.length === 0 && !meta?.pendingDays && (
-          <div className="rounded-lg border border-border bg-surface p-8 text-center">
-            <CalendarDays className="mx-auto h-8 w-8 text-[#9E9E9E]" />
-            <p className="mt-3 font-medium text-text">No completed trading days found</p>
-            <p className="mt-1 text-sm text-muted">Upload approved transaction data to start building history.</p>
-            <Button asChild className="mt-4" size="sm">
-              <Link to="/data-health">Open Data Health</Link>
-            </Button>
-          </div>
-        )}
 
         {!loading && !error && history.length > 0 && meta && (
           <>
@@ -327,6 +295,39 @@ export default function History() {
                 tone={varianceTone}
               />
             </div>
+
+            {!loading && !error && meta?.pendingDays ? (
+              <div className="rounded-lg border border-guava-yellow/30 bg-guava-yellow/10 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="font-medium text-guava-yellow">
+                      {history.length === 0 ? 'Preparing history' : 'More historical estimates are available'}
+                    </p>
+                    <p className="mt-1 text-sm text-muted">
+                      Showing {meta.totalRows} of {meta.totalTradingDays} completed trading days.
+                      Building a batch creates retrospective estimates marked as backtests; they are not original live predictions.
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm" disabled={buildingHistory} onClick={buildNextHistoryBatch}>
+                    <RefreshCw className="h-4 w-4" />
+                    {buildingHistory
+                      ? 'Building…'
+                      : `Build next ${meta.backfill?.batchSize || HISTORY_BACKFILL_BATCH_SIZE}`}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {!loading && !error && history.length === 0 && !meta?.pendingDays && (
+              <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                <CalendarDays className="mx-auto h-8 w-8 text-[#9E9E9E]" />
+                <p className="mt-3 font-medium text-text">No completed trading days found</p>
+                <p className="mt-1 text-sm text-muted">Upload approved transaction data to start building history.</p>
+                <Button asChild className="mt-4" size="sm">
+                  <Link to="/data-health">Open Data Health</Link>
+                </Button>
+              </div>
+            )}
 
             <ModelLearningPanel sources={history} />
 

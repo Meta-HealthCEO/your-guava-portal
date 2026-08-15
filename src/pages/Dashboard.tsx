@@ -155,7 +155,7 @@ function CircularGauge({ value, color, size = 48 }: { value: number; color: stri
         stroke={color} strokeWidth={strokeWidth}
         strokeDasharray={circumference} strokeDashoffset={offset}
         strokeLinecap="round"
-        className="transition-all duration-700"
+        className="transition-all duration-300"
       />
     </svg>
   )
