@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/hooks/useAuth'
 import api from '@/lib/api'
+import { publishGuavaCredits } from '@/lib/creditEvents'
 import { secureRandomId } from '@/lib/idempotency'
 import type { Account, BillingPlan } from '@/types'
 
@@ -26,7 +27,7 @@ type SaveState = 'idle' | 'saving' | 'success' | 'error'
 type NoticeState = { type: 'success' | 'error'; message: string } | null
 type BillingCycle = 'monthly' | 'annual'
 type PaymentIntent = {
-  provider: 'mock' | 'onegate'
+  provider: 'mock' | 'onegate' | 'paystack'
   reference?: string
   redirectUrl?: string
   amount?: number
@@ -408,6 +409,10 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
 
       if (data.account) {
         setAccount(data.account)
+        // The toolbar caches the credit balance for 30s, so without this the
+        // header still shows the pre-purchase figure while this page shows the
+        // new one — the same number disagreeing with itself on one screen.
+        publishGuavaCredits(data.account.usage?.guavaCredits ?? data.account.usage?.aiCredits)
         creditCheckoutRef.current = null
         showNotice('success', `Added ${packCredits.toLocaleString('en-ZA')} Guava Credits to this billing period.`)
       } else {
