@@ -132,7 +132,7 @@ export default function Signup() {
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="min-h-screen relative flex overflow-hidden">
       {/* Full-page background — coffee shop photo with gradient fallback */}
       <div className="absolute inset-0 bg-[#0A0808]" />
       <div
