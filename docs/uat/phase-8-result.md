@@ -94,3 +94,71 @@ to completion.
 - **Accounting integrations** are pre-MVP by design and were not tested.
 - The forecast engine was exercised against generated data with a known weekday rhythm, and
   recovered it. That validates the mechanism, not real-world accuracy.
+
+---
+
+# Phase 8 — re-run
+
+**Certifies:** portal `5cd2b5b`, backend `46b723d`
+**Run date:** 15 Aug 2026
+**Suites:** backend 476/476, portal 232/232, typecheck clean
+
+Triggered by the two fixes (KI-11, KI-12) plus the Paystack provider, which
+invalidated the first run.
+
+## Re-executed
+
+| ID | Result | Note |
+| --- | --- | --- |
+| P8-01 | **Pass** (was fail) | Verification link now reports success; log confirms exactly one POST → 201, so the once-only guard holds under real StrictMode |
+| P8-03 | Pass | Sunday 16 Aug: R888, 19 items, and the "occasional sellers — under 2 a day" grouping correctly engages on a low-volume day |
+| P8-04 | Pass | 18 price differences; rationale still names the most recent POS price and warns average/range differ |
+| P8-05 | **Pass** (was fail) | Returns Saturday 15 Aug / R4 126 / Cappuccino 21, matching Planning. Metering exact at 3 credits |
+| P8-06 | Pass | 86.5% typical day vs 95.9% period totals, backtests separated, learning correction with sample counts |
+| P8-08 | **Pass** (was blocked) | Credit purchase succeeds on the mock provider: 400 → 900 |
+| P8-11 | Pass | 390 px: measured `scrollWidth 385 = clientWidth 385`, no horizontal overflow; figures identical to desktop |
+| P8-12 | Pass | "Already up to date… your existing data is untouched"; history row reads "no new rows" rather than "failed" |
+| P8-13 | Pass | Cross-screen figures agree, including on mobile and inside the AI answer |
+| P8-14 | Pass | 8/8 accuracy figures reproduced from raw item quantities; revenue and counts exact |
+| P8-15 | Pass | Ledger committed 22 = `aiCredits.used`; available 6478 = 6000 − 22 + 500 bonus; 0 leaked reservations |
+| P8-16 | Pass | API 11 337 = DB 11 337 |
+| P8-17 | Pass | 5 endpoints × 3 injected params, none honoured; path ids 404; control 200 |
+
+## Carried forward, not re-executed
+
+Stated plainly rather than counted as passes. These passed in the first run, and
+the changes since — the AI chat context, the VerifyEmail effect, the payment
+provider seam, and the toolbar credit refresh — cannot reach them.
+
+- **P8-02** first upload of a POS export. The ingest path was still exercised: the
+  same file was re-submitted and correctly detected as already imported.
+- **P8-07** invite a manager
+- **P8-09** correct trading hours
+- **P8-10** log an improvement ticket
+
+## Found during the re-run
+
+**KI-R22 — the toolbar credit balance went stale after a purchase.** The billing
+page showed 900 while the header still showed 400: the same figure disagreeing
+with itself on one screen, which is exactly what P8-13 exists to catch. The
+toolbar caches the balance for 30s and the purchase never invalidated it, even
+though the `publishGuavaCredits` channel already existed and AI spend used it.
+Fixed and verified live — header moved 900 → 2 400 with no reload.
+
+## Result
+
+Twelve journeys pass and the integrity sweep is clean on all five checks. One new
+defect was found and fixed; four journeys were carried forward rather than
+re-executed, listed above.
+
+## Residual risk
+
+Unchanged from the first run except that payment is now partly covered:
+
+- **Card payments run on the mock provider locally.** Paystack is implemented and
+  unit-tested but has not been exercised against the real API — that needs a
+  `sk_test_` key. See [prod-todo.md](../prod-todo.md).
+- **Email delivery** still unverified end to end; the flows work through the
+  console transport but provider hand-off, rendering and deliverability do not.
+- The forecast engine was validated against generated data whose weekday rhythm it
+  recovered. That tests the mechanism, not real-world accuracy.
