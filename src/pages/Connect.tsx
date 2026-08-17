@@ -100,7 +100,7 @@ function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: 
       <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-2xl">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-guava-red/10">
-            <LoaderCircle className="h-5 w-5 animate-spin text-guava-red" />
+            <LoaderCircle className="h-5 w-5 animate-spin text-guava-red-text" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="font-semibold text-text">{current.title}</p>
@@ -110,7 +110,7 @@ function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: 
         </div>
 
         <div className="mt-5 h-2 overflow-hidden rounded-full bg-border">
-          <div className="h-full rounded-full bg-guava-red transition-all duration-500" style={{ width: `${pct}%` }} />
+          <div className="h-full rounded-full bg-guava-red transition-all duration-300" style={{ width: `${pct}%` }} />
         </div>
 
         <div className="mt-5 space-y-2">
@@ -122,7 +122,7 @@ function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: 
                 {done ? (
                   <CheckCircle className="h-4 w-4 text-guava-green" />
                 ) : active ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin text-guava-red" />
+                  <LoaderCircle className="h-4 w-4 animate-spin text-guava-red-text" />
                 ) : (
                   <span className="h-4 w-4 rounded-full border border-border" />
                 )}
@@ -211,7 +211,7 @@ function DataStatusCard({
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-guava-red" />
+          <TrendingUp className="w-4 h-4 text-guava-red-text" />
           <CardTitle>Data Status</CardTitle>
         </div>
         <CardDescription>How fresh is your uploaded transaction data?</CardDescription>
@@ -238,7 +238,7 @@ function DataStatusCard({
                 <span className="w-1.5 h-1.5 rounded-full bg-current" />
                 {statusLabel}
               </div>
-              <p className="text-[#777777] text-sm truncate">{statusSubtitle}</p>
+              <p className="text-[#9E9E9E] text-sm truncate">{statusSubtitle}</p>
             </div>
 
             {/* Middle: 30-day coverage strip */}
@@ -297,7 +297,7 @@ export default function Connect() {
   // ── CSV Upload state ─────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
-  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'success' | 'error' | 'duplicate'>('idle')
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>('uploading')
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -495,7 +495,9 @@ export default function Connect() {
     } catch (err: unknown) {
       const msg = extractErrorMsg(err, 'Upload failed. Please try again.')
       setErrorMsg(msg)
-      setUploadState('error')
+      // Re-importing a file you already uploaded is normal housekeeping, not a
+      // failure. The rows were skipped because they are already safely stored.
+      setUploadState(/already exist/i.test(msg) ? 'duplicate' : 'error')
     }
   }
 
@@ -566,7 +568,7 @@ export default function Connect() {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
-              <Upload className="w-4 h-4 text-guava-red" />
+              <Upload className="w-4 h-4 text-guava-red-text" />
               <CardTitle>Upload Sales Data</CardTitle>
             </div>
             <CardDescription>
@@ -607,7 +609,7 @@ export default function Connect() {
                 </p>
                 <p className="text-muted text-sm">
                   or{' '}
-                  <span className="text-guava-red hover:underline">click to browse</span>
+                  <span className="text-guava-red-text hover:underline">click to browse</span>
                 </p>
                 <div className="flex items-center justify-center gap-2 mt-4">
                   <Badge variant="secondary">.csv</Badge>
@@ -620,7 +622,7 @@ export default function Connect() {
             {uploadState === 'uploading' && (
               <div className="bg-[#111111] border border-border rounded-xl p-6 text-center">
                 <div className="w-12 h-12 rounded-xl bg-guava-red/10 flex items-center justify-center mx-auto mb-4">
-                  <LoaderCircle className="w-6 h-6 text-guava-red animate-spin" />
+                  <LoaderCircle className="w-6 h-6 text-guava-red-text animate-spin" />
                 </div>
                 <p className="text-text font-medium mb-1">{uploadPhaseText[uploadPhase].title}</p>
                 <p className="text-muted text-sm mb-4">{uploadPhaseText[uploadPhase].detail}</p>
@@ -709,10 +711,10 @@ export default function Connect() {
                         </li>
                         {actualsWereFilled && (
                           <li className="flex items-start gap-2 text-muted text-sm">
-                            <span className="text-guava-red mt-0.5">•</span>
+                            <span className="text-guava-red-text mt-0.5">•</span>
                             <span>
                               Filled actuals for past days — see{' '}
-                              <Link to="/planning" className="text-guava-red hover:underline">
+                              <Link to="/planning" className="text-guava-red-text hover:underline">
                                 Planning - Last week's results
                               </Link>
                             </span>
@@ -735,6 +737,25 @@ export default function Connect() {
                     Upload another file
                   </Button>
                 </div>
+              </div>
+            )}
+
+            {/* Already imported - a no-op, not a failure */}
+            {uploadState === 'duplicate' && (
+              <div className="bg-surface border border-border rounded-xl p-6">
+                <div className="flex items-start gap-3 mb-4">
+                  <CheckCircle className="w-5 h-5 text-muted shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-text font-medium mb-1">Already up to date</p>
+                    <p className="text-muted text-sm">
+                      Every row in this file was imported previously, so nothing changed.
+                      Your existing data is untouched.
+                    </p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={reset}>
+                  Upload a different file
+                </Button>
               </div>
             )}
 

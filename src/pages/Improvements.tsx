@@ -105,7 +105,7 @@ function TypeChip({ type }: { type: ImprovementType }) {
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-        isFix ? 'bg-guava-red/15 text-guava-red' : 'bg-guava-green/15 text-guava-green'
+        isFix ? 'bg-guava-red/15 text-guava-red-text' : 'bg-guava-green/15 text-guava-green'
       )}
     >
       <Icon className="h-3 w-3" />
@@ -588,12 +588,12 @@ export default function Improvements() {
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors',
                   active
-                    ? 'border-guava-red/30 bg-guava-red/10 font-semibold text-guava-red'
+                    ? 'border-guava-red/30 bg-guava-red/10 font-semibold text-guava-red-text'
                     : 'border-border font-medium text-muted hover:border-[#3A3A3A] hover:text-text'
                 )}
               >
                 {f.label}
-                <span className={cn('tabular-nums', active ? 'text-guava-red' : 'text-muted')}>{count}</span>
+                <span className={cn('tabular-nums', active ? 'text-guava-red-text' : 'text-muted')}>{count}</span>
               </button>
             )
           })}

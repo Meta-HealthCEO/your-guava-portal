@@ -30,7 +30,14 @@ function getCurrentMonday() {
   const day = d.getDay()
   const diff = d.getDate() - day + (day === 0 ? -6 : 1)
   d.setDate(diff)
-  return d.toISOString().split('T')[0]
+  // Normalise to midday before serialising, exactly as getWeekStart does in the
+  // component. Without this, toISOString() converts a local early-morning time
+  // back a day in any UTC+ timezone, so between 00:00 and 02:00 SAST the mocked
+  // shift landed outside the rendered week and the card never appeared. That is
+  // what made this test look intermittently flaky.
+  d.setHours(12, 0, 0, 0)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 describe('Roster', () => {

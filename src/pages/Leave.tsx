@@ -230,7 +230,7 @@ function LeaveCalendar() {
                       isToday && 'bg-guava-red/5 border-guava-red/20'
                     )}
                   >
-                    <p className={cn('text-[10px] mb-0.5', isToday ? 'text-guava-red font-bold' : 'text-muted')}>
+                    <p className={cn('text-[10px] mb-0.5', isToday ? 'text-guava-red-text font-bold' : 'text-muted')}>
                       {dayNum}
                     </p>
                     {calDay?.staff.map((s, i) => (
@@ -337,7 +337,7 @@ export default function Leave() {
         {/* Leave Requests */}
         <div>
           {/* Filter Tabs */}
-          <div className="flex items-center gap-1 mb-4 border-b border-border pb-px">
+          <div className="flex items-center gap-1 mb-4 border-b border-border pb-px overflow-x-auto">
             {FILTER_TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -345,7 +345,7 @@ export default function Leave() {
                 className={cn(
                   'px-4 py-2.5 text-sm font-medium transition-colors relative',
                   filter === tab.id
-                    ? 'text-guava-red'
+                    ? 'text-guava-red-text'
                     : 'text-muted hover:text-text'
                 )}
               >
@@ -419,7 +419,7 @@ export default function Leave() {
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-7 w-7 text-guava-red hover:text-guava-red hover:bg-guava-red/10"
+                                    className="h-7 w-7 text-guava-red-text hover:text-guava-red-text hover:bg-guava-red/10"
                                     onClick={() => handleReject(req._id)}
                                   >
                                     <X className="w-3.5 h-3.5" />

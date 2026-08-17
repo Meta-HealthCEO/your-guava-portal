@@ -80,7 +80,7 @@ export function ItemsHeatmap({ forecasts }: Props) {
                     className="text-center px-3 py-2"
                     style={{ backgroundColor: cellBg(val) }}
                   >
-                    <span className={val === 0 ? 'text-[#333333]' : 'text-text'}>
+                    <span className={val === 0 ? 'text-[#8A8A8A]' : 'text-text'}>
                       {val === 0 ? '—' : val}
                     </span>
                   </td>

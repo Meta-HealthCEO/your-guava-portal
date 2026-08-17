@@ -126,7 +126,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
   const delta = weekAvg > 0 ? ((totalPredictedRevenue - weekAvg) / weekAvg) * 100 : 0
   const isNeutral = Math.abs(delta) <= 5
-  const deltaColor = isNeutral ? 'text-muted' : delta > 0 ? 'text-guava-green' : 'text-guava-red'
+  const deltaColor = isNeutral ? 'text-muted' : delta > 0 ? 'text-guava-green' : 'text-guava-red-text'
   const deltaPrefix = delta > 0 ? '+' : ''
 
   // ── Past (review) mode helpers ─────────────────────────────────────────────
@@ -199,7 +199,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           <div className="rounded-lg bg-[#111111] border border-border p-4">
             {isClosed ? (
               <>
-                <p className="text-guava-red text-xs font-semibold uppercase tracking-wide">Closed</p>
+                <p className="text-guava-red-text text-xs font-semibold uppercase tracking-wide">Closed</p>
                 <p className="mt-2 text-text text-lg font-semibold">No trading forecast</p>
                 <p className="mt-1 text-sm text-muted">
                   {forecast.availability?.reason || 'This café is closed for the day.'}
@@ -228,7 +228,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                         ? 'text-guava-green'
                         : Math.abs(revDelta) <= 15
                         ? 'text-guava-yellow'
-                        : 'text-guava-red'
+                        : 'text-guava-red-text'
                     }`}
                   >
                     {revDelta >= 0 ? '+' : ''}{revDelta.toFixed(0)}% vs predicted
@@ -285,7 +285,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                     <div key={item.itemName} className="text-xs text-muted">
                       <span className="text-text">{item.itemName}</span>
                       {' — '}predicted {item.predictedQty}, actual {item.actualQty},{' '}
-                      <span className={diff > 0 ? 'text-guava-green' : 'text-guava-red'}>
+                      <span className={diff > 0 ? 'text-guava-green' : 'text-guava-red-text'}>
                         {direction} {absDiff} units
                       </span>
                     </div>
@@ -334,7 +334,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                       ? 'text-guava-green'
                       : Math.abs(pct) <= 15
                       ? 'text-guava-yellow'
-                      : 'text-guava-red'
+                      : 'text-guava-red-text'
                   return (
                     <div
                       key={item.itemName}
@@ -387,7 +387,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-lg bg-[#111111] border border-border p-3 flex items-center gap-2">
-                    <Coffee className="w-4 h-4 text-guava-red shrink-0" />
+                    <Coffee className="w-4 h-4 text-guava-red-text shrink-0" />
                     <div>
                       <p className="text-text text-sm font-semibold">≈ {inventory.coffee}</p>
                       <p className="text-muted text-[10px]">coffee drinks</p>
@@ -423,10 +423,10 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               <Separator className="bg-border" />
 
               <div className="rounded-lg bg-[#111111] border border-border p-4 flex items-start gap-3">
-                <Sparkles className="w-4 h-4 text-guava-red shrink-0 mt-0.5" />
+                <Sparkles className="w-4 h-4 text-guava-red-text shrink-0 mt-0.5" />
                 <p className="text-muted text-xs leading-relaxed">
                   AI insights load globally - see{' '}
-                  <span className="text-guava-red">Ask Guava</span> for the full list powered by Claude.
+                  <span className="text-guava-red-text">Ask Guava</span> for the full list powered by Claude.
                 </p>
               </div>
             </>

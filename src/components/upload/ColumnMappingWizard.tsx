@@ -132,7 +132,7 @@ export function ColumnMappingWizard({
               return (
                 <div key={key} className="contents">
                   <label htmlFor={`mapping-${key}`} className="text-sm text-text self-center">
-                    {label}{fieldRequired && <span className="text-guava-red"> *</span>}
+                    {label}{fieldRequired && <span className="text-guava-red-text"> *</span>}
                   </label>
                   <select
                     id={`mapping-${key}`}
@@ -164,7 +164,7 @@ export function ColumnMappingWizard({
           </div>
 
           {preview.length > 0 && (
-            <div className="text-xs text-[#777777]">
+            <div className="text-xs text-[#9E9E9E]">
               <p className="mb-2">Preview (first {preview.length} rows):</p>
               <div className="overflow-auto max-h-48 border border-border rounded-lg">
                 <table className="text-xs w-full">

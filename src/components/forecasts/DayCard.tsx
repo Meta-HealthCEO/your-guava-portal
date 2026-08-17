@@ -32,7 +32,7 @@ function deltaColor(pct: number): string {
   const abs = Math.abs(pct)
   if (abs <= 5) return 'text-guava-green'
   if (abs <= 15) return 'text-guava-yellow'
-  return 'text-guava-red'
+  return 'text-guava-red-text'
 }
 
 function hasMatchedActuals(forecast: Forecast): boolean {
@@ -64,11 +64,17 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
     ? 'text-muted'
     : delta > 0
     ? 'text-guava-green'
-    : 'text-guava-red'
+    : 'text-guava-red-text'
   const deltaPrefix = delta > 0 ? '+' : ''
 
   // ── Plan mode ──────────────────────────────────────────────────────────────
-  const top5Plan = [...items].sort((a, b) => b.predictedQty - a.predictedQty).slice(0, 5)
+  // Never put a suggested-stock number against a line selling under ~2 a day:
+  // backtested error on those exceeds 100%, so the figure is noise dressed as a
+  // plan. Today's dashboard groups them separately for the same reason.
+  const top5Plan = [...items]
+    .filter((item) => (item.confidence ?? 'high') !== 'low')
+    .sort((a, b) => b.predictedQty - a.predictedQty)
+    .slice(0, 5)
   const maxQtyPlan = top5Plan.length > 0 ? top5Plan[0].predictedQty : 1
 
   // ── Review mode ────────────────────────────────────────────────────────────
@@ -85,7 +91,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
       ? 'text-guava-green'
       : acc >= 70
       ? 'text-guava-yellow'
-      : 'text-guava-red'
+      : 'text-guava-red-text'
 
   if (forecast.availability?.status === 'closed') {
     return (

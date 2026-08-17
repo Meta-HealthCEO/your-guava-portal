@@ -158,7 +158,10 @@ describe('History page', () => {
     expect(screen.getByText(/Local Market/)).toBeInTheDocument()
     expect(screen.getByText('Live forecast accuracy')).toBeInTheDocument()
     expect(screen.getByText('Backtest accuracy')).toBeInTheDocument()
-    expect(screen.getByText(/1 live day · daily avg 83.3%/)).toBeInTheDocument()
+    // The headline is the typical day, with the flattering period-total figure
+    // demoted to the detail line.
+    expect(screen.getByText(/Typical day across 1 live day/)).toBeInTheDocument()
+    expect(screen.getByText(/on period totals/)).toBeInTheDocument()
     expect(screen.getByText(/No retrospective backtests/i)).toBeInTheDocument()
     expect(screen.queryByText('Overall accuracy')).not.toBeInTheDocument()
     expect(screen.getByText('Model Learning')).toBeInTheDocument()

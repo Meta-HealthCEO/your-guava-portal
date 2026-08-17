@@ -186,6 +186,17 @@ export default function Settings() {
   const [cafeLatitude, setCafeLatitude] = useState('')
   const [cafeLongitude, setCafeLongitude] = useState('')
   const [cafeTimezone, setCafeTimezone] = useState('')
+  // These three sections used to be signposts with no information on them.
+  // A summary of the current state makes each one worth opening.
+  const [sectionSummary, setSectionSummary] = useState<{
+    seatsUsed?: number
+    seatsIncluded?: number
+    locationsUsed?: number
+    locationsIncluded?: number
+    plan?: string
+    factorsUnlocked?: number
+    factorsTotal?: number
+  }>({})
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [cafeState, setCafeState] = useState<SaveState>('idle')
   const [cafeError, setCafeError] = useState<string | undefined>()
@@ -231,6 +242,28 @@ export default function Settings() {
     setIsEditingHours(false)
     try {
       const { data } = await api.get<{ success: boolean; cafe: Cafe }>('/cafe/me', { signal })
+      // Best-effort: the page still works fully if either call fails.
+      void (async () => {
+        const [accountRes, factorRes] = await Promise.allSettled([
+          api.get('/account', { signal }),
+          api.get('/forecasts/factors', { signal }),
+        ])
+        const next: typeof sectionSummary = {}
+        if (accountRes.status === 'fulfilled') {
+          const usage = accountRes.value.data?.account?.usage
+          next.seatsUsed = usage?.seats?.used
+          next.seatsIncluded = usage?.seats?.included
+          next.locationsUsed = usage?.locations?.used
+          next.locationsIncluded = usage?.locations?.included
+          next.plan = accountRes.value.data?.account?.organization?.plan
+        }
+        if (factorRes.status === 'fulfilled') {
+          const ent = factorRes.value.data?.entitlements
+          next.factorsUnlocked = ent?.unlockedKeys?.length
+          next.factorsTotal = (ent?.unlockedKeys?.length ?? 0) + (ent?.lockedKeys?.length ?? 0)
+        }
+        setSectionSummary(next)
+      })()
       if (!data?.cafe) throw new Error('Cafe response was empty')
         const cafe = data.cafe
         const snapshot: LoadedSnapshot = {
@@ -424,14 +457,14 @@ export default function Settings() {
                   aria-current={active ? 'page' : undefined}
                   className={
                     active
-                      ? 'flex w-full items-start gap-3 rounded-lg border-l-2 border-guava-red bg-guava-red/10 px-3 py-2.5 text-left text-guava-red'
+                      ? 'flex w-full items-start gap-3 rounded-lg border-l-2 border-guava-red bg-guava-red/10 px-3 py-2.5 text-left text-guava-red-text'
                       : 'flex w-full items-start gap-3 rounded-lg border-l-2 border-transparent px-3 py-2.5 text-left text-muted transition-colors hover:bg-white/5 hover:text-text'
                   }
                 >
                   <Icon className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">{section.label}</span>
-                    <span className={active ? 'block text-xs text-guava-red/80' : 'block text-xs text-muted'}>
+                    <span className={active ? 'block text-xs text-guava-red-text/80' : 'block text-xs text-muted'}>
                       {section.description}
                     </span>
                   </span>
@@ -465,7 +498,7 @@ export default function Settings() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-guava-red" />
+                  <Clock className="w-4 h-4 text-guava-red-text" />
                   <CardTitle>Trading Hours</CardTitle>
                 </div>
                 <CardDescription className="mt-1">
@@ -590,7 +623,7 @@ export default function Settings() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <Store className="w-4 h-4 text-guava-red" />
+                  <Store className="w-4 h-4 text-guava-red-text" />
                   <CardTitle>Cafe Details</CardTitle>
                 </div>
                 <CardDescription className="mt-1">
@@ -784,6 +817,13 @@ export default function Settings() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-lg border border-border bg-[#111111] p-4">
+              {sectionSummary.factorsTotal ? (
+                <p className="mb-3 text-sm text-text">
+                  <span className="font-semibold">{sectionSummary.factorsUnlocked}</span> of{' '}
+                  <span className="font-semibold">{sectionSummary.factorsTotal}</span> forecast factors are
+                  unlocked on your {sectionSummary.plan ?? 'current'} plan.
+                </p>
+              ) : null}
               <p className="text-sm font-medium text-text">Configure the prediction algorithm in Planning.</p>
               <p className="mt-1 text-sm text-muted">
                 This keeps weather, holidays, events, payday rules, and learning correction together instead of splitting them across Settings.
@@ -814,6 +854,10 @@ export default function Settings() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-lg border border-border bg-[#111111] p-4">
+                  <p className="mb-3 text-sm text-text">
+                    <span className="font-semibold">No connections active.</span> Xero, QuickBooks and Sage
+                    are planned after the MVP — sales data imports through Data Health meanwhile.
+                  </p>
                   <p className="text-sm font-medium text-text">Connection workspace</p>
                   <p className="mt-1 text-sm text-muted">
                     Integrations remain a dedicated page for connection status and provider setup.
@@ -844,6 +888,16 @@ export default function Settings() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-lg border border-border bg-[#111111] p-4">
+                  {sectionSummary.seatsIncluded ? (
+                    <p className="mb-3 text-sm text-text">
+                      <span className="font-semibold">{sectionSummary.seatsUsed}</span> of{' '}
+                      <span className="font-semibold">{sectionSummary.seatsIncluded}</span> seats used
+                      {sectionSummary.locationsIncluded ? (
+                        <> · <span className="font-semibold">{sectionSummary.locationsUsed}</span> of{' '}
+                          <span className="font-semibold">{sectionSummary.locationsIncluded}</span> locations</>
+                      ) : null}
+                    </p>
+                  ) : null}
                   <p className="text-sm font-medium text-text">Access management</p>
                   <p className="mt-1 text-sm text-muted">
                     User invitations and roles stay together with the rest of account setup.

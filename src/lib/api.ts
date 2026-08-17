@@ -162,6 +162,20 @@ api.interceptors.response.use(
         return Promise.reject(refreshError)
       }
     }
+
+    // The subscription has lapsed. The API answers every data request with a
+    // structured 402, but without this branch each page just reports that its
+    // data "could not load" and offers a Try again that can never succeed —
+    // telling a paying customer the product is broken at exactly the moment
+    // they need to be sent to the payment screen.
+    if (error.response?.status === 402 && error.response?.data?.code === 'BILLING_REQUIRED') {
+      const alreadyOnBilling = window.location.pathname === '/settings'
+        && new URLSearchParams(window.location.search).get('section') === 'billing'
+      if (!alreadyOnBilling) {
+        window.location.href = '/settings?section=billing&billing=required'
+      }
+    }
+
     return Promise.reject(error)
   }
 )

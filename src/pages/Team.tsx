@@ -80,7 +80,7 @@ function StatTile({
   const toneClass = {
     neutral: 'bg-surface-2 text-muted',
     good: 'bg-guava-green/10 text-guava-green',
-    warn: 'bg-guava-red/10 text-guava-red',
+    warn: 'bg-guava-red/10 text-guava-red-text',
   }[tone]
 
   return (
@@ -89,7 +89,7 @@ function StatTile({
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-muted">{label}</p>
           <p className="mt-2 text-2xl font-semibold tabular-nums text-text">{value}</p>
-          {sub && <p className="mt-1 truncate text-xs text-[#666666]">{sub}</p>}
+          {sub && <p className="mt-1 truncate text-xs text-[#949494]">{sub}</p>}
         </div>
         <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', toneClass)}>
           <Icon className="h-4 w-4" />
@@ -156,7 +156,7 @@ function CafeAccessPicker({
 }) {
   if (cafes.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-border bg-[#111111] px-3 py-4 text-sm text-[#666666]">
+      <div className="rounded-lg border border-dashed border-border bg-[#111111] px-3 py-4 text-sm text-[#949494]">
         No cafe locations yet.
       </div>
     )
@@ -180,7 +180,7 @@ function CafeAccessPicker({
               type="checkbox"
               checked={checked}
               onChange={() => onToggle(cafe._id)}
-              className="h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red focus:ring-guava-red focus:ring-offset-0"
+              className="h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red-text focus:ring-guava-red focus:ring-offset-0"
             />
             <span className="truncate text-sm">{cafe.name}</span>
           </label>
@@ -534,7 +534,7 @@ export default function Team() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-guava-red" />
+                    <Users className="h-4 w-4 text-guava-red-text" />
                     Team members
                   </CardTitle>
                   <CardDescription>{members.length} member{members.length === 1 ? '' : 's'}</CardDescription>
@@ -569,7 +569,7 @@ export default function Team() {
                         <Initials name={member.name} />
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium text-text">{member.name}</p>
-                          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-[#666666]">
+                          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-[#949494]">
                             <Mail className="h-3.5 w-3.5 shrink-0" />
                             <span className="truncate">{member.email}</span>
                           </div>
@@ -590,7 +590,7 @@ export default function Team() {
                             ))}
                           </div>
                         ) : (
-                          <span className="text-xs text-[#666666]">No cafe access</span>
+                          <span className="text-xs text-[#949494]">No cafe access</span>
                         )}
                         {member.role === 'manager' && (
                           <div className="mt-2">
@@ -631,14 +631,16 @@ export default function Team() {
                               variant="ghost"
                               size="icon"
                               onClick={() => setMemberPendingRemoval(member)}
-                              className="text-[#777777] hover:text-red-400"
+                              className="text-[#9E9E9E] hover:text-red-400"
                               aria-label={`Remove ${member.name}`}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </>
                         ) : (
-                          <span className="text-xs text-[#666666]">Owner</span>
+                          // Explains the absent actions rather than repeating the
+                          // role badge shown two columns to the left.
+                          <span className="text-xs text-[#949494]">Owners can&rsquo;t be removed</span>
                         )}
                       </div>
                     </div>
@@ -653,7 +655,7 @@ export default function Team() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <CardTitle className="flex items-center gap-2">
-                    <Store className="h-4 w-4 text-guava-red" />
+                    <Store className="h-4 w-4 text-guava-red-text" />
                     Locations
                   </CardTitle>
                   <CardDescription>{cafes.length} cafe{cafes.length === 1 ? '' : 's'}</CardDescription>
@@ -667,7 +669,7 @@ export default function Team() {
               {cafes.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-[#111111] px-4 py-8 text-center">
                   <Building2 className="mx-auto mb-3 h-5 w-5 text-muted" />
-                  <p className="text-sm text-[#666666]">No locations yet</p>
+                  <p className="text-sm text-[#949494]">No locations yet</p>
                 </div>
               ) : (
                 cafes.map((cafe) => (
@@ -790,7 +792,7 @@ export default function Team() {
               />
             </div>
           </div>
-          <p className="text-xs text-[#777777]">
+          <p className="text-xs text-[#9E9E9E]">
             We email a single-use link. The manager chooses their password before an account is created.
           </p>
           <div className="space-y-2">
@@ -802,7 +804,7 @@ export default function Team() {
               type="checkbox"
               checked={invCanSpendCredits}
               onChange={(event) => setInvCanSpendCredits(event.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red"
+              className="mt-0.5 h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red-text"
             />
             <span>
               <span className="block text-sm font-medium text-text">Allow Guava Credit spending</span>
@@ -844,7 +846,7 @@ export default function Team() {
               type="checkbox"
               checked={editCanSpendCredits}
               onChange={(event) => setEditCanSpendCredits(event.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red"
+              className="mt-0.5 h-4 w-4 rounded border-[#333333] bg-[#111111] text-guava-red-text"
             />
             <span>
               <span className="block text-sm font-medium text-text">Allow Guava Credit spending</span>

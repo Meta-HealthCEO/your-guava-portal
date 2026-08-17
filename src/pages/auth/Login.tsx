@@ -80,7 +80,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="min-h-screen relative flex overflow-hidden">
       {/* Full-page background — coffee shop photo with gradient fallback */}
       <div className="absolute inset-0 bg-[#0A0808]" />
       <div
@@ -100,20 +100,23 @@ export default function Login() {
           <p className="text-white/40 text-center leading-relaxed">
             Know what your customers want<br />before they walk in.
           </p>
-          <div className="mt-8 flex items-center justify-center gap-6">
-            <div className="text-center">
-              <p className="text-guava-green text-2xl font-bold">94%</p>
-              <p className="text-muted text-xs mt-0.5">Accuracy</p>
+          {/* Capability statements, not performance claims. The previous "94%
+              Accuracy" sat one screen away from a History page reporting ~88%
+              on a typical day, which undermines trust at the front door. */}
+          <div className="mt-8 flex items-start justify-center gap-6">
+            <div className="text-center whitespace-nowrap">
+              <p className="text-guava-green text-2xl font-bold">7 days</p>
+              <p className="text-muted text-xs mt-0.5">Forecast ahead</p>
             </div>
-            <div className="w-px h-8 bg-white/10" />
-            <div className="text-center">
-              <p className="text-guava-red text-2xl font-bold">30%</p>
-              <p className="text-muted text-xs mt-0.5">Less Waste</p>
+            <div className="w-px h-8 bg-white/10 mt-1.5" />
+            <div className="text-center whitespace-nowrap">
+              <p className="text-guava-red-text text-2xl font-bold">Daily</p>
+              <p className="text-muted text-xs mt-0.5">Prep list</p>
             </div>
-            <div className="w-px h-8 bg-white/10" />
-            <div className="text-center">
-              <p className="text-guava-yellow text-2xl font-bold">200+</p>
-              <p className="text-muted text-xs mt-0.5">Cafes</p>
+            <div className="w-px h-8 bg-white/10 mt-1.5" />
+            <div className="text-center whitespace-nowrap">
+              <p className="text-guava-yellow text-2xl font-bold">Live</p>
+              <p className="text-muted text-xs mt-0.5">Weather signals</p>
             </div>
           </div>
         </div>

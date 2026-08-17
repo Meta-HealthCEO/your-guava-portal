@@ -3,6 +3,9 @@
 @theme inline {
   --font-sans: 'Poppins', sans-serif;
   --color-guava-red: #D43D3D;
+  /* Text-safe tint of the brand red: #D43D3D is 4.14:1 on #0F0F0F, just under
+     the 4.5 needed for body copy. Fills and icons keep the original. */
+  --color-guava-red-text: #E05252;
   --color-guava-red-light: #FDEAEA;
   --color-guava-green: #4DA63B;
   --color-guava-green-light: #EEFAEB;
@@ -12,7 +15,9 @@
   --color-surface-2: #222222;
   --color-border: #2A2A2A;
   --color-text: #F0F0F0;
-  --color-muted: #888888;
+  /* #888888 measured 4.49:1 on the #0F0F0F ground - one hundredth under the
+     4.5 AA needs for body text, and this token carries most secondary copy. */
+  --color-muted: #8A8A8A;
 }
 
 * {

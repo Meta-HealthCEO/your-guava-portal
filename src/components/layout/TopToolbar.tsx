@@ -184,7 +184,7 @@ export function TopToolbar() {
         className={cn(
           'flex h-8 items-center gap-2 rounded-lg border px-2 text-xs font-semibold transition-colors sm:px-3',
           lowCredits
-            ? 'border-guava-red/40 bg-guava-red/10 text-guava-red hover:bg-guava-red/15'
+            ? 'border-guava-red/40 bg-guava-red/10 text-guava-red-text hover:bg-guava-red/15'
             : 'border-border bg-[#111111] text-text hover:border-[#3A3A3A] hover:bg-white/5'
         )}
         aria-label="Guava credits balance"
@@ -224,7 +224,7 @@ export function TopToolbar() {
                   onClick={() => goTo('/settings?section=billing')}
                   className="w-full rounded-lg border border-guava-red/30 bg-guava-red/10 p-3 text-left transition-colors hover:bg-guava-red/15"
                 >
-                  <p className="text-sm font-semibold text-guava-red">Credits running low</p>
+                  <p className="text-sm font-semibold text-guava-red-text">Credits running low</p>
                   <p className="mt-1 text-xs text-muted">
                     {formatCompactNumber(availableCredits)} Guava Credits available. Add credits before AI checks pause.
                   </p>
@@ -248,7 +248,7 @@ export function TopToolbar() {
           aria-label="Open user menu"
           aria-expanded={openMenu === 'user'}
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-guava-red/15 text-xs font-bold text-guava-red">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-guava-red/15 text-xs font-bold text-guava-red-text">
             {initials}
           </span>
           <ChevronDown className="hidden h-3.5 w-3.5 text-muted sm:block" />

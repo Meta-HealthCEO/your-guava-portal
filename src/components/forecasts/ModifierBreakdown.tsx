@@ -47,12 +47,12 @@ export function ModifierBreakdown({ factors }: Props) {
       {modifiers.map((m) => {
         const iconColor = m.active
           ? m.positive === false
-            ? 'text-guava-red'
+            ? 'text-guava-red-text'
             : 'text-guava-green'
           : 'text-[#444444]'
         const effectColor = m.active
           ? m.positive === false
-            ? 'text-guava-red'
+            ? 'text-guava-red-text'
             : 'text-guava-green'
           : 'text-muted'
         const labelColor = m.active ? 'text-text' : 'text-muted'

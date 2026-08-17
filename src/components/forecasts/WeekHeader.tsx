@@ -22,7 +22,7 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
       ? 'text-guava-green'
       : accuracy >= 60
       ? 'text-guava-yellow'
-      : 'text-guava-red'
+      : 'text-guava-red-text'
 
   const accuracyLabel =
     accuracy === null ? 'Awaiting matched sales data' : `${Math.round(accuracy)}%`
@@ -43,7 +43,7 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
         <CardContent className="p-5">
           <div className="flex items-start gap-3">
             <div className="p-2 rounded-lg bg-guava-red/10">
-              <TrendingUp className="w-4 h-4 text-guava-red" />
+              <TrendingUp className="w-4 h-4 text-guava-red-text" />
             </div>
             <div>
               <p className="text-muted text-xs mb-1">Weekly predicted revenue</p>

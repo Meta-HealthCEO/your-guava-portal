@@ -141,7 +141,13 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
             width={56}
           />
           <Tooltip content={<CustomTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 12, color: '#888888', paddingTop: 8 }} />
+          {/* Recharts colours the legend label with the series colour, which put
+              brand red on the dark ground at 3.76:1. The line and dots stay
+              brand red (graphics, judged at 3:1); only the label text shifts. */}
+          <Legend
+            wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
+            formatter={(value: string) => <span style={{ color: '#C9C1BB' }}>{value}</span>}
+          />
           <ReferenceLine
             x={todayStr}
             stroke="#4DA63B"
@@ -149,6 +155,7 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
             label={{ value: 'Today', position: 'top', fill: '#4DA63B', fontSize: 11 }}
           />
           <Line
+            isAnimationActive={false}
             type="monotone"
             dataKey="predicted"
             name="Predicted"
@@ -160,6 +167,7 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts }: Props) {
           />
           {hasActual && (
             <Line
+              isAnimationActive={false}
               type="monotone"
               dataKey="actual"
               name="Actual"
