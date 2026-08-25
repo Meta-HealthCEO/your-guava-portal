@@ -669,6 +669,22 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* The engine flags a day it cannot yet stand behind. Planning already
+          says so; Today is the screen people actually order from, so it has to
+          say so too rather than presenting the same numbers unqualified. */}
+      {!isLoading && activeForecast?.availability?.status === 'insufficient_data' && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          <span className="font-semibold">Not enough history yet.</span>{' '}
+          {activeForecast.availability.reason
+            ? `${activeForecast.availability.reason}. `
+            : 'This day does not yet have three comparable weeks of sales. '}
+          Treat these numbers as a rough starting point, not a prep list to order against.
+        </div>
+      )}
+
       {/* Predicted Output */}
       {!isLoading && activeForecast && (
         <div className="mb-6">
