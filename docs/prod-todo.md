@@ -7,6 +7,45 @@ tracks *environment and go-live* work.
 
 Last reviewed: 15 Aug 2026.
 
+## DEPLOY BLOCKER — proven, not suspected
+
+The production API has not been redeployed in ~57 days. The reason is now
+established empirically rather than guessed: running the real `validateEnv()`
+against the real Railway production environment
+(`railway run node -e "require('./src/config/validateEnv')()"`) fails with
+
+```
+ - TOKEN_ENCRYPTION_KEY is required in production and must be independent from JWT_SECRET
+ - RESEND_API_KEY is required and cannot be a placeholder in production
+ - RESEND_FROM_EMAIL is required and cannot be a placeholder in production
+```
+
+**Every deploy since the production hardening has failed to start.** Setting
+these three makes validation pass — verified by re-running the same check with
+them supplied, so this is the complete blocker set, not the first of several.
+
+- [ ] `TOKEN_ENCRYPTION_KEY` — generate with
+      `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+      Must differ from `JWT_SECRET`. It encrypts accounting-integration OAuth
+      tokens, which are pre-MVP and unused, so there is nothing to migrate. Note
+      that it currently falls back to a key derived from `JWT_SECRET`; if any
+      integration tokens somehow do exist, they would stop decrypting.
+- [ ] `RESEND_API_KEY`
+- [ ] `RESEND_FROM_EMAIL`
+
+### Signup is broken in production right now
+
+A consequence of the same gap, and worth stating separately because it affects
+the live site, not just the next deploy. `NODE_ENV=production` with no
+`RESEND_API_KEY` means `sendEmail` returns `{skipped:true}`, and the register
+handler answers **503 `VERIFICATION_EMAIL_FAILED`**, leaving a stranded
+`pendingregistrations` row. Team invites fail the same way. Any customer who has
+tried to sign up on the live site has hit this.
+
+`/api/ready` still reports `status: "ready"` throughout, because readiness checks
+the database and a two-key environment subset rather than the capabilities the
+product actually needs. Worth widening once the above is set.
+
 ## Blocked on credentials
 
 These are the two gaps that keep UAT from covering the whole product. Neither
