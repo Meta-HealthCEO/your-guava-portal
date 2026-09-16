@@ -5,3 +5,5 @@ dist
 *.local
 .vercel
 config.bat
+.env
+.env.*
