@@ -352,8 +352,45 @@ describe('UploadDetail', () => {
     renderUploadDetail()
 
     await screen.findByText('abandoned.csv')
+    // Re-map is still refused - the API answers 409 for pending_mapping - but the
+    // branch is no longer a dead end: the file, its headers and its sample rows are
+    // all still on the server, so the upload can be finished here.
     expect(screen.queryByRole('button', { name: /re-map columns/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/never finished/i)).toBeInTheDocument()
+    expect(screen.getByText(/columns were never confirmed/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /complete mapping/i })).toBeInTheDocument()
+  })
+
+  it('opens the mapping wizard when a stranded upload is completed', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+      }
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'abandoned.csv',
+            status: 'pending_mapping',
+            stats: { imported: 0, skipped: 0, errors: 0, totalRows: 0 },
+            posType: 'wizard',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            columnMapping: {},
+            itemsMode: 'packed',
+            headers: ['Sale Date', 'Description', 'Amount'],
+            sampleRows: [{ 'Sale Date': '2026/04/01', Description: '1 x Flat White', Amount: '38.00' }],
+          },
+          downloadUrl: 'https://test.r2.local/foo',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    await screen.findByText('abandoned.csv')
+    fireEvent.click(screen.getByRole('button', { name: /complete mapping/i }))
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/finish importing this file/i)
   })
 
   it('states what a re-map destroys before opening the mapping form', async () => {
