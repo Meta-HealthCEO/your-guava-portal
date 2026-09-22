@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
+import { statusLabel } from '@/components/upload/UploadHistoryCard'
 import api from '@/lib/api'
 import { confirmUpload } from '@/lib/uploads'
 import type { Upload, ColumnMapping, ItemsMode, UploadRowError } from '@/types/upload'
@@ -337,7 +338,9 @@ export default function UploadDetail() {
                 Uploaded {new Date(upload.createdAt).toLocaleString('en-ZA')} • {uploadSourceLabel(upload.posType)}
               </p>
             </div>
-            <Badge variant={upload.status === 'completed' ? 'success' : 'secondary'}>{upload.status}</Badge>
+            <Badge variant={upload.status === 'completed' ? 'success' : 'secondary'}>
+              {statusLabel[upload.status] || upload.status}
+            </Badge>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-4 gap-3">
@@ -346,6 +349,20 @@ export default function UploadDetail() {
               <Stat label="Errors" value={upload.stats.errors} />
               <Stat label="Total rows" value={upload.stats.totalRows} />
             </div>
+            {/* errorMessage was fetched and discarded, so a failed import showed the
+                word 'Failed' and nothing an owner could act on. */}
+            {upload.errorMessage && (
+              <p role="alert" className="mt-3 rounded-lg border border-guava-red/40 bg-guava-red-surface p-3 text-sm text-guava-red-text">
+                {upload.errorMessage}
+              </p>
+            )}
+            {upload.stats.skippedByReason?.status_not_approved ? (
+              <p className="mt-3 text-sm text-muted">
+                {upload.stats.skippedByReason.status_not_approved.toLocaleString('en-ZA')}{' '}
+                {upload.stats.skippedByReason.status_not_approved === 1 ? 'row was' : 'rows were'}{' '}
+                skipped because the Status column did not read as a completed sale.
+              </p>
+            ) : null}
             {upload.dateRange?.firstDate && (
               <p className="text-sm text-muted mt-3">
                 Date range: {new Date(upload.dateRange.firstDate).toLocaleDateString('en-ZA')}

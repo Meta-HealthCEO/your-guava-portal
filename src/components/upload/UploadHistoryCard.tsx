@@ -27,7 +27,8 @@ const statusColor: Record<string, 'success' | 'secondary' | 'destructive'> = {
 // The raw enum leaked straight into the table, so an owner saw "pending_mapping"
 // where they needed a sentence. Every status maps to copy; there is no
 // fallthrough that can print an internal name again.
-const statusLabel: Record<UploadStatus, string> = {
+// Shared with UploadDetail so an owner never sees a raw enum on either surface.
+export const statusLabel: Record<UploadStatus, string> = {
   completed: 'Imported',
   pending_mapping: 'Needs mapping',
   parsing: 'Importing…',
@@ -177,7 +178,27 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
                       <td>
                         {(() => {
                           const badge = statusBadge(u.status, u.stats.imported, u.errorMessage)
-                          return <Badge variant={badge.tone}>{badge.label}</Badge>
+                          // The reason was fetched and thrown away, so a failed import
+                          // read as the word 'Failed' and nothing else. A duplicate
+                          // already reads as 'no new rows', which says it better than
+                          // the raw server string would.
+                          const reason =
+                            u.errorMessage && !isDuplicateUploadMessage(u.errorMessage)
+                              ? u.errorMessage
+                              : null
+                          return (
+                            <>
+                              <Badge variant={badge.tone}>{badge.label}</Badge>
+                              {reason && (
+                                <span
+                                  className="mt-1 block max-w-60 truncate text-xs text-guava-red-text"
+                                  title={reason}
+                                >
+                                  {reason}
+                                </span>
+                              )}
+                            </>
+                          )
                         })()}
                       </td>
                       <td className="text-muted">{new Date(u.createdAt).toLocaleString('en-ZA')}</td>

@@ -25,6 +25,9 @@ export interface UploadStats {
   skipped: number;
   errors: number;
   totalRows: number;
+  /** Why rows were skipped, keyed by reason (e.g. status_not_approved: 2).
+   *  'skipped: 2' alone was a number with no explanation attached. */
+  skippedByReason?: Record<string, number>;
 }
 
 export interface UploadRowError {
