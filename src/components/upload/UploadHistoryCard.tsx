@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import { History, FileText, ExternalLink, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { History, FileText, ExternalLink, Loader2, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
+import { useAuth } from '@/hooks/useAuth'
+import { deleteUploadConsequence } from '@/lib/uploadMessages'
 import type { Upload, UploadStatus } from '@/types/upload'
 
 const PAGE_SIZE = 20
@@ -83,6 +85,32 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
+  const { user } = useAuth()
+  const isOwner = user?.role === 'owner'
+  // Only an upload that imported nothing is offered here. A completed import is
+  // deleted from its detail page, where the row count and date range are in view -
+  // the consequence is bigger and the owner should see what they are removing.
+  const [pendingDelete, setPendingDelete] = useState<Upload | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.delete(`/uploads/${pendingDelete._id}`)
+      setPendingDelete(null)
+      setRetryKey((key) => key + 1)
+    } catch (err: unknown) {
+      const message = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        : undefined
+      setDeleteError(message || 'Could not remove this upload. Try again.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   // A fresh import belongs at the top of the newest page.
   useEffect(() => { setPage(1) }, [refreshKey])
@@ -117,7 +145,8 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
   const rowEnd = Math.min(currentPage * limit, total)
 
   return (
-    <Card>
+    <>
+      <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-guava-red-text" />
@@ -210,6 +239,16 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
                         >
                           View <ExternalLink className="w-3 h-3" />
                         </Link>
+                        {isOwner && u.stats.imported === 0 && u.status !== 'deleted' && (
+                          <button
+                            type="button"
+                            onClick={() => { setDeleteError(null); setPendingDelete(u) }}
+                            aria-label={`Remove ${u.fileName} from history`}
+                            className="ml-3 inline-flex min-h-6 items-center gap-1 rounded px-2 py-1 text-muted hover:text-guava-red-text"
+                          >
+                            <Trash2 className="h-3 w-3" /> Remove
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -247,5 +286,45 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
         )}
       </CardContent>
     </Card>
+
+      {pendingDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remove-upload-title"
+            className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-lg border border-red-900/40 bg-red-900/20 p-2 text-guava-red-text">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="remove-upload-title" className="text-lg font-semibold text-text">
+                  Remove this upload?
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  {deleteUploadConsequence(pendingDelete.fileName, pendingDelete.stats.imported)}
+                </p>
+                {deleteError && (
+                  <p role="alert" className="mt-3 rounded-lg border border-red-900/30 bg-red-900/10 px-3 py-2 text-sm text-guava-red-text">
+                    {deleteError}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={() => setPendingDelete(null)} disabled={deleting}>
+                Cancel
+              </Button>
+              <Button onClick={confirmDelete} disabled={deleting}>
+                {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Remove upload
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      </>
   )
 }

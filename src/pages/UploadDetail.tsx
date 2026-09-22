@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import { statusLabel } from '@/components/upload/UploadHistoryCard'
+import { deleteUploadConsequence } from '@/lib/uploadMessages'
 import api from '@/lib/api'
 import { confirmUpload } from '@/lib/uploads'
 import type { Upload, ColumnMapping, ItemsMode, UploadRowError } from '@/types/upload'
@@ -705,8 +706,7 @@ export default function UploadDetail() {
                   Delete upload?
                 </h2>
                 <p className="mt-1 text-sm text-muted">
-                  This will remove the linked transactions from {upload.fileName} and refresh the affected forecasts.
-                  This cannot be undone.
+                  {deleteUploadConsequence(upload.fileName, upload.stats.imported)}
                 </p>
                 {deleteError && (
                   <p className="mt-3 rounded-lg border border-red-900/30 bg-red-900/10 px-3 py-2 text-sm text-red-400">
