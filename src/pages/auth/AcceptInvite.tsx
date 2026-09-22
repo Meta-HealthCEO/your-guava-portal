@@ -9,6 +9,12 @@ import { Label } from '@/components/ui/label'
 const INVITE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
 const MAX_PASSWORD_BYTES = 72
 const INVALID_INVITATION_MESSAGE = 'This invitation is invalid or has expired.'
+// A page load with no fragment at all is almost always a reload: this page
+// strips the token from history on first mount, so F5 finds nothing. The
+// invitation in the inbox is untouched, and telling the user it expired sends
+// them to request a replacement — which revokes the one that still worked.
+const CONSUMED_LINK_MESSAGE =
+  'This page has already used the sign-up link. Open the invitation link from your email again to continue.'
 
 interface InvitationPreview {
   email: string
@@ -29,6 +35,9 @@ export default function AcceptInvite() {
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Distinguishes "this page load carried no token" from "the token was
+  // malformed", which need different advice.
+  const [linkAbsent, setLinkAbsent] = useState(false)
   const captured = useRef(false)
 
   // The email link carries the capability in the fragment, which is never sent
@@ -39,13 +48,21 @@ export default function AcceptInvite() {
     const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''))
     const candidate = fragment.get('token')?.trim() || ''
     window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+    if (!candidate) {
+      setToken(null)
+      setLinkAbsent(true)
+      return
+    }
     setToken(INVITE_TOKEN_RE.test(candidate) ? candidate : null)
   }, [])
 
   useEffect(() => {
     if (token === undefined) return
     if (!token) {
-      setError(INVALID_INVITATION_MESSAGE)
+      // Three different situations used to share one message that blamed the
+      // invitation: a malformed link, a genuinely expired one, and this page
+      // having already spent the fragment.
+      setError(linkAbsent ? CONSUMED_LINK_MESSAGE : INVALID_INVITATION_MESSAGE)
       setPhase('error')
       return
     }
@@ -69,7 +86,7 @@ export default function AcceptInvite() {
         }
       })
     return () => controller.abort()
-  }, [token])
+  }, [token, linkAbsent])
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -159,6 +176,7 @@ export default function AcceptInvite() {
               <Label htmlFor="invite-password">Choose a password</Label>
               <Input
                 id="invite-password"
+                name="new-password"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
@@ -171,6 +189,7 @@ export default function AcceptInvite() {
               <Label htmlFor="invite-password-confirm">Confirm password</Label>
               <Input
                 id="invite-password-confirm"
+                name="confirm-new-password"
                 type="password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
@@ -179,7 +198,7 @@ export default function AcceptInvite() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full bg-guava-green text-white hover:bg-guava-green/90" disabled={phase === 'submitting'}>
+            <Button type="submit" className="w-full bg-guava-green-strong text-white hover:bg-guava-green-strong/90" disabled={phase === 'submitting'}>
               {phase === 'submitting' ? <><Loader2 className="h-4 w-4 animate-spin" /> Accepting…</> : 'Create account'}
             </Button>
           </form>
@@ -192,7 +211,7 @@ export default function AcceptInvite() {
               <h2 className="font-semibold">Your account is ready</h2>
               <p className="mt-1 text-sm text-muted">Sign in with the password you just chose.</p>
             </div>
-            <Button asChild className="w-full bg-guava-green text-white hover:bg-guava-green/90"><Link to="/login">Sign in</Link></Button>
+            <Button asChild className="w-full bg-guava-green-strong text-white hover:bg-guava-green-strong/90"><Link to="/login">Sign in</Link></Button>
           </div>
         )}
       </section>

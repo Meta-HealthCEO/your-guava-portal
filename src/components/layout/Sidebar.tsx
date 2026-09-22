@@ -1,4 +1,4 @@
-import { useState, useEffect, type ComponentType } from 'react'
+import { useState, useEffect, useRef, type ComponentType } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router'
 import {
   LayoutDashboard,
@@ -26,6 +26,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
 import api from '@/lib/api'
 import { WORKFORCE_ENABLED } from '@/lib/features'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 
 interface NavItem {
   label: string
@@ -91,6 +92,12 @@ const navSections: NavSection[] = [
     : []),
 ]
 
+// Tailwind's `xl` breakpoint: from here the drawer is a fixed, always-visible sidebar.
+const DESKTOP_SIDEBAR_QUERY = '(min-width: 80rem)'
+
+/** Lets the top bar's menu button point `aria-controls` at the drawer. */
+export const SIDEBAR_ID = 'app-sidebar'
+
 interface SidebarProps {
   isOpen?: boolean
   onClose?: () => void
@@ -108,6 +115,22 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const [cafeName, setCafeName] = useState('')
   const [cafeList, setCafeList] = useState<CafeOption[]>([])
   const [switcherOpen, setSwitcherOpen] = useState(false)
+  // Below xl the closed drawer only slides off-canvas, which hides it from
+  // sight alone: its links, cafe switcher and Sign Out stayed in the tab order
+  // and the accessibility tree. When the viewport cannot be queried, assume the
+  // always-visible layout so nothing is ever wrongly hidden.
+  const isDesktop = useMediaQuery(DESKTOP_SIDEBAR_QUERY, true)
+  const isDrawerHidden = !isDesktop && !isOpen
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const wasOpenRef = useRef(false)
+
+  // The drawer sits before the top bar in the DOM, so a keyboard user who opens
+  // it would otherwise Tab away from it rather than into it.
+  useEffect(() => {
+    const justOpened = !!isOpen && !wasOpenRef.current
+    wasOpenRef.current = !!isOpen
+    if (justOpened && !isDesktop) closeButtonRef.current?.focus()
+  }, [isOpen, isDesktop])
 
   useEffect(() => {
     if (!user) return
@@ -162,7 +185,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         />
       )}
 
-      <aside
+      <nav
+        id={SIDEBAR_ID}
+        aria-label="Main"
+        inert={isDrawerHidden}
+        aria-hidden={isDrawerHidden || undefined}
         className={cn(
           'fixed left-0 top-0 h-full w-60 bg-[#111111] border-r border-border flex flex-col z-50 transition-transform duration-200',
           'max-xl:-translate-x-full',
@@ -176,12 +203,12 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <div>
               <div style={{ fontFamily: "'Fredoka', sans-serif" }} className="leading-none">
                 <span className="text-[#6B8E3A] text-base font-bold">Your</span>{' '}
-                <span className="text-[#C62828] text-base font-bold">Guava</span>
+                <span className="text-guava-red-text text-base font-bold">Guava</span>
               </div>
               <p className="text-[#999999] text-[10px] leading-tight mt-0.5">{cafeName || ''}</p>
             </div>
           </div>
-          <button onClick={onClose} className="xl:hidden text-muted hover:text-text p-1" aria-label="Close navigation">
+          <button ref={closeButtonRef} type="button" onClick={onClose} className="xl:hidden text-muted hover:text-text p-1" aria-label="Close navigation">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -229,7 +256,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           </div>
         )}
 
-        <nav className="flex-1 px-3 py-4 overflow-y-auto">
+        {/* The <nav> landmark is the drawer itself, so the link list is a plain
+            container: one named navigation landmark instead of two unnamed ones. */}
+        <div className="flex-1 px-3 py-4 overflow-y-auto">
           {visibleSections.map((section) => (
             <div key={section.label} className="mb-3 last:mb-0">
               <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
@@ -272,7 +301,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               </div>
             </div>
           ))}
-        </nav>
+        </div>
 
         <div className="px-3 pb-4 pt-3 border-t border-border">
           <div className="px-3 py-2 mb-1">
@@ -288,7 +317,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <span>Sign Out</span>
           </button>
         </div>
-      </aside>
+      </nav>
     </>
   )
 }

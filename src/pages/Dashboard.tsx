@@ -30,9 +30,13 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
-import type { Forecast, ForecastFactorSettings, TransactionStats } from '@/types'
+import type { Forecast, ForecastItem, TransactionStats } from '@/types'
 import { cn } from '@/lib/utils'
 import { forecastDateKey, parseDateOnly } from '@/lib/date'
+import { isOccasionalSeller } from '@/lib/forecastItems'
+import { accuracyBadgeVariant } from '@/components/forecasts/accuracyBand'
+import { classifyForecastFactors, formatPlan } from '@/components/forecasts/factorState'
+import { forecastBasisSentence } from '@/components/forecasts/forecastBasis'
 import {
   isLoadSheddingAvailable,
   isWeatherAvailable,
@@ -250,12 +254,14 @@ function WeatherCard({ signals, locationLabel }: { signals: Forecast['signals'];
               <p className="text-guava-yellow text-xs font-bold">Stage {signals.loadSheddingStage}</p>
             </div>
           ) : !loadSheddingAvailable ? (
-            <div
-              className="max-w-36 rounded-lg border border-border bg-surface/60 px-2.5 py-2 text-center"
-              title={loadSheddingUnavailableReason(signals)}
-            >
+            <div className="max-w-36 rounded-lg border border-border bg-surface/60 px-2.5 py-2 text-center">
               <Zap className="mx-auto mb-0.5 h-4 w-4 text-muted" />
               <p className="text-xs font-medium text-muted">Load shedding unavailable</p>
+              {/* Was a `title` on a plain div: invisible to touch, which is
+                  where a cafe owner reads this, and to screen readers. */}
+              <p className="mt-0.5 text-[10px] leading-tight text-muted">
+                {loadSheddingUnavailableReason(signals)}
+              </p>
             </div>
           ) : null}
         </div>
@@ -276,22 +282,6 @@ function WeatherCard({ signals, locationLabel }: { signals: Forecast['signals'];
   )
 }
 
-const FORECAST_FACTOR_ORDER = ['weather', 'loadShedding', 'holiday', 'payday', 'events', 'learning']
-
-const FACTOR_SECTIONS: Record<string, keyof ForecastFactorSettings> = {
-  weather: 'weather',
-  loadShedding: 'loadShedding',
-  holiday: 'holiday',
-  payday: 'payday',
-  events: 'events',
-  learning: 'learning',
-}
-
-function formatPlan(plan?: string) {
-  if (!plan) return ''
-  return plan.charAt(0).toUpperCase() + plan.slice(1)
-}
-
 function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
   const colors: Record<string, string> = {
     weather: '#4A9ECC',
@@ -301,49 +291,37 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
     events: '#9B59B6',
     learning: '#FF8A3D',
   }
-  const compactImpact = (factor: NonNullable<Forecast['factors']>[number]) => {
-    if (typeof factor.adjustmentPct === 'number') {
-      const rounded = Number(factor.adjustmentPct.toFixed(1))
+  const compactImpact = (adjustmentPct?: number | null, effect?: string) => {
+    if (typeof adjustmentPct === 'number') {
+      const rounded = Number(adjustmentPct.toFixed(1))
       return `${rounded > 0 ? '+' : ''}${rounded}%`
     }
-    return factor.effect && factor.effect !== 'no effect' ? 'varies' : 'active'
+    return effect && effect !== 'no effect' ? 'varies' : 'active'
   }
-  const sourceFactors = forecast.factors ?? []
-  const sourceByKey = new Map(sourceFactors.map((factor) => [factor.key, factor]))
-  const orderedFactors = FORECAST_FACTOR_ORDER
-    .map((key) => sourceByKey.get(key))
-    .filter(Boolean) as NonNullable<Forecast['factors']>
-  const entitlementsByKey = new Map((forecast.factorEntitlements?.factors ?? []).map((factor) => [factor.key, factor]))
-  const displayFactors = (orderedFactors.length > 0 ? orderedFactors : sourceFactors).map((factor) => {
-    const entitlement = entitlementsByKey.get(factor.key)
-    const locked = entitlement ? !entitlement.unlocked : false
-    const section = FACTOR_SECTIONS[factor.key]
-    const sectionSettings = section ? forecast.factorSettings?.[section] : undefined
-    const configuredOn = sectionSettings && 'enabled' in sectionSettings ? sectionSettings.enabled !== false : true
-    const off = !locked && !configuredOn
-    const active = Boolean(factor.active && !locked && !off)
+  const displayFactors = classifyForecastFactors(forecast).map((factor) => {
+    const active = factor.state === 'active'
     const rawPct = Math.abs(factor.adjustmentPct ?? 0)
-    const stateLabel = locked ? formatPlan(entitlement?.requiredPlan) : off ? 'Off' : active ? compactImpact(factor) : '0%'
-
     return {
       key: factor.key,
       label: factor.label,
       pct: active ? Math.min(100, rawPct) : 0,
-      impact: stateLabel,
-      detail: locked
-        ? `Unlock on ${formatPlan(entitlement?.requiredPlan)}`
-        : off
-          ? 'Disabled in factor rules'
-          : active
-            ? factor.effect || factor.reason || 'Applied to this forecast'
-            : factor.reason || 'No effect on this forecast',
+      impact:
+        factor.state === 'locked'
+          ? formatPlan(factor.requiredPlan)
+          : factor.state === 'off'
+            ? 'Off'
+            : active
+              ? compactImpact(factor.adjustmentPct, factor.effect)
+              : '0%',
+      detail: factor.detail,
       color: colors[factor.key] ?? '#9B59B6',
       active,
-      locked,
-      off,
+      locked: factor.state === 'locked',
+      off: factor.state === 'off',
     }
   })
   const activeCount = displayFactors.filter((factor) => factor.active).length
+  const basis = forecastBasisSentence(forecast)
 
   return (
     <Card>
@@ -354,6 +332,15 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
         </div>
       </CardHeader>
       <CardContent className="pt-0">
+        {/* Six grey zeros and three upsell badges is what an entry-plan cafe
+            sees here, and it reads as a broken forecast. The truthful statement
+            — what the number is actually made of — was never made anywhere in
+            the product, though the engine has always sent it. */}
+        {activeCount === 0 && basis && (
+          <p className="mb-4 rounded-lg border border-border bg-[#111111] px-3 py-2 text-[11px] leading-relaxed text-muted">
+            <span className="text-text">Nothing adjusted this forecast today.</span> {basis}
+          </p>
+        )}
         {displayFactors.length === 0 ? (
           <p className="py-5 text-center text-xs text-muted">
             Factor detail is unavailable for this forecast.
@@ -361,7 +348,7 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
         ) : (
         <div className="grid grid-cols-3 gap-3">
           {displayFactors.map((f) => (
-            <div key={f.key} className="flex flex-col items-center text-center" title={f.detail || f.label}>
+            <div key={f.key} className="flex flex-col items-center text-center">
               <div className="relative mb-1.5">
                 <CircularGauge value={f.pct} color={f.active ? f.color : '#2A2A2A'} size={48} />
                 <span
@@ -374,6 +361,15 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
               <span className={cn('max-w-full text-[10px] leading-tight', f.locked || f.off ? 'text-[#949494]' : 'text-muted')}>
                 {f.label}
               </span>
+              {/* The reason used to live only in a `title` on a non-focusable
+                  div: unreachable on a phone, which is where an owner reads
+                  this. "Unlock on Growth" and "Cafe coordinates are not
+                  configured" are the whole point of a greyed-out gauge. */}
+              {f.detail && (
+                <span className="mt-0.5 max-w-full text-[10px] leading-tight text-[#949494]">
+                  {f.detail}
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -383,34 +379,62 @@ function ImpactFactorsCard({ forecast }: { forecast: Forecast }) {
   )
 }
 
-type ForecastConfidence = 'high' | 'medium' | 'low'
-
-interface PredictedItem {
-  itemName: string
-  predictedQty: number
-  confidence?: ForecastConfidence
-}
-
 /**
- * Splits the day's items by how much the number can be trusted.
+ * Splits the day's items by how much volume stands behind the number.
  *
  * Roughly two thirds of a cafe's menu sells under two units a day, where
  * day-to-day randomness swamps any forecast (measured error above 100%).
  * Printing "1" next to those in the same card as a 37-unit flat white implies
  * a precision that does not exist, and buries the handful of lines that
  * actually drive the order. The quiet ones move to a compact list with honest
- * wording instead of a hero number.
+ * wording instead of a hero number. The split is by volume, not confidence:
+ * the backend also caps confidence by evidence, so a 20-a-day line with one
+ * week of history is `low` yet is anything but occasional.
  */
-function PredictedOutput({ items }: { items: PredictedItem[] }) {
-  const planned = items.filter((item) => (item.confidence ?? 'low') !== 'low')
-  const occasional = items.filter((item) => (item.confidence ?? 'low') === 'low')
+function PredictedOutput({
+  items,
+  coverage,
+}: {
+  items: ForecastItem[]
+  coverage?: Forecast['forecastCoverage']
+}) {
+  const planned = items.filter((item) => !isOccasionalSeller(item))
+  const occasional = items.filter((item) => isOccasionalSeller(item))
+  const gradedItems = items.filter((item) => item.confidence != null)
+  // The backend caps confidence by evidence on purpose, so a cafe one week in
+  // gets `low` on every line however busy it is. Saying so once at the top is
+  // more honest than twenty identical annotations.
+  const allLowConfidence =
+    gradedItems.length > 0 && gradedItems.every((item) => item.confidence === 'low')
+  const itemsTruncated =
+    coverage != null &&
+    typeof coverage.itemCount === 'number' &&
+    typeof coverage.storedItemCount === 'number' &&
+    coverage.storedItemCount < coverage.itemCount
 
   return (
     <div className="space-y-5">
+      {allLowConfidence && (
+        <p className="text-xs text-muted">
+          Every line below is low confidence — there is not much matching history behind these
+          numbers yet, whatever the volume.
+        </p>
+      )}
+      {itemsTruncated && coverage && (
+        <p className="text-xs text-muted">
+          Showing the {coverage.storedItemCount} largest of {coverage.itemCount} forecast lines.
+          Forecast revenue and total items cover all {coverage.itemCount}.
+        </p>
+      )}
       {planned.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
           {planned.map((item) => (
-            <ItemCard key={item.itemName} itemName={item.itemName} predictedQty={item.predictedQty} />
+            <ItemCard
+              key={item.itemName}
+              itemName={item.itemName}
+              predictedQty={item.predictedQty}
+              confidence={allLowConfidence ? undefined : item.confidence}
+            />
           ))}
         </div>
       )}
@@ -447,7 +471,15 @@ function PredictedOutput({ items }: { items: PredictedItem[] }) {
   )
 }
 
-function ItemCard({ itemName, predictedQty }: { itemName: string; predictedQty: number }) {
+function ItemCard({
+  itemName,
+  predictedQty,
+  confidence,
+}: {
+  itemName: string
+  predictedQty: number
+  confidence?: ForecastItem['confidence']
+}) {
   const color = getItemColor(itemName)
   const Icon = getItemIcon(itemName)
 
@@ -468,6 +500,13 @@ function ItemCard({ itemName, predictedQty }: { itemName: string; predictedQty: 
       <div className="text-muted text-[11px] leading-tight truncate" title={itemName}>
         {itemName}
       </div>
+      {/* The engine grades every line and the portal used to discard it, so a
+          line with three months behind it and one with a fortnight printed
+          identically at 3xl. Only `low` earns a note: annotating all three
+          grades would flatten the signal again. */}
+      {confidence === 'low' && (
+        <div className="text-guava-yellow text-[10px] leading-tight mt-1">low confidence</div>
+      )}
     </div>
   )
 }
@@ -558,12 +597,46 @@ export default function Dashboard() {
   const topItem = activeForecast?.items.length
     ? activeForecast.items.reduce((a, b) => a.predictedQty > b.predictedQty ? a : b)
     : undefined
-  const totalItems = activeForecast?.items.reduce((sum, i) => sum + i.predictedQty, 0) ?? 0
+  // The backend stores only the 25 largest lines but accumulates revenue and
+  // `forecastCoverage.totalPredictedQty` over every forecastable item. Summing
+  // the stored array put a short Total Items beside a complete Forecast Revenue
+  // — two headline numbers computed over different item sets, with nothing on
+  // screen to reconcile them.
+  const coverage = activeForecast?.forecastCoverage
+  const totalItems =
+    typeof coverage?.totalPredictedQty === 'number'
+      ? coverage.totalPredictedQty
+      : activeForecast?.items.reduce((sum, i) => sum + i.predictedQty, 0) ?? 0
+  const isClosedDay = activeForecast?.availability?.status === 'closed'
+  const isAwaitingHistory = activeForecast?.availability?.status === 'insufficient_data'
+  // Average the week over trading days only, as Planning does. A closed day is
+  // not a R0 day, and the historical stats average spreads revenue over the
+  // whole calendar span, so either would drag the figure well under a real day.
+  // A day still building history is not a R0 day either — it is the absence of
+  // a prediction, and Planning already refuses to sum it.
+  const tradingForecasts = weekForecasts.filter(
+    (wf) =>
+      wf.availability?.status !== 'closed' && wf.availability?.status !== 'insufficient_data'
+  )
+  const tradingDayAvg = tradingForecasts.length > 0
+    ? tradingForecasts.reduce((sum, wf) => sum + (wf.totalPredictedRevenue || 0), 0) / tradingForecasts.length
+    : null
   const kpis = [
     {
       label: 'Forecast Revenue',
-      value: activeForecast ? formatZAR(activeForecast.totalPredictedRevenue) : '-',
-      sub: stats ? `Avg: ${formatZAR(stats.avgDailyRevenue)}/day` : undefined,
+      // R0 on a day the engine could not answer is not a forecast of nothing,
+      // and this is the most prominent figure on the screen. Planning refuses
+      // to print it; Today must not print it either.
+      value:
+        activeForecast && !(isAwaitingHistory && activeForecast.totalPredictedRevenue === 0)
+          ? formatZAR(activeForecast.totalPredictedRevenue)
+          : '-',
+      sub:
+        isAwaitingHistory
+          ? 'Not enough history for this day yet'
+          : tradingDayAvg != null
+            ? `Avg: ${formatZAR(tradingDayAvg)}/day`
+            : undefined,
       icon: TrendingUp,
       accent: '#4DA63B',
     },
@@ -588,7 +661,11 @@ export default function Dashboard() {
     {
       label: 'Total Items',
       value: totalItems.toLocaleString(),
-      sub: stats ? `${stats.totalTransactions.toLocaleString()} historical transactions` : undefined,
+      sub: coverage?.itemCount
+        ? `across ${coverage.itemCount} forecast ${coverage.itemCount === 1 ? 'line' : 'lines'}`
+        : stats
+          ? `${stats.totalTransactions.toLocaleString()} historical transactions`
+          : undefined,
       icon: Zap,
       accent: '#4A9ECC',
     },
@@ -615,32 +692,59 @@ export default function Dashboard() {
   return (
     <AppLayout title="Today">
       {/* KPI Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+      <div
+        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6"
+        role={isLoading ? 'status' : undefined}
+        aria-busy={isLoading || undefined}
+      >
         {isLoading
-          ? Array.from({ length: 4 }).map((_, i) => (
-              <Card key={i}><CardContent className="pt-5 pb-5"><Skeleton className="h-3 w-24 mb-3" /><Skeleton className="h-7 w-32 mb-2" /><Skeleton className="h-3 w-20" /></CardContent></Card>
-            ))
+          ? (
+            <>
+              <span className="sr-only">Loading today&apos;s forecast</span>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Card key={i}><CardContent className="pt-5 pb-5"><Skeleton className="h-3 w-24 mb-3" /><Skeleton className="h-7 w-32 mb-2" /><Skeleton className="h-3 w-20" /></CardContent></Card>
+              ))}
+            </>
+          )
           : kpis.map((kpi) => <KpiCard key={kpi.label} {...kpi} />)}
       </div>
 
-      {/* Day Selector */}
-      <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-1">
+      {/* Day Selector. Selection used to be carried by colour alone: no
+          aria-pressed, no group name, no announcement, and the whole page below
+          silently rewrote itself on every press. */}
+      <div
+        className="flex items-center gap-2 mb-6 overflow-x-auto pb-1"
+        role="group"
+        aria-label="Forecast day"
+      >
         {weekForecasts.length > 0
           ? weekForecasts.map((wf, idx) => {
               const d = parseDateOnly(forecastDateKey(wf))
+              const selected = selectedDayIdx === idx
               return (
                 <button
                   key={idx}
+                  type="button"
+                  aria-pressed={selected}
                   onClick={() => setSelectedDayIdx(idx)}
                   className={cn(
                     'flex flex-col items-center px-3.5 py-2 rounded-lg border text-center shrink-0 transition-colors min-w-16',
-                    selectedDayIdx === idx
-                      ? 'bg-guava-green/10 border-guava-green/40 text-guava-green'
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red',
+                    selected
+                      // Solid rather than /40: the alpha border measured 1.93:1
+                      // against the page, well under the 3:1 a state indicator
+                      // needs, so the only cue that a day was selected failed.
+                      ? 'bg-guava-green/10 border-guava-green text-guava-green'
                       : 'bg-[#111111] border-border text-muted hover:text-text hover:border-[#3A3A3A]'
                   )}
                 >
                   <span className="text-xs font-bold tracking-wide">{getDayLabel(d)}</span>
-                  <span className="text-[10px] mt-0.5 opacity-70">{formatDate(d)}</span>
+                  {/* opacity-70 dropped the date to 3.39:1 on the selected day's
+                      tinted ground and 3.94:1 on the unselected one — both under
+                      4.5:1, on the smallest text in the product. The date is how
+                      an owner knows which day they are ordering for, so it has to
+                      be legible; it inherits the button's colour instead. */}
+                  <span className="text-[10px] mt-0.5">{formatDate(d)}</span>
                 </button>
               )
             })
@@ -648,6 +752,14 @@ export default function Dashboard() {
             ? Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="w-16 h-14 rounded-lg shrink-0" />)
             : null}
       </div>
+
+      {/* Pressing a day rewrites the KPIs, the item grid, the weather card and
+          the factors card. Say which day is on screen now. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {activeForecast
+          ? `Showing ${formatDate(parseDateOnly(forecastDateKey(activeForecast)))}`
+          : ''}
+      </p>
 
       {!isLoading && !activeForecast && (
         <ForecastStatusCard
@@ -678,9 +790,13 @@ export default function Dashboard() {
           className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
         >
           <span className="font-semibold">Not enough history yet.</span>{' '}
+          {/* The engine's own words. The old fallback asserted "three
+              comparable weeks", but the requirement is dynamic — an owner who
+              narrows the history lookback on Factors is chasing a different
+              number, and the backend fixed exactly this incoherence. */}
           {activeForecast.availability.reason
             ? `${activeForecast.availability.reason}. `
-            : 'This day does not yet have three comparable weeks of sales. '}
+            : 'This day does not yet have enough comparable trading days of sales. '}
           Treat these numbers as a rough starting point, not a prep list to order against.
         </div>
       )}
@@ -693,20 +809,31 @@ export default function Dashboard() {
               Predicted Output
             </h2>
             <div className="flex items-center gap-3">
+              {isClosedDay && <Badge variant="destructive">Closed</Badge>}
               {activeForecast.totalPredictedRevenue > 0 && (
                 <span className="text-guava-green text-sm font-bold">
                   Target {formatZAR(activeForecast.totalPredictedRevenue)}
                 </span>
               )}
-              {activeForecast.accuracy && (
-                <Badge variant="success" className="text-xs">
+              {/* Graded, not always green: a 41% day used to wear the same
+                  success badge as a 94% one, on the screen people order from.
+                  And `accuracy && ...` rendered a bare `0` glyph for a zero. */}
+              {activeForecast.accuracy != null && (
+                <Badge variant={accuracyBadgeVariant(activeForecast.accuracy)} className="text-xs">
                   {activeForecast.accuracy}% accuracy
                 </Badge>
               )}
             </div>
           </div>
-          {activeForecastHasItems ? (
-            <PredictedOutput items={activeForecast.items} />
+          {/* A closed day has no items because nobody is trading, not because
+              history is thin. Say so, as Planning does, with the engine's reason. */}
+          {isClosedDay ? (
+            <ForecastStatusCard
+              title="No trading forecast"
+              message={activeForecast.availability?.reason || 'This café is closed for the day.'}
+            />
+          ) : activeForecastHasItems ? (
+            <PredictedOutput items={activeForecast.items} coverage={activeForecast.forecastCoverage} />
           ) : (
             <ForecastStatusCard
               title="No item predictions for this day"

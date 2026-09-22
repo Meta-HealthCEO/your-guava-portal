@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AlertCircle, CheckCircle, Coffee, EyeOff, Link2, Plus, Save, Search, Sparkles, Tags } from 'lucide-react'
+import { AlertCircle, CheckCircle, ChevronLeft, ChevronRight, Coffee, EyeOff, Link2, Plus, Save, Search, Sparkles, Tags } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,14 @@ import type { SalesItem, SalesItemCategory } from '@/types'
 type Tab = 'review' | 'menu'
 type Notice = { type: 'success' | 'error'; message: string } | null
 type ItemDraft = { category: SalesItemCategory; expectedPrice: string; priceTolerancePct: string; aliases: string }
+type DraftMap = Record<string, ItemDraft>
+
+const MENU_PAGE_SIZE = 50
+
+// Statuses the server can only have produced before any metering ran, so the
+// "no credits were charged" promise is safe to keep for them. A timeout or a
+// dropped connection tells us nothing about whether the server finished.
+const PRE_CHARGE_REJECTION_STATUSES = [400, 402, 403, 422, 429]
 
 const CATEGORIES: { value: SalesItemCategory; label: string }[] = [
   { value: 'coffee', label: 'Coffee' },
@@ -37,6 +45,41 @@ function apiError(err: unknown, fallback: string) {
     if (msg) return msg
   }
   return fallback
+}
+
+function responseStatus(err: unknown): number | undefined {
+  if (err && typeof err === 'object' && 'response' in err) {
+    return (err as { response?: { status?: number } }).response?.status
+  }
+  return undefined
+}
+
+function buildDraft(item: SalesItem): ItemDraft {
+  return {
+    category: item.category,
+    expectedPrice: item.expectedPrice == null ? '' : String(item.expectedPrice),
+    priceTolerancePct: item.priceTolerancePct == null ? '10' : String(item.priceTolerancePct),
+    aliases: (item.aliases ?? []).join(', '),
+  }
+}
+
+function draftsEqual(a?: ItemDraft, b?: ItemDraft) {
+  if (!a || !b) return false
+  return (
+    a.category === b.category &&
+    a.expectedPrice === b.expectedPrice &&
+    a.priceTolerancePct === b.priceTolerancePct &&
+    a.aliases === b.aliases
+  )
+}
+
+function draftPayload(draft: ItemDraft) {
+  return {
+    category: draft.category,
+    expectedPrice: draft.expectedPrice === '' ? undefined : Number(draft.expectedPrice),
+    priceTolerancePct: draft.priceTolerancePct === '' ? undefined : Number(draft.priceTolerancePct),
+    aliases: draft.aliases.split(',').map((alias) => alias.trim()).filter(Boolean),
+  }
 }
 
 function StatusPill({ item }: { item: SalesItem }) {
@@ -74,12 +117,27 @@ export default function MenuItems() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [savingAll, setSavingAll] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [aiReviewId, setAiReviewId] = useState<string | null>(null)
   const aiReviewKeysRef = useRef(new Map<string, string>())
   const [notice, setNotice] = useState<Notice>(null)
   const [query, setQuery] = useState('')
+  const [menuPage, setMenuPage] = useState(1)
   const [mapTargets, setMapTargets] = useState<Record<string, string>>({})
-  const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({})
+
+  // `drafts` is what the user sees and edits. `baseline` is the server value
+  // each draft was derived from, and it is what makes a row's dirtiness
+  // knowable: a row is unsaved exactly when its draft differs from its
+  // baseline. Refs mirror both so a refetch can merge synchronously without
+  // reading stale closure state.
+  const [drafts, setDrafts] = useState<DraftMap>({})
+  const [baseline, setBaseline] = useState<DraftMap>({})
+  // Rows the user is still editing whose stored value moved underneath them.
+  const [conflicts, setConflicts] = useState<DraftMap>({})
+  const draftsRef = useRef<DraftMap>({})
+  const baselineRef = useRef<DraftMap>({})
+
   const [newItem, setNewItem] = useState({ name: '', category: 'coffee' as SalesItemCategory, expectedPrice: '', priceTolerancePct: '10' })
   const canSpendCredits = user?.role === 'owner' || Boolean(user?.permissions?.canSpendCredits)
 
@@ -88,8 +146,39 @@ export default function MenuItems() {
     setTimeout(() => setNotice(null), 3500)
   }
 
-  const refresh = async () => {
-    setLoading(true)
+  const applyDrafts = (next: DraftMap) => {
+    draftsRef.current = next
+    setDrafts(next)
+  }
+  const applyBaseline = (next: DraftMap) => {
+    baselineRef.current = next
+    setBaseline(next)
+  }
+
+  const draftFor = (item: SalesItem): ItemDraft => drafts[item._id] ?? buildDraft(item)
+
+  const editDraft = (item: SalesItem, patch: Partial<ItemDraft>) => {
+    const current = draftsRef.current[item._id] ?? buildDraft(item)
+    applyDrafts({ ...draftsRef.current, [item._id]: { ...current, ...patch } })
+  }
+
+  // Marks one row as agreeing with the server again, so the next refetch is
+  // free to take the server's value for it.
+  const settleRow = (id: string, settled: ItemDraft) => {
+    applyBaseline({ ...baselineRef.current, [id]: settled })
+    setConflicts((current) => {
+      if (!(id in current)) return current
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  }
+
+  const refresh = async ({ background = false }: { background?: boolean } = {}) => {
+    // A post-mutation refetch must not blank the table into a spinner: the
+    // remount scrolled the list back to the top and hid the fact that other
+    // rows had reverted.
+    if (!background) setLoading(true)
     setLoadError(false)
     try {
       const [menuRes, reviewRes] = await Promise.all([
@@ -98,21 +187,52 @@ export default function MenuItems() {
       ])
       setItems(menuRes.data.items)
       setReviewItems(reviewRes.data.items)
-      const nextDrafts: Record<string, ItemDraft> = {}
-      menuRes.data.items.forEach((item) => {
-        nextDrafts[item._id] = {
-          category: item.category,
-          expectedPrice: item.expectedPrice == null ? '' : String(item.expectedPrice),
-          priceTolerancePct: item.priceTolerancePct == null ? '10' : String(item.priceTolerancePct),
-          aliases: (item.aliases ?? []).join(', '),
-        }
-      })
-      setDrafts(nextDrafts)
+
+      // Seed from both lists. Building only from the active-menu list dropped
+      // every Fix-Imports draft, because a needs-review item is not in it.
+      const serverDrafts: DraftMap = {}
+      for (const item of [...reviewRes.data.items, ...menuRes.data.items]) {
+        serverDrafts[item._id] = buildDraft(item)
+      }
+
+      const previousDrafts = draftsRef.current
+      const previousBaseline = baselineRef.current
+      const mergedDrafts: DraftMap = { ...serverDrafts }
+      const nextBaseline: DraftMap = { ...previousBaseline }
+      const nextConflicts: DraftMap = {}
+
+      for (const [id, draft] of Object.entries(previousDrafts)) {
+        const rowBaseline = previousBaseline[id]
+        const serverDraft = serverDrafts[id]
+        const isDirty = Boolean(rowBaseline) && !draftsEqual(draft, rowBaseline)
+        if (!isDirty) continue
+
+        // Conflict policy: the user's typing always wins the render, because
+        // silently replacing what someone is mid-sentence on is the one
+        // outcome with no recovery. Where the stored value also moved we say
+        // so on the row and offer to take theirs, so the stale draft is never
+        // kept silently either.
+        mergedDrafts[id] = draft
+        if (serverDraft && !draftsEqual(serverDraft, rowBaseline)) nextConflicts[id] = serverDraft
+      }
+
+      for (const [id, serverDraft] of Object.entries(serverDrafts)) {
+        const draft = previousDrafts[id]
+        const rowBaseline = previousBaseline[id]
+        // The baseline stays pinned while a row is dirty, so the conflict on it
+        // stays visible across later refetches instead of quietly resolving.
+        const isDirty = Boolean(rowBaseline) && Boolean(draft) && !draftsEqual(draft, rowBaseline)
+        if (!isDirty) nextBaseline[id] = serverDraft
+      }
+
+      applyDrafts(mergedDrafts)
+      applyBaseline(nextBaseline)
+      setConflicts(nextConflicts)
     } catch (err) {
       setLoadError(true)
       showNotice('error', apiError(err, 'Could not load menu items.'))
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
@@ -124,6 +244,16 @@ export default function MenuItems() {
     () => items.filter((item) => item.reviewStatus === 'matched' && item.isActive !== false),
     [items]
   )
+  // Rendered once and reused by every review card. Building the list inside the
+  // card map produced (review items x menu items) option nodes, which is 30k
+  // nodes on a 300-item menu and re-created on every keystroke.
+  const targetOptions = useMemo(
+    () => matchedItems.map((target) => (
+      <option key={target._id} value={target._id}>{target.name}</option>
+    )),
+    [matchedItems]
+  )
+
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return items
@@ -133,9 +263,39 @@ export default function MenuItems() {
     )
   }, [items, query])
 
+  const menuPages = Math.max(1, Math.ceil(filteredItems.length / MENU_PAGE_SIZE))
+  const currentMenuPage = Math.min(menuPage, menuPages)
+  const pagedItems = useMemo(
+    () => filteredItems.slice((currentMenuPage - 1) * MENU_PAGE_SIZE, currentMenuPage * MENU_PAGE_SIZE),
+    [filteredItems, currentMenuPage]
+  )
+  const menuRowStart = filteredItems.length === 0 ? 0 : (currentMenuPage - 1) * MENU_PAGE_SIZE + 1
+  const menuRowEnd = Math.min(currentMenuPage * MENU_PAGE_SIZE, filteredItems.length)
+
+  const dirtyIds = useMemo(
+    () => Object.keys(drafts).filter((id) => baseline[id] && !draftsEqual(drafts[id], baseline[id])),
+    [drafts, baseline]
+  )
+  const conflictCount = dirtyIds.filter((id) => conflicts[id]).length
+
+  useEffect(() => {
+    if (dirtyIds.length === 0) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirtyIds.length])
+
   const createItem = async (event: FormEvent) => {
     event.preventDefault()
-    if (!newItem.name.trim()) return
+    if (creating) return
+    if (!newItem.name.trim()) {
+      showNotice('error', 'Give the menu item a name before adding it.')
+      return
+    }
+    setCreating(true)
     try {
       await api.post('/items', {
         name: newItem.name.trim(),
@@ -145,10 +305,20 @@ export default function MenuItems() {
       })
       setNewItem({ name: '', category: 'coffee', expectedPrice: '', priceTolerancePct: '10' })
       showNotice('success', 'Menu item added.')
-      refresh()
+      refresh({ background: true })
     } catch (err) {
       showNotice('error', apiError(err, 'Could not add menu item.'))
+    } finally {
+      setCreating(false)
     }
+  }
+
+  const putItem = async (item: SalesItem, draft: ItemDraft) => {
+    await api.put(`/items/${item._id}`, {
+      ...draftPayload(draft),
+      reviewStatus: item.reviewStatus === 'needs_review' ? 'matched' : item.reviewStatus,
+    })
+    settleRow(item._id, draft)
   }
 
   const saveItem = async (item: SalesItem) => {
@@ -156,15 +326,9 @@ export default function MenuItems() {
     if (!draft) return
     setSavingId(item._id)
     try {
-      await api.put(`/items/${item._id}`, {
-        category: draft.category,
-        expectedPrice: draft.expectedPrice === '' ? undefined : Number(draft.expectedPrice),
-        priceTolerancePct: draft.priceTolerancePct === '' ? undefined : Number(draft.priceTolerancePct),
-        aliases: draft.aliases.split(',').map((alias) => alias.trim()).filter(Boolean),
-        reviewStatus: item.reviewStatus === 'needs_review' ? 'matched' : item.reviewStatus,
-      })
+      await putItem(item, draft)
       showNotice('success', 'Menu item saved.')
-      refresh()
+      refresh({ background: true })
     } catch (err) {
       showNotice('error', apiError(err, 'Could not save menu item.'))
     } finally {
@@ -172,8 +336,62 @@ export default function MenuItems() {
     }
   }
 
+  const saveAllDrafts = async () => {
+    const pending = dirtyIds
+      .map((id) => ({ item: items.find((candidate) => candidate._id === id), draft: drafts[id] }))
+      .filter((entry): entry is { item: SalesItem; draft: ItemDraft } => Boolean(entry.item && entry.draft))
+    if (pending.length === 0) return
+
+    setSavingAll(true)
+    let saved = 0
+    let failed = 0
+    for (const { item, draft } of pending) {
+      try {
+        await putItem(item, draft)
+        saved += 1
+      } catch {
+        failed += 1
+      }
+    }
+    setSavingAll(false)
+    showNotice(
+      failed === 0 ? 'success' : 'error',
+      failed === 0
+        ? `Saved ${saved} menu item${saved === 1 ? '' : 's'}.`
+        : `Saved ${saved} of ${pending.length}. ${failed} could not be saved and ${failed === 1 ? 'is' : 'are'} still unsaved.`
+    )
+    refresh({ background: true })
+  }
+
+  const discardAllDrafts = () => {
+    const next = { ...draftsRef.current }
+    const nextBaseline = { ...baselineRef.current }
+    for (const id of dirtyIds) {
+      // Discarding takes the newest stored value, which for a conflicted row is
+      // the one written while the user was typing.
+      const stored = conflicts[id] ?? baselineRef.current[id]
+      if (!stored) continue
+      next[id] = stored
+      nextBaseline[id] = stored
+    }
+    applyDrafts(next)
+    applyBaseline(nextBaseline)
+    setConflicts({})
+  }
+
+  const takeServerValue = (id: string) => {
+    const serverDraft = conflicts[id]
+    if (!serverDraft) return
+    applyDrafts({ ...draftsRef.current, [id]: serverDraft })
+    settleRow(id, serverDraft)
+  }
+
   const resolveItem = async (item: SalesItem, action: 'confirm' | 'ignore' | 'map_to', priceOverride?: number) => {
-    const targetItemId = mapTargets[item._id] || item.candidates?.[0]?.item?._id
+    // An explicit blank choice means "none of these", so it must reach the
+    // guard below. `||` folded it back into the AI's first candidate and linked
+    // the POS item to the very suggestion the user had just rejected.
+    const explicitTarget = mapTargets[item._id]
+    const targetItemId = explicitTarget !== undefined ? explicitTarget : item.candidates?.[0]?.item?._id
     if (action === 'map_to' && !targetItemId) {
       showNotice('error', 'Choose a menu item to map to.')
       return
@@ -191,8 +409,9 @@ export default function MenuItems() {
         expectedPrice: expectedPriceValue === '' ? undefined : Number(expectedPriceValue),
         aliases: draft?.aliases ? draft.aliases.split(',').map((alias) => alias.trim()).filter(Boolean) : item.aliases,
       })
+      if (draft) settleRow(item._id, draft)
       showNotice('success', action === 'map_to' ? 'Item linked.' : action === 'ignore' ? 'Item ignored.' : 'Menu item updated.')
-      refresh()
+      refresh({ background: true })
     } catch (err) {
       showNotice('error', apiError(err, 'Could not update menu item.'))
     } finally {
@@ -218,7 +437,7 @@ export default function MenuItems() {
         notes: suggestion.reason,
       })
       showNotice('success', 'Recommendation approved.')
-      refresh()
+      refresh({ background: true })
     } catch (err) {
       showNotice('error', apiError(err, 'Could not approve this recommendation.'))
     } finally {
@@ -263,10 +482,22 @@ export default function MenuItems() {
           `AI review complete. ${data.meta.creditsCharged ?? 1} Guava credit used.`
         )
       } else {
-        showNotice('error', 'AI review was unavailable. A free smart check is shown and no credits were charged.')
+        // A free smart check is a correct, zero-cost outcome. Showing it as a
+        // red error taught owners to distrust a result that was fine.
+        showNotice('success', 'AI review was unavailable. A free smart check is shown and no credits were charged.')
       }
     } catch (err) {
-      showNotice('error', apiError(err, 'Could not run the AI review. No credits were charged.'))
+      // Only a definite pre-charge rejection lets us promise the balance is
+      // untouched. A timeout aborts the client, not the server, so the credit
+      // may well have been spent on work we never saw.
+      const status = responseStatus(err)
+      const chargeIsKnown = status != null && PRE_CHARGE_REJECTION_STATUSES.includes(status)
+      showNotice('error', apiError(
+        err,
+        chargeIsKnown
+          ? 'Could not run the AI review. No credits were charged.'
+          : 'We lost contact before this AI review was confirmed. Check your Guava credit balance before retrying.'
+      ))
     } finally {
       setAiReviewId(null)
     }
@@ -293,7 +524,28 @@ export default function MenuItems() {
         {loadError && (
           <div className="flex flex-col gap-3 rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="alert">
             <p className="text-sm text-red-300">Menu items could not be loaded. Counts below are unavailable.</p>
-            <Button type="button" variant="outline" size="sm" onClick={refresh}>Try again</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => refresh()}>Try again</Button>
+          </div>
+        )}
+
+        {dirtyIds.length > 0 && (
+          <div
+            role="status"
+            className="flex flex-col gap-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p className="text-sm text-amber-200">
+              {dirtyIds.length} unsaved change{dirtyIds.length === 1 ? '' : 's'} on this page.
+              {conflictCount > 0 && ` ${conflictCount} of them changed elsewhere since you started.`}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={discardAllDrafts} disabled={savingAll}>
+                Discard changes
+              </Button>
+              <Button type="button" size="sm" onClick={saveAllDrafts} disabled={savingAll}>
+                <Save className="w-3.5 h-3.5" />
+                {savingAll ? 'Saving…' : `Save all changes (${dirtyIds.length})`}
+              </Button>
+            </div>
           </div>
         )}
 
@@ -363,16 +615,12 @@ export default function MenuItems() {
                   </div>
                 ) : (
                   reviewItems.map((item) => {
-                    const draft = drafts[item._id] ?? {
-                      category: item.category,
-                      expectedPrice: item.expectedPrice == null ? '' : String(item.expectedPrice),
-                      priceTolerancePct: item.priceTolerancePct == null ? '10' : String(item.priceTolerancePct),
-                      aliases: (item.aliases ?? []).join(', '),
-                    }
+                    const draft = draftFor(item)
                     const priceIssue = hasPriceIssue(item)
                     const posPrice = suggestedPrice(item)
                     const suggestedMatch = item.reviewStatus === 'needs_review' ? item.candidates?.[0] : undefined
                     const aiSuggestion = item.aiSuggestion
+                    const conflict = conflicts[item._id]
                     return (
                       <div key={item._id} className="rounded-lg border border-border bg-[#111111] p-4">
                         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -397,43 +645,55 @@ export default function MenuItems() {
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 xl:w-[640px] gap-2">
                             <select
+                              aria-label={`Category for ${item.name}`}
                               className="rounded-lg border border-border bg-surface px-2 py-2 text-sm text-text"
                               value={draft.category}
-                              onChange={(event) => setDrafts((current) => ({
-                                ...current,
-                                [item._id]: { ...draft, category: event.target.value as SalesItemCategory },
-                              }))}
+                              onChange={(event) => editDraft(item, { category: event.target.value as SalesItemCategory })}
                             >
                               {CATEGORIES.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
                             </select>
                             <Input
+                              aria-label={`Menu price for ${item.name}`}
                               type="number"
                               min={0}
                               step="0.01"
                               value={draft.expectedPrice}
-                              onChange={(event) => setDrafts((current) => ({
-                                ...current,
-                                [item._id]: { ...draft, expectedPrice: event.target.value },
-                              }))}
+                              onChange={(event) => editDraft(item, { expectedPrice: event.target.value })}
                               placeholder="Menu price"
                             />
-                            <Button onClick={() => resolveItem(item, 'confirm')} disabled={savingId === item._id}>
+                            <Button
+                              aria-label={item.reviewStatus === 'needs_review'
+                                ? `Keep ${item.name} as a new menu item`
+                                : `Keep the menu price for ${item.name}`}
+                              onClick={() => resolveItem(item, 'confirm')}
+                              disabled={savingId === item._id}
+                            >
                               <CheckCircle className="w-3.5 h-3.5" />
                               {item.reviewStatus === 'needs_review' ? 'Keep as new item' : 'Keep menu price'}
                             </Button>
                             {priceIssue && posPrice != null && (
-                              <Button variant="outline" onClick={() => resolveItem(item, 'confirm', posPrice)} disabled={savingId === item._id}>
+                              <Button
+                                aria-label={`Use the POS price for ${item.name}`}
+                                variant="outline"
+                                onClick={() => resolveItem(item, 'confirm', posPrice)}
+                                disabled={savingId === item._id}
+                              >
                                 Use POS price
                               </Button>
                             )}
                           </div>
                         </div>
 
+                        {conflict && (
+                          <ConflictNotice itemName={item.name} onTakeServer={() => takeServerValue(item._id)} />
+                        )}
+
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface/50 px-3 py-2">
                           <p className="text-xs text-muted">
                             Smart checks are free. An AI review uses 1 Guava credit for this item.
                           </p>
                           <Button
+                            aria-label={`Run AI review for ${item.name} (1 credit)`}
                             variant="outline"
                             size="sm"
                             onClick={() => runAiReview(item)}
@@ -462,7 +722,11 @@ export default function MenuItems() {
                                 <p className="mt-1 text-sm text-text">{suggestionLabel(item)}</p>
                                 <p className="mt-1 text-xs text-muted">{aiSuggestion.reason}</p>
                               </div>
-                              <Button onClick={() => approveSuggestion(item)} disabled={savingId === item._id}>
+                              <Button
+                                aria-label={`Approve the recommendation for ${item.name}`}
+                                onClick={() => approveSuggestion(item)}
+                                disabled={savingId === item._id}
+                              >
                                 <CheckCircle className="h-3.5 w-3.5" />
                                 Approve
                               </Button>
@@ -473,22 +737,29 @@ export default function MenuItems() {
                         {item.reviewStatus === 'needs_review' && (
                           <div className="mt-3 flex flex-col gap-2 lg:flex-row lg:items-center">
                             <select
+                              aria-label={`Link ${item.name} to an existing menu item`}
                               className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-2 text-sm text-text"
-                              value={mapTargets[item._id] || item.candidates?.[0]?.item?._id || ''}
+                              value={mapTargets[item._id] ?? item.candidates?.[0]?.item?._id ?? ''}
                               onChange={(event) => setMapTargets((current) => ({ ...current, [item._id]: event.target.value }))}
                             >
                               <option value="">Link to existing menu item...</option>
-                              {matchedItems.filter((target) => target._id !== item._id).map((target) => (
-                                <option key={target._id} value={target._id}>
-                                  {target.name}
-                                </option>
-                              ))}
+                              {targetOptions}
                             </select>
-                            <Button variant="outline" onClick={() => resolveItem(item, 'map_to')} disabled={savingId === item._id}>
+                            <Button
+                              aria-label={`Link ${item.name} to the selected menu item`}
+                              variant="outline"
+                              onClick={() => resolveItem(item, 'map_to')}
+                              disabled={savingId === item._id}
+                            >
                               <Link2 className="w-3.5 h-3.5" />
                               Link
                             </Button>
-                            <Button variant="ghost" onClick={() => resolveItem(item, 'ignore')} disabled={savingId === item._id}>
+                            <Button
+                              aria-label={`Ignore the POS item ${item.name}`}
+                              variant="ghost"
+                              onClick={() => resolveItem(item, 'ignore')}
+                              disabled={savingId === item._id}
+                            >
                               <EyeOff className="w-3.5 h-3.5" />
                               Ignore POS item
                             </Button>
@@ -507,8 +778,8 @@ export default function MenuItems() {
                     <Input id="new-item-name" value={newItem.name} onChange={(event) => setNewItem((current) => ({ ...current, name: event.target.value }))} placeholder="Flat White" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Category</Label>
-                    <select className="h-10 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text" value={newItem.category} onChange={(event) => setNewItem((current) => ({ ...current, category: event.target.value as SalesItemCategory }))}>
+                    <Label htmlFor="new-item-category">Category</Label>
+                    <select id="new-item-category" className="h-10 w-full rounded-lg border border-border bg-surface px-2 text-sm text-text" value={newItem.category} onChange={(event) => setNewItem((current) => ({ ...current, category: event.target.value as SalesItemCategory }))}>
                       {CATEGORIES.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
                     </select>
                   </div>
@@ -520,19 +791,55 @@ export default function MenuItems() {
                     <Label htmlFor="new-item-threshold">Alert +/- %</Label>
                     <Input id="new-item-threshold" type="number" min={0} step="1" value={newItem.priceTolerancePct} onChange={(event) => setNewItem((current) => ({ ...current, priceTolerancePct: event.target.value }))} placeholder="10" />
                   </div>
-                  <Button type="submit">
+                  <Button type="submit" disabled={creating || !newItem.name.trim()}>
                     <Plus className="w-3.5 h-3.5" />
-                    Add
+                    {creating ? 'Adding…' : 'Add'}
                   </Button>
                 </form>
 
                 <div className="flex items-center gap-2">
                   <Search className="w-4 h-4 text-muted" />
-                  <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search menu items" />
+                  <Input
+                    aria-label="Search menu items"
+                    value={query}
+                    onChange={(event) => { setQuery(event.target.value); setMenuPage(1) }}
+                    placeholder="Search menu items"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-muted">
+                    Showing {menuRowStart.toLocaleString('en-ZA')}-{menuRowEnd.toLocaleString('en-ZA')} of {filteredItems.length.toLocaleString('en-ZA')} menu items
+                  </p>
+                  {menuPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label="Previous menu page"
+                        onClick={() => setMenuPage(Math.max(1, currentMenuPage - 1))}
+                        disabled={currentMenuPage <= 1}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label="Next menu page"
+                        onClick={() => setMenuPage(Math.min(menuPages, currentMenuPage + 1))}
+                        disabled={currentMenuPage >= menuPages}
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="overflow-auto rounded-lg border border-border">
                   <table className="w-full min-w-[980px] text-sm">
+                    <caption className="sr-only">Menu items with their category, menu price, price alert threshold and POS aliases</caption>
                     <thead className="bg-[#111111] text-left text-xs uppercase tracking-wide text-[#9E9E9E]">
                       <tr>
                         <th className="px-3 py-2">Item</th>
@@ -545,13 +852,9 @@ export default function MenuItems() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredItems.map((item) => {
-                        const draft = drafts[item._id] ?? {
-                          category: item.category,
-                          expectedPrice: item.expectedPrice == null ? '' : String(item.expectedPrice),
-                          priceTolerancePct: item.priceTolerancePct == null ? '10' : String(item.priceTolerancePct),
-                          aliases: (item.aliases ?? []).join(', '),
-                        }
+                      {pagedItems.map((item) => {
+                        const draft = draftFor(item)
+                        const conflict = conflicts[item._id]
                         return (
                           <tr key={item._id} className="border-t border-border">
                             <td className="px-3 py-3">
@@ -559,22 +862,25 @@ export default function MenuItems() {
                               <div className="mt-1"><StatusPill item={item} /></div>
                             </td>
                             <td className="px-3 py-3">
-                              <select className="rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-text" value={draft.category} onChange={(event) => setDrafts((current) => ({ ...current, [item._id]: { ...draft, category: event.target.value as SalesItemCategory } }))}>
+                              <select aria-label={`Category for ${item.name}`} className="rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-text" value={draft.category} onChange={(event) => editDraft(item, { category: event.target.value as SalesItemCategory })}>
                                 {CATEGORIES.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
                               </select>
                             </td>
                             <td className="px-3 py-3">
-                              <Input className="w-28" type="number" min={0} step="0.01" value={draft.expectedPrice} onChange={(event) => setDrafts((current) => ({ ...current, [item._id]: { ...draft, expectedPrice: event.target.value } }))} />
+                              <Input aria-label={`Menu price for ${item.name}`} className="w-28" type="number" min={0} step="0.01" value={draft.expectedPrice} onChange={(event) => editDraft(item, { expectedPrice: event.target.value })} />
+                              {conflict && (
+                                <ConflictNotice itemName={item.name} onTakeServer={() => takeServerValue(item._id)} />
+                              )}
                             </td>
                             <td className="px-3 py-3 text-muted">{formatZar(item.avgPrice)}</td>
                             <td className="px-3 py-3">
-                              <Input className="w-24" type="number" min={0} step="1" value={draft.priceTolerancePct} onChange={(event) => setDrafts((current) => ({ ...current, [item._id]: { ...draft, priceTolerancePct: event.target.value } }))} />
+                              <Input aria-label={`Price alert threshold for ${item.name}`} className="w-24" type="number" min={0} step="1" value={draft.priceTolerancePct} onChange={(event) => editDraft(item, { priceTolerancePct: event.target.value })} />
                             </td>
                             <td className="px-3 py-3">
-                              <Input value={draft.aliases} onChange={(event) => setDrafts((current) => ({ ...current, [item._id]: { ...draft, aliases: event.target.value } }))} placeholder="POS name, another POS name" />
+                              <Input aria-label={`POS aliases for ${item.name}`} value={draft.aliases} onChange={(event) => editDraft(item, { aliases: event.target.value })} placeholder="POS name, another POS name" />
                             </td>
                             <td className="px-3 py-3 text-right">
-                              <Button size="sm" variant="outline" onClick={() => saveItem(item)} disabled={savingId === item._id}>
+                              <Button aria-label={`Save ${item.name}`} size="sm" variant="outline" onClick={() => saveItem(item)} disabled={savingId === item._id || savingAll}>
                                 <Save className="w-3.5 h-3.5" />
                                 Save
                               </Button>
@@ -591,5 +897,24 @@ export default function MenuItems() {
         </Card>
       </div>
     </AppLayout>
+  )
+}
+
+function ConflictNotice({ itemName, onTakeServer }: { itemName: string; onTakeServer: () => void }) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5">
+      <p className="text-xs text-amber-200">
+        Changed on the server since you started editing. Saving replaces the stored value with yours.
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={`Use the stored value for ${itemName} and discard this edit`}
+        onClick={onTakeServer}
+      >
+        Use theirs
+      </Button>
+    </div>
   )
 }

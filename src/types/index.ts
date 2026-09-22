@@ -58,7 +58,7 @@ export interface CreditLedgerSummary {
     featureKey: string
     label: string
     credits: number
-    status: 'committed' | 'refunded'
+    status: 'committed'
     provider?: string
     createdAt: string
   }[]

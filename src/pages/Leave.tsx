@@ -1,5 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
+  AlertCircle,
+  AlertTriangle,
   CalendarOff,
   Check,
   X,
@@ -39,6 +41,9 @@ const LEAVE_TYPE_COLORS: Record<string, string> = {
 
 const LEAVE_TYPES = ['annual', 'sick', 'family', 'unpaid'] as const
 
+// How many names fit in a calendar cell before the rest have to be summarised.
+const CALENDAR_CELL_ENTRIES = 2
+
 function getStaffName(staffId: LeaveRequest['staffId']): string {
   if (typeof staffId === 'object' && staffId !== null) return staffId.name
   return staffId
@@ -46,6 +51,121 @@ function getStaffName(staffId: LeaveRequest['staffId']): string {
 
 function formatDate(dateStr: string) {
   return parseDateOnly(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
+}
+
+// The approve/reject controls are icon-only and repeat once per row, so the
+// accessible name has to carry the row context a sighted user reads across the
+// table. "Approve" on its own tells a screen-reader user nothing about which
+// request they are about to action.
+function leaveActionLabel(action: 'Approve' | 'Reject', req: LeaveRequest): string {
+  return `${action} leave for ${getStaffName(req.staffId)}, ${formatDate(req.startDate)} to ${formatDate(req.endDate)}`
+}
+
+function pluraliseDays(days: number): string {
+  return `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+// The backend charges weekdays only (countWeekdays in leave.controller), so a
+// Friday-to-Monday request an owner reads as four days is billed as two.
+function countWeekdays(startDate: string, endDate: string): number {
+  const start = parseDateOnly(startDate)
+  const end = parseDateOnly(endDate)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0
+  let count = 0
+  for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const day = cursor.getDay()
+    if (day !== 0 && day !== 6) count += 1
+  }
+  return count
+}
+
+function requestErrorMessage(error: unknown, fallback: string): string {
+  const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message
+  return typeof message === 'string' && message.trim() ? message : fallback
+}
+
+// ── Confirmation ─────────────────────────────────────────────────────────────
+
+interface ConfirmRequest {
+  title: string
+  body: string
+  confirmLabel: string
+  destructive: boolean
+  onConfirm: () => Promise<void>
+}
+
+/**
+ * Approving leave is irreversible in both directions: the backend `$inc`s the
+ * days onto the staff member's LeaveBalance and exposes no path that ever
+ * decrements it, and the row's actions disappear the moment the status leaves
+ * 'pending'. A 28px icon button 4px from its opposite is not a proportionate
+ * control for that, so the action is spelled out — who, what and how much —
+ * before it is taken.
+ */
+function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
+  // Focus the safe choice, never the destructive one: landing focus on Approve
+  // is how a stray Enter spends someone's leave.
+  useEffect(() => {
+    cancelRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) onCancel()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [busy, onCancel])
+
+  async function confirm() {
+    setBusy(true)
+    try {
+      await request.onConfirm()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="leave-confirm-title"
+        aria-describedby="leave-confirm-body"
+        className="w-full max-w-md rounded-2xl border border-border bg-[#141414] p-6 shadow-2xl"
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-guava-yellow/25 bg-guava-yellow/10">
+            <AlertTriangle className="h-4.5 w-4.5 text-guava-yellow" />
+          </div>
+          <div className="min-w-0">
+            <h2 id="leave-confirm-title" className="text-text text-base font-semibold">
+              {request.title}
+            </h2>
+            <p id="leave-confirm-body" className="mt-2 text-sm leading-6 text-muted">
+              {request.body}
+            </p>
+          </div>
+        </div>
+        <div className="mt-6 flex items-center justify-end gap-2">
+          <Button ref={cancelRef} variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant={request.destructive ? 'destructive' : 'success'}
+            onClick={confirm}
+            disabled={busy}
+          >
+            {busy ? 'Working...' : request.confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Submit Leave Form ────────────────────────────────────────────────────────
@@ -63,13 +183,30 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
   const [endDate, setEndDate] = useState('')
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const weekdays = startDate && endDate ? countWeekdays(startDate, endDate) : null
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!staffId || !startDate || !endDate) return
+    // Reversing the two dates is an ordinary date-picker slip. The backend
+    // rejects it with a 400 the form used to discard, so pressing Submit simply
+    // did nothing.
+    if (endDate < startDate) {
+      setFormError('The end date is before the start date. Pick an end date on or after the start date.')
+      return
+    }
+    if (weekdays === 0) {
+      setFormError('That period contains no weekdays. Leave is counted in weekdays only.')
+      return
+    }
+    setFormError(null)
     setSubmitting(true)
     try {
       await onSubmit({ staffId, type, startDate, endDate, reason })
+    } catch (error: unknown) {
+      setFormError(requestErrorMessage(error, 'Could not submit the leave request. Please try again.'))
     } finally {
       setSubmitting(false)
     }
@@ -88,8 +225,9 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
       <CardContent>
         <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <Label className="text-xs text-muted">Staff *</Label>
+            <Label htmlFor="leave-staff" className="text-xs text-muted">Staff *</Label>
             <select
+              id="leave-staff"
               value={staffId}
               onChange={(e) => setStaffId(e.target.value)}
               className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
@@ -103,8 +241,9 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
             </select>
           </div>
           <div>
-            <Label className="text-xs text-muted">Leave Type</Label>
+            <Label htmlFor="leave-type" className="text-xs text-muted">Leave Type</Label>
             <select
+              id="leave-type"
               value={type}
               onChange={(e) => setType(e.target.value)}
               className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
@@ -117,17 +256,44 @@ function SubmitLeaveForm({ staffList, onSubmit, onCancel }: SubmitLeaveFormProps
             </select>
           </div>
           <div>
-            <Label className="text-xs text-muted">Start Date *</Label>
-            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <Label htmlFor="leave-start-date" className="text-xs text-muted">Start Date *</Label>
+            <Input id="leave-start-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
           <div>
-            <Label className="text-xs text-muted">End Date *</Label>
-            <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <Label htmlFor="leave-end-date" className="text-xs text-muted">End Date *</Label>
+            <Input
+              id="leave-end-date"
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
           </div>
           <div className="sm:col-span-2">
-            <Label className="text-xs text-muted">Reason (optional)</Label>
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason for leave..." />
+            <Label htmlFor="leave-reason" className="text-xs text-muted">Reason (optional)</Label>
+            <Input id="leave-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason for leave..." />
           </div>
+          {/* The day count was previously only revealed after the request was
+              created, so an owner could not tell whether it would fit inside the
+              remaining balance until it was too late to change it. */}
+          {weekdays !== null && weekdays > 0 && (
+            <div className="sm:col-span-2 lg:col-span-3 -mt-1">
+              <p className="text-xs text-muted">
+                This request counts as{' '}
+                <span className="text-text font-medium">{weekdays} weekdays</span>. Weekends are not
+                deducted from the balance.
+              </p>
+            </div>
+          )}
+          {formError && (
+            <div
+              role="alert"
+              className="sm:col-span-2 lg:col-span-3 flex items-start gap-2 rounded-lg border border-red-900/40 bg-red-900/20 px-3 py-2"
+            >
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
+              <p className="text-xs text-red-400">{formError}</p>
+            </div>
+          )}
           <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
             <Button type="submit" variant="success" disabled={!staffId || !startDate || !endDate || submitting}>
               <Plus className="w-4 h-4" />
@@ -150,14 +316,28 @@ function LeaveCalendar() {
   const year = currentMonth.getFullYear()
   const month = currentMonth.getMonth()
 
+  // Without a per-run controller, clicking the month chevrons faster than the
+  // API answers commits whichever response resolves last -- so the grid can show
+  // one month's header over a different month's entries, with nothing to say so.
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
     const { startDate, endDate } = getLocalMonthBounds(new Date(year, month, 1, 12))
     api
-      .get<{ calendar: LeaveCalendarDay[] }>(`/leave/calendar?startDate=${startDate}&endDate=${endDate}`)
-      .then(({ data }) => setCalendarDays(data.calendar || []))
-      .catch(() => setCalendarDays([]))
-      .finally(() => setLoading(false))
+      .get<{ calendar: LeaveCalendarDay[] }>(
+        `/leave/calendar?startDate=${startDate}&endDate=${endDate}`,
+        { signal: controller.signal }
+      )
+      .then(({ data }) => {
+        if (!controller.signal.aborted) setCalendarDays(data.calendar || [])
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setCalendarDays([])
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [year, month])
 
   const calendarMap = useMemo(() => {
@@ -187,11 +367,11 @@ function LeaveCalendar() {
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm">Leave Calendar</CardTitle>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
+            <Button aria-label="Previous month" variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <span className="text-text text-xs font-medium min-w-30 text-center">{monthLabel}</span>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
+            <Button aria-label="Next month" variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
@@ -233,7 +413,10 @@ function LeaveCalendar() {
                     <p className={cn('text-[10px] mb-0.5', isToday ? 'text-guava-red-text font-bold' : 'text-muted')}>
                       {dayNum}
                     </p>
-                    {calDay?.staff.map((s, i) => (
+                    {/* The cell is a fixed height with overflow-hidden, so the
+                        busiest day -- the one worth noticing -- used to look the
+                        calmest. Show what fits and account for the rest. */}
+                    {calDay?.staff.slice(0, CALENDAR_CELL_ENTRIES).map((s, i) => (
                       <div
                         key={i}
                         className="text-[8px] rounded px-0.5 py-px mb-px truncate"
@@ -245,6 +428,17 @@ function LeaveCalendar() {
                         {s.name}
                       </div>
                     ))}
+                    {calDay && calDay.staff.length > CALENDAR_CELL_ENTRIES && (
+                      <p
+                        className="text-[8px] font-medium text-guava-yellow px-0.5"
+                        title={calDay.staff
+                          .slice(CALENDAR_CELL_ENTRIES)
+                          .map((s) => `${s.name} (${s.type})`)
+                          .join(', ')}
+                      >
+                        +{calDay.staff.length - CALENDAR_CELL_ENTRIES} more
+                      </p>
+                    )}
                   </div>
                 )
               })}
@@ -274,6 +468,11 @@ export default function Leave() {
   const [filter, setFilter] = useState<FilterTab>('all')
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  // A rejected request used to be indistinguishable from a genuinely empty one:
+  // the page told the owner "No leave requests" when the server was unreachable.
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -283,6 +482,7 @@ export default function Leave() {
         api.get<{ requests: LeaveRequest[] }>(`/leave${statusParam}`).catch(() => null),
         api.get<{ staff: StaffMember[] }>('/staff').catch(() => null),
       ])
+      setLoadFailed(leaveRes === null)
       setRequests(leaveRes?.data?.requests ?? [])
       setStaffList(staffRes?.data?.staff ?? [])
     } finally {
@@ -295,19 +495,52 @@ export default function Leave() {
   }, [loadData])
 
   async function handleSubmit(data: { staffId: string; type: string; startDate: string; endDate: string; reason: string }) {
+    // Deliberately unguarded: SubmitLeaveForm owns the inline error for its own
+    // submission, and swallowing the rejection here would hide it.
     await api.post('/leave', data)
     setShowForm(false)
     await loadData()
   }
 
-  async function handleApprove(id: string) {
-    await api.put(`/leave/${id}/approve`)
-    await loadData()
+  function askToApprove(req: LeaveRequest) {
+    const staffName = getStaffName(req.staffId)
+    const spendsBalance = req.type !== 'unpaid'
+    setActionError(null)
+    setConfirmRequest({
+      title: `Approve ${pluraliseDays(req.days)} of ${req.type} leave for ${staffName}?`,
+      body: spendsBalance
+        ? `${staffName} will be booked off from ${formatDate(req.startDate)} to ${formatDate(req.endDate)}, and ${pluraliseDays(req.days)} will be taken off their ${req.type} leave balance straight away. This cannot be undone — nothing in the portal can return the days.`
+        : `${staffName} will be booked off from ${formatDate(req.startDate)} to ${formatDate(req.endDate)}. Unpaid leave is not deducted from an entitlement, but this cannot be undone.`,
+      confirmLabel: `Approve ${pluraliseDays(req.days)}`,
+      destructive: false,
+      onConfirm: () => runAction(() => api.put(`/leave/${req._id}/approve`), 'Could not approve the request.'),
+    })
   }
 
-  async function handleReject(id: string) {
-    await api.put(`/leave/${id}/reject`)
-    await loadData()
+  function askToReject(req: LeaveRequest) {
+    const staffName = getStaffName(req.staffId)
+    setActionError(null)
+    setConfirmRequest({
+      title: `Reject ${staffName}'s ${req.type} leave request?`,
+      body: `${staffName} will not be booked off for ${formatDate(req.startDate)} to ${formatDate(req.endDate)}. This cannot be undone — ${staffName} would have to submit a new request.`,
+      confirmLabel: 'Reject request',
+      destructive: true,
+      onConfirm: () => runAction(() => api.put(`/leave/${req._id}/reject`), 'Could not reject the request.'),
+    })
+  }
+
+  // Every one of these rejections used to become an unhandled promise rejection:
+  // the row stayed 'pending', loadData never ran, and the owner had no way to
+  // tell whether the decision had landed.
+  async function runAction(call: () => Promise<unknown>, fallback: string) {
+    try {
+      await call()
+      setConfirmRequest(null)
+      await loadData()
+    } catch (error: unknown) {
+      setConfirmRequest(null)
+      setActionError(requestErrorMessage(error, fallback))
+    }
   }
 
   const FILTER_TABS: { id: FilterTab; label: string }[] = [
@@ -319,6 +552,20 @@ export default function Leave() {
 
   return (
     <AppLayout title="Leave">
+      {confirmRequest && (
+        <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
+      )}
+
+      {actionError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2.5 rounded-lg border border-red-900/40 bg-red-900/20 px-3.5 py-3"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+          <p className="text-sm text-red-400">{actionError}</p>
+        </div>
+      )}
+
       {!showForm && (
         <div className="mb-4 flex justify-end">
           <Button size="sm" variant="success" onClick={() => setShowForm(true)}>
@@ -366,6 +613,18 @@ export default function Leave() {
                     <Skeleton key={i} className="h-12 rounded-lg" />
                   ))}
                 </div>
+              ) : loadFailed ? (
+                <div role="alert" className="flex flex-col items-center justify-center py-12 text-center">
+                  <AlertCircle className="mb-3 h-8 w-8 text-guava-red-text" />
+                  <p className="text-text text-sm font-medium">Leave requests could not be loaded</p>
+                  <p className="mt-1 max-w-xs text-xs text-muted">
+                    The server did not answer. Your requests are safe — this page just could not
+                    fetch them.
+                  </p>
+                  <Button variant="outline" size="sm" className="mt-4" onClick={loadData}>
+                    Try again
+                  </Button>
+                </div>
               ) : requests.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -409,18 +668,20 @@ export default function Leave() {
                               {req.status === 'pending' && (
                                 <div className="flex items-center gap-1 justify-end">
                                   <Button
+                                    aria-label={leaveActionLabel('Approve', req)}
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 text-guava-green hover:text-guava-green hover:bg-guava-green/10"
-                                    onClick={() => handleApprove(req._id)}
+                                    onClick={() => askToApprove(req)}
                                   >
                                     <Check className="w-3.5 h-3.5" />
                                   </Button>
                                   <Button
+                                    aria-label={leaveActionLabel('Reject', req)}
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 text-guava-red-text hover:text-guava-red-text hover:bg-guava-red/10"
-                                    onClick={() => handleReject(req._id)}
+                                    onClick={() => askToReject(req)}
                                   >
                                     <X className="w-3.5 h-3.5" />
                                   </Button>

@@ -1,8 +1,10 @@
-import { Cloud, Zap, Calendar, Banknote, Megaphone } from 'lucide-react'
+import { Cloud, Zap, Calendar, Banknote, Megaphone, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Forecast } from '@/types'
 import { forecastDateKey, parseDateOnly } from '@/lib/date'
+import { isOccasionalSeller, OCCASIONAL_SELLER_MAX_QTY } from '@/lib/forecastItems'
+import { accuracyTextClass } from './accuracyBand'
 import {
   isLoadSheddingAvailable,
   isWeatherAvailable,
@@ -43,6 +45,33 @@ function hasMatchedActuals(forecast: Forecast): boolean {
   )
 }
 
+/**
+ * The card's own "open this day" control.
+ *
+ * The card used to be the button: `role="button"` on the container. That role
+ * is Children Presentational, so every number inside it — predicted revenue,
+ * the top five items with their suggested stock, the accuracy, the signal
+ * badges — was stripped from the accessibility tree. A screen-reader user
+ * arrowing the week heard "Open forecast details for Tuesday, button" seven
+ * times and none of the figures they order stock against.
+ */
+function OpenDetailButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation()
+        onClick()
+      }}
+      aria-label={`Open forecast details for ${label}`}
+      className="inline-flex items-center gap-1 rounded-md border border-border bg-[#111111] px-2 py-1 text-[10px] font-medium text-muted transition-colors hover:border-[#3A3A3A] hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
+    >
+      View detail
+      <ChevronRight className="h-3 w-3" />
+    </button>
+  )
+}
+
 interface Props {
   forecast: Forecast
   weekAvg: number
@@ -70,44 +99,30 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
   // ── Plan mode ──────────────────────────────────────────────────────────────
   // Never put a suggested-stock number against a line selling under ~2 a day:
   // backtested error on those exceeds 100%, so the figure is noise dressed as a
-  // plan. Today's dashboard groups them separately for the same reason.
+  // plan. Today's dashboard groups them separately for the same reason. Judge
+  // that on volume, not confidence, which the backend also caps by evidence.
   const top5Plan = [...items]
-    .filter((item) => (item.confidence ?? 'high') !== 'low')
+    .filter((item) => !isOccasionalSeller(item))
     .sort((a, b) => b.predictedQty - a.predictedQty)
     .slice(0, 5)
-  const maxQtyPlan = top5Plan.length > 0 ? top5Plan[0].predictedQty : 1
+  // `|| 1` rather than a length check: a non-occasional line can still forecast
+  // to 0 after a heavy negative multiplier (stage 6 plus rain), and dividing by
+  // that produced `width: NaN%`, which the browser drops — every bar vanished.
+  const maxQtyPlan = top5Plan[0]?.predictedQty || 1
 
   // ── Review mode ────────────────────────────────────────────────────────────
   const top5Review = [...items]
     .sort((a, b) => b.predictedQty - a.predictedQty)
     .slice(0, 5)
 
-  // Accuracy badge colour
+  // Accuracy badge colour. Graded by the one shared band so an 82% day card
+  // cannot read amber beside an 82% week header reading green.
   const acc = forecast.accuracy ?? null
-  const accColor =
-    acc === null
-      ? 'text-muted'
-      : acc >= 85
-      ? 'text-guava-green'
-      : acc >= 70
-      ? 'text-guava-yellow'
-      : 'text-guava-red-text'
+  const accColor = accuracyTextClass(acc)
 
   if (forecast.availability?.status === 'closed') {
     return (
-      <Card
-        onClick={onClick}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            onClick()
-          }
-        }}
-        role="button"
-        tabIndex={0}
-        aria-label={`Open forecast details for ${getDayLabel(calendarDate)}`}
-        className="cursor-pointer hover:border-[#444444] transition-colors"
-      >
+      <Card onClick={onClick} className="cursor-pointer hover:border-[#444444] transition-colors">
         <CardContent className="p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -122,25 +137,14 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               {forecast.availability.reason || 'This café is closed for the day.'}
             </p>
           </div>
+          <OpenDetailButton label={getDayLabel(calendarDate)} onClick={onClick} />
         </CardContent>
       </Card>
     )
   }
 
   return (
-    <Card
-      onClick={onClick}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onClick()
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open forecast details for ${getDayLabel(calendarDate)}`}
-      className="cursor-pointer hover:border-[#444444] transition-colors"
-    >
+    <Card onClick={onClick} className="cursor-pointer hover:border-[#444444] transition-colors">
       <CardContent className="p-4 space-y-3">
         {/* Header row */}
         <div className="flex items-start justify-between">
@@ -217,6 +221,23 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               )
             })}
           </div>
+        )}
+
+        {/* A small or brand-new cafe is exactly the account whose whole menu
+            sells under two a day. Without this the card rendered a revenue
+            figure, some chips, and a blank space where the plan should be —
+            which reads as broken rather than as a deliberate omission. */}
+        {mode === 'plan' && top5Plan.length === 0 && items.length > 0 && (
+          <p className="text-muted text-[10px] leading-snug">
+            Every line here sells under {OCCASIONAL_SELLER_MAX_QTY} a day — keep a few of each on hand
+            rather than ordering to a number.
+          </p>
+        )}
+
+        {mode === 'plan' && items.length === 0 && (
+          <p className="text-muted text-[10px] leading-snug">
+            No item predictions for this day yet.
+          </p>
         )}
 
         {mode === 'review' && top5Review.length > 0 && (
@@ -296,9 +317,17 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               title={weatherAvailable ? undefined : weatherUnavailableReason(signals.weather)}
             >
               <Cloud className="w-2.5 h-2.5" />
-              {weatherAvailable
-                ? `${signals.weather.temp}°C · ${signals.weather.condition}`
-                : 'Weather unavailable'}
+              {weatherAvailable ? (
+                `${signals.weather.temp}°C · ${signals.weather.condition}`
+              ) : (
+                <>
+                  Weather unavailable
+                  {/* The reason was in a `title` on a non-focusable badge —
+                      mouse-hover only, so unreachable on a phone or by a
+                      screen reader. */}
+                  <span className="sr-only">: {weatherUnavailableReason(signals.weather)}</span>
+                </>
+              )}
             </Badge>
 
             {signals.isPayday && (
@@ -337,6 +366,7 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               >
                 <Zap className="w-2.5 h-2.5 mr-1" />
                 Load shedding unavailable
+                <span className="sr-only">: {loadSheddingUnavailableReason(signals)}</span>
               </Badge>
             )}
 
@@ -361,12 +391,22 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
               title={weatherAvailable ? undefined : weatherUnavailableReason(signals.weather)}
             >
               <Cloud className="w-2.5 h-2.5" />
-              {weatherAvailable
-                ? `${signals.weather.temp}°C · ${signals.weather.condition}`
-                : 'Weather unavailable'}
+              {weatherAvailable ? (
+                `${signals.weather.temp}°C · ${signals.weather.condition}`
+              ) : (
+                <>
+                  Weather unavailable
+                  {/* The reason was in a `title` on a non-focusable badge —
+                      mouse-hover only, so unreachable on a phone or by a
+                      screen reader. */}
+                  <span className="sr-only">: {weatherUnavailableReason(signals.weather)}</span>
+                </>
+              )}
             </Badge>
           </div>
         )}
+
+        <OpenDetailButton label={getDayLabel(calendarDate)} onClick={onClick} />
       </CardContent>
     </Card>
   )

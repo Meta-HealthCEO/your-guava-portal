@@ -4,10 +4,36 @@
   --font-sans: 'Poppins', sans-serif;
   --color-guava-red: #D43D3D;
   /* Text-safe tint of the brand red: #D43D3D is 4.14:1 on #0F0F0F, just under
-     the 4.5 needed for body copy. Fills and icons keep the original. */
-  --color-guava-red-text: #E05252;
+     the 4.5 needed for body copy. Fills and icons keep the original.
+     #E05252 still failed on the lighter dark surfaces it actually lands on
+     (3.78 on the badge tint, 4.17 on the active nav tint, 4.31 on #1F1F1F).
+     Same hue (0deg), slightly more saturated and 4 points lighter so it clears
+     4.5 on every one of them: 5.73 on #0F0F0F, 5.20 on #1A1A1A, 4.92 on
+     #1F1F1F, 4.75 on #222222, 4.78 on --color-guava-red-surface. */
+  --color-guava-red-text: #E76161;
+  /* Secondary red copy. --color-guava-red-text at 80% opacity computes to
+     ~#BF5555 and fails at 3.53, so anything that wants a dimmer red uses this
+     token at full opacity instead of an alpha modifier. Lower chroma reads as
+     quieter on a dark ground while staying above 4.5 (4.86 on the active nav
+     tint, 5.02 on #1F1F1F, 4.84 on #222222). */
+  --color-guava-red-muted: #BB7E7E;
+  /* Opaque badge/pill ground for red content. A translucent bg-guava-red/20
+     inherits whatever card it lands on, which is how the Factors badges ended
+     up at 3.78 on a tinted card. Fixed value = deterministic 4.78 with
+     --color-guava-red-text no matter what is underneath. */
+  --color-guava-red-surface: #331B1B;
   --color-guava-red-light: #FDEAEA;
   --color-guava-green: #4DA63B;
+  /* Button-surface green. White on #4DA63B is only 3.07, but #4DA63B is also
+     the text/icon green (6.23 on #0F0F0F) and no single green can satisfy both
+     - white needs luminance <= 0.183 and green-on-#0F0F0F needs >= 0.197. So
+     the brighter green stays for text, marks and fills, and solid green
+     surfaces that carry white text use this one: white reaches 4.62, and it
+     still sits 4.14 against the #0F0F0F ground. */
+  --color-guava-green-strong: #3D842F;
+  /* Opaque badge/pill ground for green content - same reasoning as
+     --color-guava-red-surface. 4.66 with --color-guava-green. */
+  --color-guava-green-surface: #1F2E1B;
   --color-guava-green-light: #EEFAEB;
   --color-guava-yellow: #FFD166;
   --color-guava-cream: #FFFAF5;

@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, type DragEvent, type ChangeEvent } from 'react'
-import { Upload, CheckCircle, AlertCircle, Clock, TrendingUp, LoaderCircle } from 'lucide-react'
+import { Upload, CheckCircle, AlertCircle, Clock, TrendingUp, LoaderCircle, ArrowRight } from 'lucide-react'
 import { Link } from 'react-router'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
-import { UploadHistoryCard } from '@/components/upload/UploadHistoryCard'
+import { UploadHistoryCard, isDuplicateUploadMessage } from '@/components/upload/UploadHistoryCard'
 import type {
   ColumnMapping,
   ItemsMode,
@@ -15,11 +15,17 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import api from '@/lib/api'
+import api, { isSessionRejection } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { addLocalDays, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+const MAX_UPLOAD_ROWS = 10_000
+
+// The confirm POST has already run for two minutes by the time recovery starts,
+// so an import slow enough to reach here will not finish in five more seconds.
+// Back off up to about a minute before giving up, and never call it a failure.
+const RECOVERY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000]
 
 function extractErrorMsg(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
@@ -27,6 +33,23 @@ function extractErrorMsg(err: unknown, fallback: string): string {
     if (msg) return msg
   }
   return fallback
+}
+
+// The server's row-cap message is a fact with no instruction attached. A cafe
+// doing 50 sales a day crosses 10 000 rows in about seven months, and the
+// duplicate skip already makes month-by-month uploads safe -- so say that.
+function friendlyUploadError(message: string): string {
+  if (/row limit/i.test(message)) {
+    return `${message}. Export in shorter date ranges — about six months at a time — and upload them one after another. Rows you have already imported are skipped automatically.`
+  }
+  return message
+}
+
+function uploadFailureMessage(err: unknown): string {
+  const serverMessage = extractErrorMsg(err, '')
+  if (serverMessage) return friendlyUploadError(serverMessage)
+  if (isSessionRejection(err)) return 'Your sign-in has expired. Sign in again, then upload the file.'
+  return 'We could not reach Your Guava to finish this upload. Your existing data is unchanged — check your connection and try again.'
 }
 
 interface ImportResult {
@@ -89,27 +112,54 @@ const uploadPhaseText: Record<UploadPhase, { title: string; detail: string; prog
   },
 }
 
-function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: number }) {
+function ProcessingOverlay({
+  phase,
+  progress,
+  onCancel,
+}: {
+  phase: UploadPhase
+  progress: number
+  onCancel?: () => void
+}) {
   const current = uploadPhaseText[phase]
   const pct = Math.max(current.progress, progress)
   const steps: UploadPhase[] = ['uploading', 'importing', 'validating', 'forecasting']
   const activeIndex = steps.indexOf(phase)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    panelRef.current?.focus()
+  }, [])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-2xl">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-progress-title"
+        tabIndex={-1}
+        className="w-full max-w-lg rounded-xl border border-border bg-surface p-6 shadow-2xl"
+      >
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-guava-red/10">
             <LoaderCircle className="h-5 w-5 animate-spin text-guava-red-text" />
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-text">{current.title}</p>
+          <div className="min-w-0 flex-1" aria-live="polite">
+            <p id="import-progress-title" className="font-semibold text-text">{current.title}</p>
             <p className="mt-1 text-sm text-muted">{current.detail}</p>
           </div>
           <span className="text-xs font-semibold text-muted">{pct}%</span>
         </div>
 
-        <div className="mt-5 h-2 overflow-hidden rounded-full bg-border">
+        <div
+          role="progressbar"
+          aria-label="Import progress"
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="mt-5 h-2 overflow-hidden rounded-full bg-border"
+        >
           <div className="h-full rounded-full bg-guava-red transition-all duration-300" style={{ width: `${pct}%` }} />
         </div>
 
@@ -137,6 +187,19 @@ function ProcessingOverlay({ phase, progress }: { phase: UploadPhase; progress: 
         <p className="mt-5 text-xs text-muted">
           Large spreadsheets can take a little while. Keep this tab open until the import finishes.
         </p>
+
+        {onCancel ? (
+          <div className="mt-4 flex justify-end">
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              Cancel upload
+            </Button>
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted">
+            Your rows are being written now, so this step cannot be cancelled. If the tab closes the
+            import carries on and the result appears in Upload History.
+          </p>
+        )}
       </div>
     </div>
   )
@@ -151,8 +214,10 @@ function buildLast30Days(): string[] {
   return days
 }
 
+// `new Date('2026-05-04')` is parsed as UTC midnight, so west of UTC every
+// date-only key rendered as the day before. parseDateOnly pins it to local noon.
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-ZA')
+  return parseDateOnly(iso).toLocaleDateString('en-ZA')
 }
 
 function monthsSpan(earliest: string, latest: string): string {
@@ -168,18 +233,21 @@ function DataStatusCard({
   status,
   loading,
   error,
+  uploadDisabled,
   onRetry,
   onUploadClick,
 }: {
   status: DataStatus | null
   loading: boolean
   error: boolean
+  uploadDisabled: boolean
   onRetry: () => void
   onUploadClick: () => void
 }) {
   const days30 = buildLast30Days()
   const coverageMap = new Map<string, number>()
   status?.coverage30d.forEach((c) => coverageMap.set(c.date, c.count))
+  const emptyDayCount = days30.filter((day) => !(coverageMap.get(day) ?? 0)).length
 
   const daysSince = status?.daysSinceLatest ?? null
   let pillColor = 'bg-red-500/20 text-red-400 border-red-500/30'
@@ -248,11 +316,13 @@ function DataStatusCard({
                 {days30.map((day) => {
                   const count = coverageMap.get(day)
                   const hasData = count !== undefined && count > 0
+                  const dayLabel = `${formatDate(day)}: ${count ?? 0} transactions`
                   return (
                     <div
                       key={day}
                       role="listitem"
-                      title={hasData ? `${formatDate(day)}: ${count} transactions` : `${formatDate(day)}: no data`}
+                      aria-label={dayLabel}
+                      title={dayLabel}
                       className={cn(
                         'w-3 h-6 rounded-sm cursor-default',
                         hasData ? 'bg-guava-red' : 'bg-border'
@@ -261,6 +331,14 @@ function DataStatusCard({
                   )
                 })}
               </div>
+              {/* The strip carries has-data/no-data in colour alone, which is
+                  neither readable by a screen reader nor safe for a colour
+                  vision deficiency. This is the text equivalent. */}
+              <p className="text-muted text-xs mt-1.5">
+                {emptyDayCount === 0
+                  ? 'All 30 of the last 30 days have data.'
+                  : `${emptyDayCount} of the last 30 days have no data.`}
+              </p>
             </div>
 
             {/* Right: action */}
@@ -268,8 +346,9 @@ function DataStatusCard({
               {isActionNeeded ? (
                 <Button
                   size="sm"
-                  className="bg-guava-green hover:bg-[#3d8e2e] text-white rounded-lg"
+                  className="bg-guava-green-strong hover:bg-[#35722A] text-white rounded-lg"
                   onClick={onUploadClick}
+                  disabled={uploadDisabled}
                 >
                   <Upload className="w-3.5 h-3.5" />
                   Upload latest data
@@ -297,16 +376,34 @@ export default function Connect() {
   // ── CSV Upload state ─────────────────────────────────────────────
   const [isDragging, setIsDragging] = useState(false)
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
-  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'success' | 'error' | 'duplicate'>('idle')
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'success' | 'error' | 'duplicate' | 'still_running'>('idle')
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>('uploading')
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [extraFilesNotice, setExtraFilesNotice] = useState<string | null>(null)
   const [lastUpload, setLastUpload] = useState<string | null>(null)
   const [stageResponse, setStageResponse] = useState<StageUploadResponse | null>(null)
   const [stageErrorMsg, setStageErrorMsg] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const confirmationKeysRef = useRef(new Map<string, string>())
+  const uploadAbortRef = useRef<AbortController | null>(null)
+  const cancelledRef = useRef(false)
+  const phaseTimerRef = useRef<number | null>(null)
+
+  const wizardOpen = Boolean(stageResponse)
+
+  const clearPhaseTimer = () => {
+    if (phaseTimerRef.current != null) {
+      window.clearTimeout(phaseTimerRef.current)
+      phaseTimerRef.current = null
+    }
+  }
+
+  useEffect(() => () => {
+    clearPhaseTimer()
+    uploadAbortRef.current?.abort()
+  }, [])
 
   const confirmationKeyFor = (uploadId: string) => {
     const existing = confirmationKeysRef.current.get(uploadId)
@@ -327,12 +424,14 @@ export default function Connect() {
       : undefined
     if (status != null && ![408, 504].includes(status)) throw originalError
 
-    for (let attempt = 0; attempt < 5; attempt++) {
+    let lastKnownStatus: UploadRecord['status'] | undefined
+    for (let attempt = 0; attempt < RECOVERY_BACKOFF_MS.length; attempt++) {
       try {
         const { data } = await api.get<{ upload: UploadRecord }>(`/uploads/${uploadId}`, {
           timeout: 10_000,
         })
-        if (data.upload.status === 'completed') {
+        lastKnownStatus = data.upload.status
+        if (lastKnownStatus === 'completed') {
           return {
             success: true,
             uploadId,
@@ -343,12 +442,20 @@ export default function Connect() {
             replayed: true,
           }
         }
-        if (data.upload.status !== 'parsing') break
+        if (lastKnownStatus !== 'parsing') break
       } catch {
         // A transient status-read failure should not hide a commit that may
-        // already have succeeded. Retry within this short bounded window.
+        // already have succeeded. Retry within this bounded window.
       }
-      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      if (attempt < RECOVERY_BACKOFF_MS.length - 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, RECOVERY_BACKOFF_MS[attempt]))
+      }
+    }
+
+    // Still parsing after the whole window is not a failure, and calling it one
+    // is what made owners re-upload the same file into a running import.
+    if (lastKnownStatus === 'parsing') {
+      throw Object.assign(new Error('Import is still running'), { uploadStillRunning: true })
     }
     throw originalError
   }
@@ -409,6 +516,24 @@ export default function Connect() {
     setLastUpload(new Date().toISOString())
   }
 
+  const handleUploadFailure = (err: unknown) => {
+    clearPhaseTimer()
+    if (cancelledRef.current) {
+      cancelledRef.current = false
+      return
+    }
+    if ((err as { uploadStillRunning?: boolean })?.uploadStillRunning) {
+      setUploadState('still_running')
+      setHistoryRefreshKey((key) => key + 1)
+      return
+    }
+    const msg = uploadFailureMessage(err)
+    setErrorMsg(msg)
+    // Re-importing a file you already uploaded is normal housekeeping, not a
+    // failure. The rows were skipped because they are already safely stored.
+    setUploadState(isDuplicateUploadMessage(msg) ? 'duplicate' : 'error')
+  }
+
   // ── Fetch data status ────────────────────────────────────────────
   const fetchDataStatus = async (signal?: AbortSignal) => {
     try {
@@ -434,24 +559,34 @@ export default function Connect() {
 
   // ── CSV Upload handlers ──────────────────────────────────────────
   const handleFile = async (file: File) => {
-  const validTypes = [
-    'text/csv',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  ]
-  const lowerName = file.name.toLowerCase()
-  const validExt = lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx')
+    const validTypes = [
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ]
+    const lowerName = file.name.toLowerCase()
+    const validExt = lowerName.endsWith('.csv') || lowerName.endsWith('.xlsx')
 
-  if (!validTypes.includes(file.type) && !validExt) {
-      setErrorMsg('Invalid file type. Please upload a .csv or .xlsx file.')
+    if (!validTypes.includes(file.type) && !validExt) {
+      setErrorMsg(
+        lowerName.endsWith('.xls')
+          ? '.xls files are not supported. Open the file in Excel and use Save As to save it as .xlsx, then upload that.'
+          : 'Invalid file type. Please upload a .csv or .xlsx file.'
+      )
       setUploadState('error')
       return
     }
 
     if (file.size > MAX_UPLOAD_BYTES) {
-      setErrorMsg('File is too large. Please upload a file under 10 MB.')
+      setErrorMsg(
+        'File is too large. Please upload a file under 10 MB. Export a shorter date range, or split the file by month — rows you have already imported are skipped automatically, so uploading month by month is safe.'
+      )
       setUploadState('error')
       return
     }
+
+    const controller = new AbortController()
+    uploadAbortRef.current = controller
+    cancelledRef.current = false
 
     setUploadState('uploading')
     setUploadPhase('uploading')
@@ -467,6 +602,7 @@ export default function Connect() {
       const { data } = await api.post<StageUploadResponse>('/transactions/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120_000,
+        signal: controller.signal,
         onUploadProgress: (e) => {
           if (e.total) setProgress(Math.min(35, Math.round((e.loaded / e.total) * 35)))
         },
@@ -479,7 +615,8 @@ export default function Connect() {
         // Auto-confirm any POS file with a complete preset or saved mapping.
         setUploadPhase('importing')
         setProgress(55)
-        setTimeout(() => {
+        clearPhaseTimer()
+        phaseTimerRef.current = window.setTimeout(() => {
           setUploadPhase('validating')
           setProgress(75)
         }, 600)
@@ -488,28 +625,45 @@ export default function Connect() {
           data.columnMapping,
           data.itemsMode
         )
+        clearPhaseTimer()
         setUploadPhase('forecasting')
         setProgress(95)
         finishConfirmation(confirmed)
       }
     } catch (err: unknown) {
-      const msg = extractErrorMsg(err, 'Upload failed. Please try again.')
-      setErrorMsg(msg)
-      // Re-importing a file you already uploaded is normal housekeeping, not a
-      // failure. The rows were skipped because they are already safely stored.
-      setUploadState(/already exist/i.test(msg) ? 'duplicate' : 'error')
+      handleUploadFailure(err)
+    } finally {
+      uploadAbortRef.current = null
     }
+  }
+
+  const cancelUpload = () => {
+    cancelledRef.current = true
+    uploadAbortRef.current?.abort()
+    uploadAbortRef.current = null
+    clearPhaseTimer()
+    reset()
   }
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setIsDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handleFile(file)
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length === 0) return
+    const [first, ...rest] = files
+    // Dropping a folder of monthly exports is the natural first-run gesture, and
+    // the extra files used to be discarded in silence.
+    setExtraFilesNotice(
+      rest.length > 0
+        ? `Only ${first.name} is being imported. Your Guava imports one file at a time — drop the other ${rest.length} file${rest.length === 1 ? '' : 's'} one after another.`
+        : null
+    )
+    handleFile(first)
   }
 
   const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    setExtraFilesNotice(null)
     if (file) handleFile(file)
     e.target.value = ''
   }
@@ -519,6 +673,7 @@ export default function Connect() {
     setResult(null)
     setErrorMsg(null)
     setStageErrorMsg(null)
+    setExtraFilesNotice(null)
     setProgress(0)
     setUploadPhase('uploading')
   }
@@ -531,6 +686,15 @@ export default function Connect() {
   const actualsWereFilled = result?.firstDate
     ? parseDateOnly(result.firstDate) < parseDateOnly(toLocalDateOnly(new Date()))
     : false
+
+  // An import that ends before today has nothing to say about today, so send the
+  // owner to the week plan instead.
+  const importIsHistorical = result?.lastDate
+    ? parseDateOnly(result.lastDate) < parseDateOnly(toLocalDateOnly(new Date()))
+    : false
+  const forwardTarget = importIsHistorical
+    ? { to: '/planning', label: 'See your forecast plan' }
+    : { to: '/today', label: "See today's forecast" }
 
   const importedDaysCount =
     result?.firstDate && result?.lastDate
@@ -560,6 +724,7 @@ export default function Connect() {
           status={dataStatus}
           loading={dataStatusLoading}
           error={dataStatusError}
+          uploadDisabled={wizardOpen}
           onRetry={() => fetchDataStatus()}
           onUploadClick={openFilePicker}
         />
@@ -577,8 +742,17 @@ export default function Connect() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Drop zone */}
-            {uploadState === 'idle' && (
+            {extraFilesNotice && (
+              <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" role="status">
+                {extraFilesNotice}
+              </div>
+            )}
+
+            {/* Drop zone. Hidden while the mapping wizard is open so a second
+                file cannot be staged underneath the modal, which left the
+                wizard showing the new file's headers over the old file's
+                mapping. */}
+            {uploadState === 'idle' && !wizardOpen && (
               <div
                 onDragEnter={(e) => { e.preventDefault(); setIsDragging(true) }}
                 onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
@@ -594,6 +768,7 @@ export default function Connect() {
                 role="button"
                 tabIndex={0}
                 aria-label="Choose a sales CSV or XLSX file to upload"
+                aria-describedby="upload-constraints"
                 className={cn(
                   'border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors',
                   isDragging
@@ -611,34 +786,25 @@ export default function Connect() {
                   or{' '}
                   <span className="text-guava-red-text hover:underline">click to browse</span>
                 </p>
-                <div className="flex items-center justify-center gap-2 mt-4">
+                {/* Every limit stated before the choice. These used to appear
+                    only as a rejection after the file had been picked. */}
+                <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
                   <Badge variant="secondary">.csv</Badge>
                   <Badge variant="secondary">.xlsx</Badge>
+                  <Badge variant="secondary">up to 10 MB</Badge>
+                  <Badge variant="secondary">up to {MAX_UPLOAD_ROWS.toLocaleString('en-ZA')} rows</Badge>
                 </div>
-              </div>
-            )}
-
-            {/* Upload progress */}
-            {uploadState === 'uploading' && (
-              <div className="bg-[#111111] border border-border rounded-xl p-6 text-center">
-                <div className="w-12 h-12 rounded-xl bg-guava-red/10 flex items-center justify-center mx-auto mb-4">
-                  <LoaderCircle className="w-6 h-6 text-guava-red-text animate-spin" />
-                </div>
-                <p className="text-text font-medium mb-1">{uploadPhaseText[uploadPhase].title}</p>
-                <p className="text-muted text-sm mb-4">{uploadPhaseText[uploadPhase].detail}</p>
-                <div className="h-2 bg-border rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-guava-red rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(uploadPhaseText[uploadPhase].progress, progress)}%` }}
-                  />
-                </div>
-                <p className="text-muted text-xs mt-2">{Math.max(uploadPhaseText[uploadPhase].progress, progress)}%</p>
+                <p id="upload-constraints" className="text-muted text-xs mt-3 max-w-md mx-auto">
+                  Your export needs a date column, an items or description column, and a total column.
+                  Longer histories can be uploaded month by month — rows you have already imported are
+                  skipped automatically.
+                </p>
               </div>
             )}
 
             {/* Success */}
             {uploadState === 'success' && result && (
-              <div className="bg-guava-green/5 border border-guava-green/20 rounded-xl p-6">
+              <div className="bg-guava-green/5 border border-guava-green/20 rounded-xl p-6" role="status">
                 <div className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 text-guava-green shrink-0 mt-0.5" />
                   <div className="flex-1">
@@ -679,12 +845,13 @@ export default function Connect() {
                       </p>
                     )}
                     {result.errors > 0 && (
-                      <div className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3" role="status">
+                      <div className="mb-4 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
                         <p className="text-sm font-medium text-amber-200">
                           {result.errors.toLocaleString()} row{result.errors === 1 ? '' : 's'} {result.errors === 1 ? 'was' : 'were'} not imported
                         </p>
                         <p className="mt-1 text-xs text-muted">
-                          Review Upload History for up to the first 50 rejected-row details.
+                          Everything else is in. Fix the rows below in your export and upload just those
+                          — rows already imported are skipped, so nothing is duplicated.
                         </p>
                         {result.rowErrors.length > 0 && (
                           <ul className="mt-2 space-y-1 text-xs text-amber-100">
@@ -695,6 +862,9 @@ export default function Connect() {
                             ))}
                           </ul>
                         )}
+                        <p className="mt-2 text-xs text-muted">
+                          Upload History has the full rejected-row report, up to the first 50.
+                        </p>
                       </div>
                     )}
 
@@ -732,7 +902,15 @@ export default function Connect() {
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-2">
+                {/* The owner came for a number. Offering only "upload another
+                    file" here is the drop-off point of the whole onboarding. */}
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <Button asChild variant="success" size="sm">
+                    <Link to={forwardTarget.to}>
+                      {forwardTarget.label}
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  </Button>
                   <Button variant="secondary" size="sm" onClick={reset}>
                     Upload another file
                   </Button>
@@ -742,7 +920,7 @@ export default function Connect() {
 
             {/* Already imported - a no-op, not a failure */}
             {uploadState === 'duplicate' && (
-              <div className="bg-surface border border-border rounded-xl p-6">
+              <div className="bg-surface border border-border rounded-xl p-6" role="status">
                 <div className="flex items-start gap-3 mb-4">
                   <CheckCircle className="w-5 h-5 text-muted shrink-0 mt-0.5" />
                   <div>
@@ -759,9 +937,29 @@ export default function Connect() {
               </div>
             )}
 
+            {/* Slow but alive - never reported as a failure */}
+            {uploadState === 'still_running' && (
+              <div className="bg-surface border border-border rounded-xl p-6" role="status">
+                <div className="flex items-start gap-3 mb-4">
+                  <Clock className="w-5 h-5 text-muted shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-text font-medium mb-1">Still importing</p>
+                    <p className="text-muted text-sm">
+                      This file is taking longer than usual and the import is still running on our
+                      side. Do not upload it again — it will finish on its own and appear in Upload
+                      History below with its final result.
+                    </p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => { reset(); setHistoryRefreshKey((key) => key + 1) }}>
+                  Refresh upload history
+                </Button>
+              </div>
+            )}
+
             {/* Error */}
             {uploadState === 'error' && (
-              <div className="bg-red-900/10 border border-red-900/30 rounded-xl p-6">
+              <div className="bg-red-900/10 border border-red-900/30 rounded-xl p-6" role="alert">
                 <div className="flex items-start gap-3 mb-4">
                   <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                   <div>
@@ -790,6 +988,9 @@ export default function Connect() {
 
       {stageResponse && (
         <ColumnMappingWizard
+          // Identity per staged upload. Without it a second staged file
+          // rendered the new headers over the first file's retained mapping.
+          key={stageResponse.uploadId}
           open
           headers={stageResponse.headers}
           preview={stageResponse.preview}
@@ -804,8 +1005,13 @@ export default function Connect() {
               : null
           }
           onCancel={() => {
+            const proceed = window.confirm(
+              'Discard this file? It will not be imported, and the copy we staged is thrown away. You can upload the same file again at any time.'
+            )
+            if (!proceed) return
             setStageResponse(null)
             setStageErrorMsg(null)
+            setHistoryRefreshKey((key) => key + 1)
           }}
           onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
             try {
@@ -813,7 +1019,8 @@ export default function Connect() {
               setUploadPhase('importing')
               setProgress(55)
               setStageErrorMsg(null)
-              setTimeout(() => {
+              clearPhaseTimer()
+              phaseTimerRef.current = window.setTimeout(() => {
                 setUploadPhase('validating')
                 setProgress(75)
               }, 600)
@@ -822,13 +1029,21 @@ export default function Connect() {
                 mapping,
                 itemsMode
               )
+              clearPhaseTimer()
               setUploadPhase('forecasting')
               setProgress(95)
               finishConfirmation(confirmed)
               setStageResponse(null)
               setStageErrorMsg(null)
             } catch (err: unknown) {
-              const msg = extractErrorMsg(err, 'Confirm failed. Check the column choices and try again.')
+              clearPhaseTimer()
+              if ((err as { uploadStillRunning?: boolean })?.uploadStillRunning) {
+                setStageResponse(null)
+                setUploadState('still_running')
+                setHistoryRefreshKey((key) => key + 1)
+                return
+              }
+              const msg = uploadFailureMessage(err)
               setErrorMsg(msg)
               setStageErrorMsg(msg)
               setUploadState('error')
@@ -836,7 +1051,15 @@ export default function Connect() {
           }}
         />
       )}
-      {uploadState === 'uploading' && <ProcessingOverlay phase={uploadPhase} progress={progress} />}
+      {uploadState === 'uploading' && (
+        <ProcessingOverlay
+          phase={uploadPhase}
+          progress={progress}
+          // Cancelling is only honest before the commit POST is in flight;
+          // after that the server may already be writing rows.
+          onCancel={uploadPhase === 'uploading' ? cancelUpload : undefined}
+        />
+      )}
     </AppLayout>
   )
 }

@@ -7,11 +7,17 @@ import History from './History'
 
 const mockGet = vi.fn()
 
-vi.mock('@/lib/api', () => ({
-  default: {
-    get: (...args: unknown[]) => mockGet(...args),
-  },
-}))
+// Partial: History reads the named `isSessionRejection` export when a backfill
+// fails, and a factory that omits it makes vitest throw at that moment.
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return {
+    ...actual,
+    default: {
+      get: (...args: unknown[]) => mockGet(...args),
+    },
+  }
+})
 
 vi.mock('@/components/layout/AppLayout', () => ({
   AppLayout: ({ title, children }: { title: string; children: ReactNode }) => (
@@ -274,8 +280,13 @@ describe('History page', () => {
 
     renderHistory()
 
-    expect(await screen.findByText('Preparing history')).toBeInTheDocument()
+    expect(await screen.findByText(/Check the model against your last 12 trading days/i)).toBeInTheDocument()
     expect(screen.getByText(/Showing 0 of 12 completed trading days/)).toBeInTheDocument()
+    // The cost and the wait are stated before the click, like every other
+    // compute action in the portal.
+    expect(screen.getByText(/Free — building history uses no Guava Credits/i)).toBeInTheDocument()
+    expect(screen.getByText(/up to a minute/i)).toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: /build next 14/i }))
     await waitFor(() =>
       expect(mockGet).toHaveBeenLastCalledWith('/forecasts/history', {
@@ -286,6 +297,75 @@ describe('History page', () => {
           backfill: 'sync',
           backfillLimit: 14,
         },
+        // A sequential run of 14 forecast generations cannot finish inside the
+        // shared client's 20s default.
+        timeout: 180_000,
+      })
+    )
+  })
+
+  it('reports how many retrospective days were actually built', async () => {
+    const user = userEvent.setup()
+    const pending = {
+      ...historyPayload,
+      history: [],
+      meta: { ...historyPayload.meta, totalRows: 0, totalTradingDays: 12, pendingDays: 12, generated: 0 },
+      pagination: { total: 0, page: 1, limit: 30, pages: 1 },
+    }
+    mockGet.mockResolvedValueOnce({ data: pending })
+    mockGet.mockResolvedValueOnce({
+      data: { ...pending, meta: { ...pending.meta, totalRows: 12, pendingDays: 0, generated: 12 } },
+    })
+
+    renderHistory()
+
+    await screen.findByRole('button', { name: /build next 14/i })
+    await user.click(screen.getByRole('button', { name: /build next 14/i }))
+
+    expect(await screen.findByText(/Built 12 retrospective days/i)).toBeInTheDocument()
+  })
+
+  it('keeps the history on screen when a backfill batch fails', async () => {
+    const user = userEvent.setup()
+    const withPending = {
+      ...historyPayload,
+      meta: { ...historyPayload.meta, totalTradingDays: 30, pendingDays: 16 },
+    }
+    mockGet.mockResolvedValueOnce({ data: withPending })
+    mockGet.mockRejectedValueOnce(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }))
+    mockGet.mockResolvedValue({ data: withPending })
+
+    renderHistory()
+
+    await screen.findByText(/Patchy rain nearby/)
+    await user.click(screen.getByRole('button', { name: /build next 14/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Days built before that point were kept/i)
+    // The table, the accuracy panels and the learning panel all survive.
+    expect(screen.getByText(/Patchy rain nearby/)).toBeInTheDocument()
+    expect(screen.getByText('Live forecast accuracy')).toBeInTheDocument()
+    expect(screen.getByText('Model Learning')).toBeInTheDocument()
+    expect(screen.queryByText(/Existing history is unchanged/i)).not.toBeInTheDocument()
+  })
+
+  it('re-reads history after a failed backfill so the page shows what landed', async () => {
+    const user = userEvent.setup()
+    const withPending = {
+      ...historyPayload,
+      meta: { ...historyPayload.meta, totalTradingDays: 30, pendingDays: 16 },
+    }
+    mockGet.mockResolvedValueOnce({ data: withPending })
+    mockGet.mockRejectedValueOnce(new Error('network'))
+    mockGet.mockResolvedValue({ data: withPending })
+
+    renderHistory()
+
+    await screen.findByText(/Patchy rain nearby/)
+    await user.click(screen.getByRole('button', { name: /build next 14/i }))
+
+    await waitFor(() =>
+      expect(mockGet).toHaveBeenLastCalledWith('/forecasts/history', {
+        params: { days: 90, page: 1, limit: 30 },
       })
     )
   })

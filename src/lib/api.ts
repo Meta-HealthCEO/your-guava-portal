@@ -4,20 +4,48 @@ import { clearAccessToken, getAccessToken, setAccessToken } from './accessToken'
 const REQUEST_TIMEOUT_MS = 20_000
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
 
-if (import.meta.env.PROD && !configuredApiUrl) {
-  throw new Error('VITE_API_URL is required for production builds')
+/**
+ * A misconfigured deploy used to throw here, at module-evaluation time. This
+ * module is imported by AuthContext, which main.tsx imports before it calls
+ * render() — so the throw happened before React existed, ErrorBoundary never
+ * saw it, and the result was a completely blank page whose only explanation
+ * sat in the browser console. Whoever ran the deploy saw a dead site.
+ *
+ * The condition is still fatal, but it is now reported as a value so the app
+ * can render the reason on screen. The build-time guard in vite.config.ts is
+ * the real gate; this is the last line of defence.
+ */
+const detectConfigError = (): string | null => {
+  if (!import.meta.env.PROD) return null
+  if (!configuredApiUrl) return 'VITE_API_URL is not set. The portal does not know which API to talk to.'
+  let parsed: URL
+  try {
+    parsed = new URL(configuredApiUrl)
+  } catch {
+    return `VITE_API_URL must be an absolute URL. It is currently "${configuredApiUrl}".`
+  }
+  if (parsed.protocol !== 'https:') {
+    return `VITE_API_URL must use HTTPS in production. It is currently "${configuredApiUrl}".`
+  }
+  return null
 }
 
-if (import.meta.env.PROD && configuredApiUrl) {
-  let productionApiUrl: URL
-  try {
-    productionApiUrl = new URL(configuredApiUrl)
-  } catch {
-    throw new Error('VITE_API_URL must be an absolute HTTPS URL for production builds')
-  }
-  if (productionApiUrl.protocol !== 'https:') {
-    throw new Error('VITE_API_URL must use HTTPS for production builds')
-  }
+export const API_CONFIG_ERROR = detectConfigError()
+
+/**
+ * Whether a failure means "this session is over" as opposed to "the request did
+ * not get through". Only the server actually rejecting the credential counts.
+ *
+ * Everything else — a dropped connection, a CORS failure, a 5xx, a 429 from the
+ * backend's refresh limiter, the 20-second timeout — used to be treated as a
+ * dead session too, which hard-navigated the owner to /login and destroyed
+ * whatever they were doing. On patchy mobile data that reads as an app that
+ * logs you out at random, when in fact the refresh cookie was valid for another
+ * seven days.
+ */
+export function isSessionRejection(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status
+  return status === 401 || status === 403
 }
 
 export const API_BASE_URL = (configuredApiUrl || '/api').replace(/\/+$/, '')
@@ -60,7 +88,10 @@ function shouldAttemptRefresh(url?: string) {
 
 let refreshPromise: Promise<string> | null = null
 
-function refreshAccessToken() {
+// One lapsed-billing redirect per page load, however many requests hit the 402.
+let billingRedirectIssued = false
+
+export function refreshAccessToken() {
   if (!refreshPromise) {
     refreshPromise = axios
       .post(
@@ -127,8 +158,12 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
     response = await send(token)
     return response
   } catch (error) {
-    clearAccessToken()
-    window.location.assign('/login')
+    // Only a rejected credential ends the session. A transport failure is
+    // handed back to the caller so the page can offer a retry and keep state.
+    if (isSessionRejection(error)) {
+      clearAccessToken()
+      window.location.assign('/login')
+    }
     throw error
   }
 }
@@ -155,12 +190,29 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`
         return api(original)
       } catch (refreshError) {
-        clearAccessToken()
-        if (normaliseApiPath(original.url) !== '/auth/me') {
-          window.location.href = '/login'
+        // Same rule as authenticatedFetch: a refused credential ends the
+        // session, a failed connection does not.
+        if (isSessionRejection(refreshError)) {
+          clearAccessToken()
+          if (normaliseApiPath(original.url) !== '/auth/me') {
+            window.location.href = '/login'
+          }
         }
         return Promise.reject(refreshError)
       }
+    }
+
+    // A retried request that 401s again means the refreshed token is still not
+    // accepted — an owner revoking a manager's access to the cafe that is still
+    // their active one does exactly this. Without an exit the member sees every
+    // page stuck on "could not load" with a Try again that can never work, and
+    // no way back short of clearing site data.
+    if (error.response?.status === 401 && original?._retry && shouldAttemptRefresh(original.url)) {
+      clearAccessToken()
+      if (normaliseApiPath(original.url) !== '/auth/me') {
+        window.location.href = '/login'
+      }
+      return Promise.reject(error)
     }
 
     // The subscription has lapsed. The API answers every data request with a
@@ -169,9 +221,16 @@ api.interceptors.response.use(
     // telling a paying customer the product is broken at exactly the moment
     // they need to be sent to the payment screen.
     if (error.response?.status === 402 && error.response?.data?.code === 'BILLING_REQUIRED') {
-      const alreadyOnBilling = window.location.pathname === '/settings'
-        && new URLSearchParams(window.location.search).get('section') === 'billing'
-      if (!alreadyOnBilling) {
+      // Suppress for the whole of Settings, not just the billing section. Only
+      // /api/account and /api/auth are billing-exempt on the server, so loading
+      // any other Settings section re-triggers the 402 — and the old check,
+      // which required section=billing exactly, then bounced the user back to
+      // billing with a full page reload. Every section became a reload trap
+      // that discarded whatever was being edited.
+      const onSettings = window.location.pathname.startsWith('/settings')
+      // N concurrent requests produce N 402s; one navigation is enough.
+      if (!onSettings && !billingRedirectIssued) {
+        billingRedirectIssued = true
         window.location.href = '/settings?section=billing&billing=required'
       }
     }

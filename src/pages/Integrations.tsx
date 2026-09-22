@@ -379,7 +379,7 @@ function ProviderCard({
             <div className="flex items-center gap-2 pt-1">
               <Button
                 size="sm"
-                className="bg-guava-green hover:bg-[#3d8e2e] text-white rounded-lg gap-1.5"
+                className="bg-guava-green-strong hover:bg-[#35722A] text-white rounded-lg gap-1.5"
                 onClick={handleSync}
                 disabled={syncing || disconnecting}
               >

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { BrowserRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
 import { AuthContext } from '@/contexts/AuthContext'
@@ -152,9 +152,72 @@ function renderWithAuth(ui: ReactNode) {
   )
 }
 
+// Wording the engine emits for a day it has no matching history for.
+const AWAITING_REASON = 'At least 3 observed matching trading days are required; 0 available'
+
+const readyForecast = {
+  _id: 'forecast1',
+  date: '2026-06-06',
+  totalPredictedRevenue: 12000,
+  items: [],
+  signals: {
+    weather: { temp: 29, condition: 'Sunny', humidity: 55 },
+    loadSheddingStage: 0,
+    isPublicHoliday: false,
+    isSchoolHoliday: false,
+    isPayday: false,
+    dayOfWeek: 6,
+    events: [{ name: 'Saturday Market', impact: 'high' }],
+  },
+  factors: [
+    { key: 'weather', label: 'Weather', active: true, effect: '+30%', adjustmentPct: 30 },
+    { key: 'events', label: 'Events', active: true, effect: '+35%', adjustmentPct: 35 },
+  ],
+  calibration: {
+    lookbackDays: 60,
+    sampleSize: 7,
+    overallMultiplier: 1.08,
+    factorMultipliers: [
+      { key: 'weather', label: 'Weather', multiplier: 0.96, sampleSize: 4, averageRatio: 0.96 },
+    ],
+    itemMultipliers: [
+      { itemName: 'Flat White', multiplier: 1.12, sampleSize: 5, averageRatio: 1.12 },
+    ],
+    generatedAt: '2026-06-06T00:00:00.000Z',
+  },
+}
+
+const awaitingForecast = (id: string, date: string) => ({
+  _id: id,
+  date,
+  totalPredictedRevenue: 0,
+  items: [],
+  availability: { status: 'insufficient_data' as const, reason: AWAITING_REASON },
+  trainingData: { transactionCount: 0, weeksWithSales: 0 },
+  signals: {
+    weather: { available: false, condition: '', unavailableReason: 'Cafe coordinates are not configured' },
+    loadSheddingStage: 0,
+    isPublicHoliday: false,
+    isSchoolHoliday: false,
+    isPayday: false,
+    dayOfWeek: 1,
+    events: [],
+  },
+  factors: [],
+})
+
+const closedForecast = (id: string, date: string) => ({
+  ...awaitingForecast(id, date),
+  availability: { status: 'closed' as const, reason: 'Cafe is closed in its trading hours' },
+})
+
+// Set by a test before render to drive the /forecasts/week response.
+let weekForecasts: unknown[] = []
+
 describe('Factors', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    weekForecasts = [readyForecast]
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) {
         return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
@@ -199,50 +262,17 @@ describe('Factors', () => {
         }
         return Promise.resolve({
           data: {
+            // Deliberately still ahead of any plausible run date: "Next event"
+            // is about what is coming, and a fixture that quietly ages into
+            // the past would stop testing that.
             events: [
-              { _id: 'event1', name: 'Saturday Market', date: '2026-06-06', impact: 'high', recurring: false },
+              { _id: 'event1', name: 'Saturday Market', date: '2099-06-06', impact: 'high', recurring: false },
             ],
           },
         })
       }
       if (url.includes('/forecasts/week')) {
-        return Promise.resolve({
-          data: {
-            forecasts: [
-              {
-                _id: 'forecast1',
-                date: '2026-06-06',
-                totalPredictedRevenue: 12000,
-                items: [],
-                signals: {
-                  weather: { temp: 29, condition: 'Sunny', humidity: 55 },
-                  loadSheddingStage: 0,
-                  isPublicHoliday: false,
-                  isSchoolHoliday: false,
-                  isPayday: false,
-                  dayOfWeek: 6,
-                  events: [{ name: 'Saturday Market', impact: 'high' }],
-                },
-                factors: [
-                  { key: 'weather', label: 'Weather', active: true, effect: '+30%', adjustmentPct: 30 },
-                  { key: 'events', label: 'Events', active: true, effect: '+35%', adjustmentPct: 35 },
-                ],
-                calibration: {
-                  lookbackDays: 60,
-                  sampleSize: 7,
-                  overallMultiplier: 1.08,
-                  factorMultipliers: [
-                    { key: 'weather', label: 'Weather', multiplier: 0.96, sampleSize: 4, averageRatio: 0.96 },
-                  ],
-                  itemMultipliers: [
-                    { itemName: 'Flat White', multiplier: 1.12, sampleSize: 5, averageRatio: 1.12 },
-                  ],
-                  generatedAt: '2026-06-06T00:00:00.000Z',
-                },
-              },
-            ],
-          },
-        })
+        return Promise.resolve({ data: { forecasts: weekForecasts } })
       }
       return Promise.resolve({ data: {} })
     })
@@ -284,6 +314,52 @@ describe('Factors', () => {
     expect(screen.getByText('Flat White')).toBeInTheDocument()
   })
 
+  // A brand-new cafe defaults to closed on Sunday, so its week is six
+  // insufficient_data days plus one closed day. That used to render a grid of
+  // zeros and a table of R0 rows, which reads as "your cafe will take nothing".
+  it('explains that factors are waiting on trading history when no day has a forecast', async () => {
+    weekForecasts = [
+      closedForecast('c1', '2026-06-07'),
+      ...Array.from({ length: 6 }, (_, index) => awaitingForecast(`a${index}`, `2026-06-0${index + 1}`)),
+    ]
+
+    renderWithAuth(<Factors />)
+
+    expect(await screen.findByText(/waiting on trading history/i)).toBeInTheDocument()
+    // The backend rule verbatim, so the copy cannot drift from it.
+    expect(screen.getByText(new RegExp(AWAITING_REASON, 'i'))).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /import sales data/i })).toHaveAttribute('href', '/data-health')
+
+    // No zero-value stat grid and no R0 forecast rows.
+    expect(screen.queryByText('Active this week')).not.toBeInTheDocument()
+    expect(screen.queryByText('Avg event lift')).not.toBeInTheDocument()
+    expect(screen.queryByText('R0')).not.toBeInTheDocument()
+
+    // Plan entitlements stay visible: they are still true and still useful.
+    expect(screen.getByText('6 factors unlocked')).toBeInTheDocument()
+    expect(screen.getByText('Growth')).toBeInTheDocument()
+    expect(screen.getByText('History weights: pro')).toBeInTheDocument()
+  })
+
+  it('marks pending days in the live factor table rather than showing them as R0', async () => {
+    weekForecasts = [readyForecast, awaitingForecast('a1', '2026-06-08')]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Forecast Factors')).toBeInTheDocument()
+    })
+
+    // The ready day keeps its figure; the pending day is marked, not zeroed.
+    expect(screen.getByText('R12 000')).toBeInTheDocument()
+    expect(screen.getByText('Building history')).toBeInTheDocument()
+    expect(screen.queryByText('R0')).not.toBeInTheDocument()
+
+    // Counts are stated over the days that actually have a forecast.
+    expect(screen.getByText('Active this week')).toBeInTheDocument()
+    expect(screen.getByText(/1 of 2 days forecast/i)).toBeInTheDocument()
+  })
+
   it('saves factor rules', async () => {
     renderWithAuth(<Factors />)
 
@@ -293,5 +369,204 @@ describe('Factors', () => {
     await waitFor(() => {
       expect(mockPut).toHaveBeenCalledWith('/forecasts/factors', { settings })
     })
+  })
+
+  it('shows the server reason when a save is refused for the plan', async () => {
+    // The API answers a plan-locked change with 402 PLAN_UPGRADE_REQUIRED and a
+    // message naming the plan; a generic "Could not save" hides the one thing
+    // the operator needs to know.
+    mockPut.mockRejectedValueOnce({
+      response: {
+        status: 402,
+        data: {
+          success: false,
+          code: 'PLAN_UPGRADE_REQUIRED',
+          message: 'History weights settings are available on the Pro plan. Upgrade your plan to change them.',
+        },
+      },
+    })
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Rules'))
+    await userEvent.click(screen.getByText('Save Factors'))
+
+    expect(await screen.findByText(/available on the Pro plan/)).toBeInTheDocument()
+    expect(screen.queryByText('Could not save factors.')).not.toBeInTheDocument()
+  })
+
+  // Half the factor rules are negative by default (rain -10, hot-day coffee
+  // -10, load shedding -8/-22/-40). An <input type="number"> reports "" for a
+  // partially-typed "-", and Number("") is a finite 0, so committing on every
+  // keystroke wrote 0 into settings and re-rendered the field as "0" — the
+  // owner could not type a negative percentage at all, and a cleared field
+  // silently shipped 0% to the forecast engine.
+  it('does not commit a half-typed value over a negative factor percentage', async () => {
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Rules'))
+    const rain = screen.getByLabelText('Rain') as HTMLInputElement
+    expect(rain.value).toBe('-10')
+
+    // What the browser hands React the instant the operator types "-".
+    fireEvent.change(rain, { target: { value: '' } })
+    await userEvent.click(screen.getByText('Save Factors'))
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled())
+    const saved = mockPut.mock.calls[0][1] as { settings: ForecastFactorSettings }
+    expect(saved.settings.weather.rainPct).toBe(-10)
+  })
+
+  it('saves the negative percentage the operator actually typed', async () => {
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Rules'))
+    const rain = screen.getByLabelText('Rain') as HTMLInputElement
+
+    fireEvent.change(rain, { target: { value: '' } })
+    fireEvent.change(rain, { target: { value: '-15' } })
+    expect(rain.value).toBe('-15')
+
+    await userEvent.click(screen.getByText('Save Factors'))
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled())
+    const saved = mockPut.mock.calls[0][1] as { settings: ForecastFactorSettings }
+    expect(saved.settings.weather.rainPct).toBe(-15)
+  })
+
+  it('enforces the field min and max it advertises, on blur', async () => {
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Rules'))
+    const rain = screen.getByLabelText('Rain') as HTMLInputElement
+
+    fireEvent.change(rain, { target: { value: '900' } })
+    fireEvent.blur(rain)
+    expect(rain.value).toBe('200')
+
+    await userEvent.click(screen.getByText('Save Factors'))
+    await waitFor(() => expect(mockPut).toHaveBeenCalled())
+    const saved = mockPut.mock.calls[0][1] as { settings: ForecastFactorSettings }
+    expect(saved.settings.weather.rainPct).toBe(200)
+  })
+
+  it('announces save failures and keeps them on screen', async () => {
+    mockPut.mockRejectedValueOnce({
+      response: { status: 402, data: { message: 'Payday settings are available on the Growth plan.' } },
+    })
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Rules'))
+    await userEvent.click(screen.getByText('Save Factors'))
+
+    // role=alert inside an always-mounted live region: the banner used to be a
+    // plain div that appeared and vanished after four seconds, so the only
+    // explanation for a refused change was never announced at all.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/available on the Growth plan/i)
+    expect(screen.getByRole('button', { name: /dismiss message/i })).toBeInTheDocument()
+  })
+
+  it('offers a retry on the Rules tab instead of quietly showing the Events form', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/forecasts/factors')) return Promise.reject(new Error('factors unavailable'))
+      if (url.includes('/events')) return Promise.resolve({ data: { events: [] } })
+      if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts: [] } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Rules'))
+
+    expect(screen.getByText('Factor rules could not be loaded')).toBeInTheDocument()
+    expect(screen.queryByText('Add Event')).not.toBeInTheDocument()
+  })
+
+  it('counts distinct factors, not factor-days, in the headline', async () => {
+    // Weather and Events, each active on two days, is two active factors — not
+    // four. The "Active factor mix" panel directly beneath already said two.
+    weekForecasts = [readyForecast, { ...readyForecast, _id: 'forecast2', date: '2026-06-07' }]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Active this week')).toBeInTheDocument())
+    const card = screen.getByText('Active this week').parentElement as HTMLElement
+    expect(within(card).getByText('2')).toBeInTheDocument()
+    expect(within(card).queryByText('4')).not.toBeInTheDocument()
+  })
+
+  it('does not offer an event that already happened as the next one', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/forecasts/factors')) {
+        return Promise.resolve({ data: { defaults: settings, settings, entitlements } })
+      }
+      if (url.includes('/events/effects')) return Promise.resolve({ data: { effects: [], summary: null } })
+      if (url.includes('/events')) {
+        return Promise.resolve({
+          data: {
+            events: [
+              { _id: 'past', name: 'Last Winter Market', date: '2020-06-06', impact: 'high', recurring: false },
+            ],
+          },
+        })
+      }
+      if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts: weekForecasts } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Next event')).toBeInTheDocument())
+    const card = screen.getByText('Next event').parentElement as HTMLElement
+    expect(within(card).getByText('-')).toBeInTheDocument()
+    expect(within(card).queryByText('Last Winter Market')).not.toBeInTheDocument()
+
+    // It is still listed, marked for what it is.
+    await userEvent.click(screen.getByRole('tab', { name: 'Events' }))
+    expect(screen.getByText('Past')).toBeInTheDocument()
+  })
+
+  it('names the delete control on each event row', async () => {
+    renderWithAuth(<Factors />)
+
+    await userEvent.click(await screen.findByText('Events'))
+
+    expect(
+      screen.getByRole('button', { name: 'Remove event Saturday Market' })
+    ).toBeInTheDocument()
+  })
+
+  it('does not state a learning verdict when the forecast request failed', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/forecasts/factors')) {
+        return Promise.resolve({ data: { defaults: settings, settings, entitlements } })
+      }
+      if (url.includes('/events/effects')) return Promise.resolve({ data: { effects: [], summary: null } })
+      if (url.includes('/events')) return Promise.resolve({ data: { events: [] } })
+      if (url.includes('/forecasts/week')) return Promise.reject(new Error('forecasts unavailable'))
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Factors />)
+
+    expect(await screen.findByText('Status unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('Waiting for history')).not.toBeInTheDocument()
+    expect(screen.queryByText(/at least 3 matched item outcomes/i)).not.toBeInTheDocument()
+  })
+
+  it('labels a forecast row with the cafe calendar day, not the stored instant', async () => {
+    // 6 June in Johannesburg is stored at 2026-06-05T22:00Z; reading the raw
+    // instant rendered "Fri, 5 Jun" for any browser at or west of UTC, so
+    // Live Factors and Planning disagreed about the same forecast.
+    weekForecasts = [{ ...readyForecast, date: '2026-06-05T22:00:00.000Z', dateKey: '2026-06-06' }]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Factors')).toBeInTheDocument())
+    expect(screen.getByText(/6 Jun/)).toBeInTheDocument()
+    expect(screen.queryByText(/5 Jun/)).not.toBeInTheDocument()
   })
 })

@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@/test/test-utils'
+import { render, screen, waitFor } from '@testing-library/react'
+import { BrowserRouter } from 'react-router'
 import userEvent from '@testing-library/user-event'
+import { AuthContext } from '@/contexts/AuthContext'
 import Staff from './Staff'
 import { mockStaffMember } from '@/test/mocks/api'
+import type { ReactNode } from 'react'
 
 // Mock assets
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
@@ -10,12 +13,18 @@ vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
 // Mock the api module
 const mockGet = vi.fn()
+const mockPost = vi.fn()
+const mockPut = vi.fn()
 vi.mock('@/lib/api', () => {
   return {
+    refreshAccessToken: vi.fn().mockRejectedValue(new Error('No refresh session')),
+    isSessionRejection: vi.fn(() => true),
+    API_CONFIG_ERROR: null,
+    API_BASE_URL: 'http://localhost:5000/api',
     default: {
       get: (...args: unknown[]) => mockGet(...args),
-      post: vi.fn(),
-      put: vi.fn(),
+      post: (...args: unknown[]) => mockPost(...args),
+      put: (...args: unknown[]) => mockPut(...args),
       delete: vi.fn(),
       interceptors: {
         request: { use: vi.fn() },
@@ -26,139 +35,458 @@ vi.mock('@/lib/api', () => {
   }
 })
 
+function renderAs(role: 'owner' | 'manager', ui: ReactNode) {
+  const user = {
+    id: 'user123',
+    email: 'test@yourguava.com',
+    name: role === 'owner' ? 'Test Owner' : 'Test Manager',
+    role,
+    orgId: 'org123',
+    cafeIds: ['cafe123'],
+    activeCafeId: 'cafe123',
+  }
+
+  return render(
+    <BrowserRouter>
+      <AuthContext.Provider
+        value={{
+          user,
+          isLoading: false,
+          isOwner: role === 'owner',
+          login: vi.fn(),
+          logout: vi.fn(),
+          register: vi.fn(),
+          switchCafe: vi.fn(),
+        }}
+      >
+        {ui}
+      </AuthContext.Provider>
+    </BrowserRouter>
+  )
+}
+
+function mockStaffList(staff: unknown[] = [mockStaffMember], balances: unknown[] = []) {
+  mockGet.mockImplementation((url: string) => {
+    if (url.includes('/leave/balances')) return Promise.resolve({ data: { balances } })
+    if (url.includes('/staff')) return Promise.resolve({ data: { staff } })
+    if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+    return Promise.resolve({ data: {} })
+  })
+}
+
+// Both the page header and the empty state offer an "Add Staff" button, so the
+// form's own submit has to be picked out by type rather than by name.
+function submitAddStaff() {
+  const submit = screen
+    .getAllByRole('button', { name: /^add staff$/i })
+    .find((button) => (button as HTMLButtonElement).type === 'submit')
+  if (!submit) throw new Error('Add Staff submit button not found')
+  return submit
+}
+
+const BALANCE = {
+  staffId: 'staff123',
+  annual: { total: 15, used: 5 },
+  sick: { total: 10, used: 2 },
+  family: { total: 3, used: 0 },
+}
+
 describe('Staff', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    mockPut.mockResolvedValue({ data: {} })
+    mockPost.mockResolvedValue({ data: {} })
   })
 
   it('renders staff list', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url.includes('/staff')) {
-        return Promise.resolve({ data: { staff: [mockStaffMember] } })
-      }
-      if (url.includes('/leave/balances')) {
-        return Promise.resolve({
-          data: {
-            balances: [{
-              staffId: 'staff123',
-              annual: { total: 15, used: 5 },
-              sick: { total: 10, used: 2 },
-              family: { total: 3, used: 0 },
-            }],
-          },
-        })
-      }
-      if (url.includes('/cafe/me')) {
-        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
-      }
-      return Promise.resolve({ data: {} })
-    })
+    mockStaffList([mockStaffMember], [BALANCE])
 
-    render(<Staff />)
+    renderAs('owner', <Staff />)
 
-    await waitFor(() => {
-      expect(screen.getByText('Sarah')).toBeInTheDocument()
-    })
-
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
     expect(screen.getByText('barista')).toBeInTheDocument()
   })
 
   it('shows add staff form', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url.includes('/cafe/me')) {
-        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
-      }
-      return Promise.resolve({ data: { staff: [], balances: [] } })
-    })
+    mockStaffList([])
 
-    render(<Staff />)
+    renderAs('owner', <Staff />)
 
-    await waitFor(() => {
-      expect(screen.getByText('No staff yet')).toBeInTheDocument()
-    })
+    await waitFor(() => expect(screen.getByText('No staff yet')).toBeInTheDocument())
+    await userEvent.click(screen.getAllByRole('button', { name: /add staff/i })[0])
 
-    // Click Add Staff
-    const addButton = screen.getAllByText('Add Staff')[0]
-    await userEvent.click(addButton)
-
-    await waitFor(() => {
-      expect(screen.getByText('Add Staff Member')).toBeInTheDocument()
-    })
-
+    await waitFor(() => expect(screen.getByText('Add Staff Member')).toBeInTheDocument())
     expect(screen.getByPlaceholderText('Full name')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('email@example.com')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('082 123 4567')).toBeInTheDocument()
   })
 
   it('renders leave balance progress bars', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url.includes('/staff')) {
-        return Promise.resolve({ data: { staff: [mockStaffMember] } })
-      }
-      if (url.includes('/leave/balances')) {
-        return Promise.resolve({
-          data: {
-            balances: [{
-              staffId: 'staff123',
-              annual: { total: 15, used: 5 },
-              sick: { total: 10, used: 2 },
-              family: { total: 3, used: 0 },
-            }],
-          },
-        })
-      }
-      if (url.includes('/cafe/me')) {
-        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
-      }
-      return Promise.resolve({ data: {} })
-    })
+    mockStaffList([mockStaffMember], [BALANCE])
 
-    render(<Staff />)
+    renderAs('owner', <Staff />)
 
-    await waitFor(() => {
-      expect(screen.getByText('Sarah')).toBeInTheDocument()
-    })
-
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
     expect(screen.getByText('Annual')).toBeInTheDocument()
     expect(screen.getByText('Sick')).toBeInTheDocument()
     expect(screen.getByText('Family')).toBeInTheDocument()
-
     expect(screen.getByText('10/15 days')).toBeInTheDocument()
     expect(screen.getByText('8/10 days')).toBeInTheDocument()
     expect(screen.getByText('3/3 days')).toBeInTheDocument()
   })
 
+  // The old version wrapped its only assertion in `if (editButton)`, so once the
+  // class-based selector stopped matching the test passed having asserted
+  // nothing. Selecting by accessible name makes that impossible.
   it('shows edit mode on click', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url.includes('/staff')) {
-        return Promise.resolve({ data: { staff: [mockStaffMember] } })
-      }
-      if (url.includes('/leave/balances')) {
-        return Promise.resolve({ data: { balances: [] } })
-      }
-      if (url.includes('/cafe/me')) {
-        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
-      }
-      return Promise.resolve({ data: {} })
-    })
+    mockStaffList()
 
-    render(<Staff />)
+    renderAs('owner', <Staff />)
 
-    await waitFor(() => {
-      expect(screen.getByText('Sarah')).toBeInTheDocument()
-    })
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /edit sarah/i }))
 
-    // Click the edit button (h-7 w-7 icon button that is NOT the red deactivate one)
-    const editButton = Array.from(document.querySelectorAll('button')).find(
-      (btn) => btn.className.includes('h-7') && btn.className.includes('w-7') && !btn.className.includes('text-guava-red')
-    )
-    if (editButton) {
-      await userEvent.click(editButton)
+    expect(await screen.findByDisplayValue('Sarah')).toBeInTheDocument()
+  })
+})
 
-      await waitFor(() => {
-        expect(screen.getByDisplayValue('Sarah')).toBeInTheDocument()
-      })
+describe('Staff accessibility', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    mockPut.mockResolvedValue({ data: {} })
+  })
+
+  it('names the per-card icon buttons after the person they act on', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /edit sarah/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /deactivate sarah/i })).toBeInTheDocument()
+  })
+
+  it('labels every control in the add staff form', async () => {
+    mockStaffList([])
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('No staff yet')).toBeInTheDocument())
+    await userEvent.click(screen.getAllByRole('button', { name: /add staff/i })[0])
+    await screen.findByText('Add Staff Member')
+
+    expect(screen.getByLabelText(/name \*/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^email$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^phone$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/hourly rate/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/start date/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /^role$/i })).toBeInTheDocument()
+  })
+
+  it('labels every control in the edit form', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /edit sarah/i }))
+    await screen.findByDisplayValue('Sarah')
+
+    expect(screen.getByLabelText(/edit name/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/edit email/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/edit phone/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/edit hourly rate/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/edit start date/i)).toBeInTheDocument()
+  })
+
+  it('leaves no button on the page without an accessible name', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    for (const button of screen.getAllByRole('button')) {
+      const name = button.getAttribute('aria-label') || button.textContent
+      expect(name?.trim()).toBeTruthy()
     }
+  })
+})
+
+// POST/PUT/DELETE /staff are all ownerOnly in staff.routes. Showing a manager
+// the controls anyway means they fill in a whole new-hire form and watch it fail
+// silently, with no staff member created and no explanation.
+describe('Staff role gating', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  it('hides every owner-only control from a manager', async () => {
+    mockStaffList()
+
+    renderAs('manager', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /add staff/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /edit sarah/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /deactivate sarah/i })).not.toBeInTheDocument()
+  })
+
+  it('does not push a manager at an add-staff call to action on the empty state', async () => {
+    mockStaffList([])
+
+    renderAs('manager', <Staff />)
+
+    await waitFor(() => expect(screen.getByText(/no staff/i)).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /add staff/i })).not.toBeInTheDocument()
+  })
+
+  // staffDto strips hourlyRate for anyone who is not an owner, but the type
+  // declares it required, so the card rendered the literal string 'Rundefined/hr'
+  // -- a plainly broken pay field on every card a manager sees.
+  it('omits the pay row rather than rendering an undefined rate', async () => {
+    const { hourlyRate: _omitted, ...withoutRate } = mockStaffMember
+    mockStaffList([withoutRate])
+
+    renderAs('manager', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    expect(screen.queryByText(/Rundefined/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/R\s*\/hr/)).not.toBeInTheDocument()
+  })
+
+  it('still shows the rate to an owner', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    expect(screen.getByText('R45/hr')).toBeInTheDocument()
+  })
+})
+
+describe('Staff deactivation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    mockPut.mockResolvedValue({ data: {} })
+  })
+
+  // GET /staff filters to isActive: true, so a deactivated person vanishes on
+  // the next load -- out of the roster dropdown, the leave form and the sidebar
+  // -- and there is no reactivate control anywhere in the portal.
+  it('does not deactivate on the first click', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /deactivate sarah/i }))
+
+    expect(mockPut).not.toHaveBeenCalled()
+  })
+
+  it('says who disappears and from where before deactivating', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /deactivate sarah/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveTextContent('Sarah')
+    expect(dialog).toHaveTextContent(/roster/i)
+    expect(dialog).toHaveTextContent(/leave/i)
+  })
+
+  it('deactivates once confirmed', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /deactivate sarah/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Deactivate$/ }))
+
+    await waitFor(() =>
+      expect(mockPut).toHaveBeenCalledWith('/staff/staff123', { isActive: false })
+    )
+  })
+
+  it('keeps the staff member when the confirmation is dismissed', async () => {
+    mockStaffList()
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /deactivate sarah/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Cancel$/ }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mockPut).not.toHaveBeenCalled()
+  })
+})
+
+describe('Staff failure feedback', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  // A 500, a 403 or a dropped connection all used to render as a confident
+  // "No staff yet -- add your first staff member", telling a cafe with twelve
+  // staff that their people do not exist.
+  it('distinguishes a failed load from an empty roster', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Network Error'))
+    })
+
+    renderAs('owner', <Staff />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i)
+    expect(screen.queryByText('No staff yet')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('shows the server message when adding a staff member is refused', async () => {
+    mockStaffList([])
+    mockPost.mockRejectedValue({
+      response: { data: { message: 'Only the account owner can add staff.' } },
+    })
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('No staff yet')).toBeInTheDocument())
+    await userEvent.click(screen.getAllByRole('button', { name: /add staff/i })[0])
+    await screen.findByText('Add Staff Member')
+
+    await userEvent.type(screen.getByLabelText(/name \*/i), 'Thabo')
+    await userEvent.type(screen.getByLabelText(/hourly rate/i), '60')
+    await userEvent.click(submitAddStaff())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Only the account owner can add staff.'
+    )
+  })
+
+  it('shows the server message when a deactivation is refused', async () => {
+    mockStaffList()
+    mockPut.mockRejectedValue({
+      response: { data: { message: 'Staff member not found' } },
+    })
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /deactivate sarah/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^Deactivate$/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Staff member not found')
+  })
+})
+
+describe('Staff record editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    mockPut.mockResolvedValue({ data: {} })
+    mockPost.mockResolvedValue({ data: {} })
+  })
+
+  async function openEditForm() {
+    mockStaffList()
+    renderAs('owner', <Staff />)
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: /edit sarah/i }))
+    await screen.findByDisplayValue('Sarah')
+  }
+
+  // `email: email || undefined` never reaches the server -- JSON.stringify drops
+  // undefined -- and the backend's merge preserves the old value, so a cleared
+  // field silently came back after reload.
+  it('actually clears an email the owner deleted', async () => {
+    await openEditForm()
+
+    await userEvent.clear(screen.getByLabelText(/edit email/i))
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled())
+    expect(mockPut.mock.calls[0][1]).toMatchObject({ email: '' })
+  })
+
+  it('actually clears a phone number the owner deleted', async () => {
+    await openEditForm()
+
+    await userEvent.clear(screen.getByLabelText(/edit phone/i))
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled())
+    expect(mockPut.mock.calls[0][1]).toMatchObject({ phone: '' })
+  })
+
+  // `Number('') || 0` is 0 and the backend accepts it, so blanking the rate
+  // silently zeroed the one number on this screen with money attached.
+  it('refuses to save a blank hourly rate rather than zeroing it', async () => {
+    await openEditForm()
+
+    await userEvent.clear(screen.getByLabelText(/edit hourly rate/i))
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/hourly rate/i)
+    expect(mockPut).not.toHaveBeenCalled()
+  })
+
+  // Start date drives tenure and leave accrual, the add form pre-fills today,
+  // and there was no way to correct it afterwards.
+  it('lets the owner correct a start date captured retrospectively', async () => {
+    await openEditForm()
+
+    const startDate = screen.getByLabelText(/edit start date/i)
+    expect(startDate).toHaveValue('2025-06-01')
+    await userEvent.clear(startDate)
+    await userEvent.type(startDate, '2024-02-15')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled())
+    expect(mockPut.mock.calls[0][1]).toMatchObject({ startDate: '2024-02-15' })
+  })
+
+  it('refuses to create a new hire at R0 an hour by omission', async () => {
+    mockStaffList([])
+    renderAs('owner', <Staff />)
+    await waitFor(() => expect(screen.getByText('No staff yet')).toBeInTheDocument())
+    await userEvent.click(screen.getAllByRole('button', { name: /add staff/i })[0])
+    await screen.findByText('Add Staff Member')
+
+    await userEvent.type(screen.getByLabelText(/name \*/i), 'Thabo')
+    await userEvent.click(submitAddStaff())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/hourly rate/i)
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('Staff leave balances', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  // Over-taken leave is a payroll liability. Clamping it to zero made it
+  // indistinguishable from a staff member who has used exactly their allowance.
+  it('shows an overdrawn balance rather than clamping it to zero', async () => {
+    mockStaffList(
+      [mockStaffMember],
+      [{ staffId: 'staff123', annual: { total: 15, used: 18 }, sick: { total: 10, used: 2 }, family: { total: 3, used: 0 } }]
+    )
+
+    renderAs('owner', <Staff />)
+
+    await waitFor(() => expect(screen.getByText('Sarah')).toBeInTheDocument())
+    expect(screen.getByText('-3/15 days')).toBeInTheDocument()
   })
 })

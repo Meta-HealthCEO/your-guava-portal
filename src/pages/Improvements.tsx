@@ -149,8 +149,12 @@ function LogForm({ onSubmit, onCancel }: LogFormProps) {
     setError(null)
     try {
       await onSubmit({ type, title: title.trim(), area, priority, description: description.trim(), desiredOutcome: desiredOutcome.trim() })
-    } catch {
-      setError('Could not save. Please try again.')
+    } catch (err: unknown) {
+      // POST /improvements sits behind a write rate limiter and has server-side
+      // field validation. "Please try again" is wrong advice for the first and
+      // useless for the second.
+      const serverMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      setError(serverMessage || 'Could not save. Please try again.')
     } finally {
       setSubmitting(false)
     }
@@ -324,7 +328,11 @@ function TicketCard({ ticket, canManage, onStatusChange, onDelete }: TicketCardP
   }
 
   return (
-    <Card className={cn(ticket.status === 'done' && 'opacity-70', ticket.status === 'declined' && 'opacity-55')}>
+    // Container opacity composites the card's own text against the page:
+    // `text-muted` measured 3.08:1 at 70% and 2.37:1 at 55%, well under AA, on
+    // content the user is still expected to read. The status badge and a dashed
+    // border carry the state instead, at full text contrast.
+    <Card className={cn(ticket.status === 'declined' && 'border-dashed')}>
       <CardContent className="pt-4 pb-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -513,19 +521,44 @@ export default function Improvements() {
     else setFilter('all')
   }
 
+  // Both of these used to finish with `load(filter, 1)`, which replaces the
+  // whole list and resets `page` to 1. An owner who had clicked "Load more"
+  // three times to reach 200 tickets lost the lot on every single status
+  // change, so triaging a backlog meant re-paging after each click. Patching
+  // the affected row in place keeps the accumulated list intact.
+  const adjustCounts = (from: ImprovementStatus, to: ImprovementStatus | null) =>
+    setCounts((prev) => {
+      const next = { ...prev, [from]: Math.max(0, (prev[from] ?? 0) - 1) }
+      if (to) next[to] = (prev[to] ?? 0) + 1
+      else next.all = Math.max(0, prev.all - 1)
+      return next
+    })
+
   async function handleStatusChange(id: string, status: ImprovementStatus) {
+    const current = tickets.find((ticket) => ticket._id === id)
+    if (!current || current.status === status) return
     try {
       await api.patch(`/improvements/${id}/status`, { status })
-      await load(filter, 1, { silent: true })
+      const leavesFilter = filter !== 'all' && status !== filter
+      setTickets((prev) =>
+        leavesFilter
+          ? prev.filter((ticket) => ticket._id !== id)
+          : prev.map((ticket) => (ticket._id === id ? { ...ticket, status } : ticket))
+      )
+      adjustCounts(current.status, status)
+      if (leavesFilter) setTotal((prev) => Math.max(0, prev - 1))
     } catch {
       showToast('error', 'Could not update the ticket. Please try again.')
     }
   }
 
   async function handleDelete(id: string) {
+    const removed = tickets.find((ticket) => ticket._id === id)
     try {
       await api.delete(`/improvements/${id}`)
-      await load(filter, 1, { silent: true })
+      setTickets((prev) => prev.filter((ticket) => ticket._id !== id))
+      setTotal((prev) => Math.max(0, prev - 1))
+      if (removed) adjustCounts(removed.status, null)
     } catch {
       showToast('error', 'Could not delete the ticket. Please try again.')
     }

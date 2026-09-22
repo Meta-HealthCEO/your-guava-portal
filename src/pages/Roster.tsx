@@ -90,13 +90,19 @@ function AddShiftForm({ date, staffList, onSubmit, onCancel }: AddShiftFormProps
     <form onSubmit={handleSubmit} className="bg-[#111111] border border-border rounded-lg p-3 mt-2 space-y-2">
       <div className="flex items-center justify-between">
         <p className="text-text text-xs font-medium">Add Shift</p>
-        <button type="button" onClick={onCancel} className="text-muted hover:text-text">
+        <button
+          type="button"
+          aria-label="Close the Add Shift form"
+          onClick={onCancel}
+          className="text-muted hover:text-text"
+        >
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
       <div>
-        <Label className="text-xs text-muted">Staff</Label>
+        <Label htmlFor={`shift-staff-${date}`} className="text-xs text-muted">Staff</Label>
         <select
+          id={`shift-staff-${date}`}
           value={staffId}
           onChange={(e) => setStaffId(e.target.value)}
           className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
@@ -111,17 +117,17 @@ function AddShiftForm({ date, staffList, onSubmit, onCancel }: AddShiftFormProps
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <Label className="text-xs text-muted">Start</Label>
-          <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          <Label htmlFor={`shift-start-${date}`} className="text-xs text-muted">Start</Label>
+          <Input id={`shift-start-${date}`} type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-muted">End</Label>
-          <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+          <Label htmlFor={`shift-end-${date}`} className="text-xs text-muted">End</Label>
+          <Input id={`shift-end-${date}`} type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
         </div>
       </div>
       <div>
-        <Label className="text-xs text-muted">Notes (optional)</Label>
-        <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any notes..." />
+        <Label htmlFor={`shift-notes-${date}`} className="text-xs text-muted">Notes (optional)</Label>
+        <Input id={`shift-notes-${date}`} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any notes..." />
       </div>
       <Button type="submit" size="sm" variant="success" className="w-full" disabled={!staffId || submitting}>
         {submitting ? 'Adding...' : 'Add Shift'}
@@ -297,13 +303,13 @@ export default function Roster() {
       {/* Week Navigation */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => setWeekStart(addDays(weekStart, -7))}>
+          <Button aria-label="Previous week" variant="outline" size="icon" onClick={() => setWeekStart(addDays(weekStart, -7))}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
           <span className="text-text text-sm font-medium">
             {formatDateShort(weekStart)} — {formatDateShort(weekEnd)}
           </span>
-          <Button variant="outline" size="icon" onClick={() => setWeekStart(addDays(weekStart, 7))}>
+          <Button aria-label="Next week" variant="outline" size="icon" onClick={() => setWeekStart(addDays(weekStart, 7))}>
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
@@ -364,6 +370,7 @@ export default function Roster() {
                         />
                       ) : (
                         <button
+                          aria-label={`Add Shift on ${dayLabel} ${formatDateShort(dayDate)}`}
                           onClick={() => setAddingDay(dateStr)}
                           className="w-full flex items-center justify-center gap-1 text-[10px] text-muted hover:text-guava-green py-1.5 mt-1 rounded border border-dashed border-border hover:border-guava-green/30 transition-colors"
                         >

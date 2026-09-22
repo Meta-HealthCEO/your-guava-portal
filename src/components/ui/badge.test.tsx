@@ -7,13 +7,13 @@ describe('Badge', () => {
     render(<Badge>Default</Badge>)
     const badge = screen.getByText('Default')
     expect(badge).toBeInTheDocument()
-    expect(badge.className).toContain('bg-guava-red/20')
+    expect(badge.className).toContain('bg-guava-red-surface')
   })
 
   it('renders with success variant', () => {
     render(<Badge variant="success">Success</Badge>)
     const badge = screen.getByText('Success')
-    expect(badge.className).toContain('bg-guava-green/20')
+    expect(badge.className).toContain('bg-guava-green-surface')
   })
 
   it('renders with warning variant', () => {
@@ -38,13 +38,13 @@ describe('Badge', () => {
     render(<Badge variant="pro">Pro</Badge>)
     const badge = screen.getByText('Pro')
     expect(badge.className).toContain('uppercase')
-    expect(badge.className).toContain('bg-guava-red/20')
+    expect(badge.className).toContain('bg-guava-red-surface')
   })
 
   it('renders with basic variant', () => {
     render(<Badge variant="basic">Basic</Badge>)
     const badge = screen.getByText('Basic')
     expect(badge.className).toContain('uppercase')
-    expect(badge.className).toContain('bg-border')
+    expect(badge.className).toContain('bg-surface-2')
   })
 })

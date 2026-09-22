@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
+  AlertCircle,
+  AlertTriangle,
   UserPlus,
   Edit3,
   UserX,
@@ -18,6 +20,7 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/useAuth'
 import { parseDateOnly, toLocalDateOnly } from '@/lib/date'
 import type { StaffMember, LeaveBalanceData } from '@/types'
 
@@ -37,6 +40,111 @@ function formatDate(dateStr: string) {
   return parseDateOnly(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+function requestErrorMessage(error: unknown, fallback: string): string {
+  const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message
+  return typeof message === 'string' && message.trim() ? message : fallback
+}
+
+// The backend's staffDto deletes hourlyRate for anyone who is not an owner, but
+// the shared StaffMember type declares it required — so TypeScript never flagged
+// the `R{staff.hourlyRate}/hr` that rendered as 'Rundefined/hr' on every card a
+// manager saw. Guard at the value, since the type cannot be trusted here.
+// (The type itself should become `hourlyRate?: number`; src/types is owned elsewhere.)
+function payRate(staff: StaffMember): number | null {
+  return typeof staff.hourlyRate === 'number' && Number.isFinite(staff.hourlyRate)
+    ? staff.hourlyRate
+    : null
+}
+
+// A blank or unparseable rate used to collapse to 0 via `Number(x) || 0`, which
+// the backend accepts — silently creating a hire at R0/hr, or zeroing an
+// existing rate on save.
+function parseRate(value: string): number | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+const RATE_REQUIRED_MESSAGE =
+  'Enter an hourly rate. Leaving it blank would save this staff member at R0 an hour.'
+
+// ── Confirmation ─────────────────────────────────────────────────────────────
+
+interface ConfirmRequest {
+  title: string
+  body: string
+  confirmLabel: string
+  onConfirm: () => Promise<void>
+}
+
+/**
+ * GET /staff filters to isActive: true, so deactivating removes the person from
+ * this page, the roster dropdown, the roster sidebar and the leave form on the
+ * very next load — and no reactivate control exists anywhere in the portal.
+ * A 28px unlabelled icon beside the edit pencil is not a proportionate control
+ * for that.
+ */
+function ConfirmDialog({ request, onCancel }: { request: ConfirmRequest; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    cancelRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) onCancel()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [busy, onCancel])
+
+  async function confirm() {
+    setBusy(true)
+    try {
+      await request.onConfirm()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="staff-confirm-title"
+        aria-describedby="staff-confirm-body"
+        className="w-full max-w-md rounded-2xl border border-border bg-[#141414] p-6 shadow-2xl"
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-guava-yellow/25 bg-guava-yellow/10">
+            <AlertTriangle className="h-4.5 w-4.5 text-guava-yellow" />
+          </div>
+          <div className="min-w-0">
+            <h2 id="staff-confirm-title" className="text-text text-base font-semibold">
+              {request.title}
+            </h2>
+            <p id="staff-confirm-body" className="mt-2 text-sm leading-6 text-muted">
+              {request.body}
+            </p>
+          </div>
+        </div>
+        <div className="mt-6 flex items-center justify-end gap-2">
+          <Button ref={cancelRef} variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={confirm} disabled={busy}>
+            {busy ? 'Working...' : request.confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Add Staff Form ───────────────────────────────────────────────────────────
 
 interface AddStaffFormProps {
@@ -52,20 +160,29 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
   const [hourlyRate, setHourlyRate] = useState('')
   const [startDate, setStartDate] = useState(toLocalDateOnly(new Date()))
   const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name) return
+    const rate = parseRate(hourlyRate)
+    if (rate === null) {
+      setFormError(RATE_REQUIRED_MESSAGE)
+      return
+    }
+    setFormError(null)
     setSubmitting(true)
     try {
       await onSubmit({
         name,
-        email: email || undefined,
-        phone: phone || undefined,
+        email: email.trim(),
+        phone: phone.trim(),
         role,
-        hourlyRate: Number(hourlyRate) || 0,
+        hourlyRate: rate,
         startDate,
       })
+    } catch (error: unknown) {
+      setFormError(requestErrorMessage(error, 'Could not add the staff member. Please try again.'))
     } finally {
       setSubmitting(false)
     }
@@ -84,20 +201,21 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
       <CardContent>
         <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <Label className="text-xs text-muted">Name *</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
+            <Label htmlFor="staff-name" className="text-xs text-muted">Name *</Label>
+            <Input id="staff-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
           </div>
           <div>
-            <Label className="text-xs text-muted">Email</Label>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" />
+            <Label htmlFor="staff-email" className="text-xs text-muted">Email</Label>
+            <Input id="staff-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" />
           </div>
           <div>
-            <Label className="text-xs text-muted">Phone</Label>
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="082 123 4567" />
+            <Label htmlFor="staff-phone" className="text-xs text-muted">Phone</Label>
+            <Input id="staff-phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="082 123 4567" />
           </div>
           <div>
-            <Label className="text-xs text-muted">Role</Label>
+            <Label htmlFor="staff-role" className="text-xs text-muted">Role</Label>
             <select
+              id="staff-role"
               value={role}
               onChange={(e) => setRole(e.target.value as StaffMember['role'])}
               className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
@@ -110,20 +228,31 @@ function AddStaffForm({ onSubmit, onCancel }: AddStaffFormProps) {
             </select>
           </div>
           <div>
-            <Label className="text-xs text-muted">Hourly Rate (R)</Label>
+            <Label htmlFor="staff-rate" className="text-xs text-muted">Hourly Rate (R) *</Label>
             <Input
+              id="staff-rate"
               type="number"
               value={hourlyRate}
               onChange={(e) => setHourlyRate(e.target.value)}
               placeholder="55"
               min="0"
               step="0.5"
+              aria-required="true"
             />
           </div>
           <div>
-            <Label className="text-xs text-muted">Start Date</Label>
-            <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <Label htmlFor="staff-start-date" className="text-xs text-muted">Start Date</Label>
+            <Input id="staff-start-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
+          {formError && (
+            <div
+              role="alert"
+              className="sm:col-span-2 lg:col-span-3 flex items-start gap-2 rounded-lg border border-red-900/40 bg-red-900/20 px-3 py-2"
+            >
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
+              <p className="text-xs text-red-400">{formError}</p>
+            </div>
+          )}
           <div className="sm:col-span-2 lg:col-span-3 flex justify-end">
             <Button type="submit" variant="success" disabled={!name || submitting}>
               <UserPlus className="w-4 h-4" />
@@ -149,19 +278,41 @@ function EditStaffForm({ staff, onSave, onCancel }: EditStaffFormProps) {
   const [email, setEmail] = useState(staff.email ?? '')
   const [phone, setPhone] = useState(staff.phone ?? '')
   const [role, setRole] = useState<StaffMember['role']>(staff.role)
-  const [hourlyRate, setHourlyRate] = useState(String(staff.hourlyRate))
+  // payRate(), not String(staff.hourlyRate): the backend withholds the rate from
+  // managers, which seeded this input with the literal text 'undefined'.
+  const [hourlyRate, setHourlyRate] = useState(() => {
+    const rate = payRate(staff)
+    return rate === null ? '' : String(rate)
+  })
+  const [startDate, setStartDate] = useState(staff.startDate?.slice(0, 10) ?? '')
   const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const fieldId = (field: string) => `staff-${staff._id}-${field}`
 
   async function handleSave() {
+    const rate = parseRate(hourlyRate)
+    if (rate === null) {
+      setFormError(RATE_REQUIRED_MESSAGE)
+      return
+    }
+    setFormError(null)
     setSubmitting(true)
     try {
+      // Explicit empty strings, not undefined: JSON.stringify drops undefined
+      // entirely, so the key never reached the server and the backend's
+      // `...(email !== undefined && { email })` merge kept the old value. An
+      // owner could never remove a departed staff member's personal number.
       await onSave(staff._id, {
         name,
-        email: email || undefined,
-        phone: phone || undefined,
+        email: email.trim(),
+        phone: phone.trim(),
         role,
-        hourlyRate: Number(hourlyRate) || 0,
+        hourlyRate: rate,
+        ...(startDate ? { startDate } : {}),
       })
+    } catch (error: unknown) {
+      setFormError(requestErrorMessage(error, 'Could not save the changes. Please try again.'))
     } finally {
       setSubmitting(false)
     }
@@ -171,20 +322,21 @@ function EditStaffForm({ staff, onSave, onCancel }: EditStaffFormProps) {
     <div className="space-y-3 pt-3 border-t border-border">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label className="text-xs text-muted">Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
+          <Label htmlFor={fieldId('name')} className="text-xs text-muted">Edit name</Label>
+          <Input id={fieldId('name')} value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-muted">Email</Label>
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Label htmlFor={fieldId('email')} className="text-xs text-muted">Edit email</Label>
+          <Input id={fieldId('email')} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-muted">Phone</Label>
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Label htmlFor={fieldId('phone')} className="text-xs text-muted">Edit phone</Label>
+          <Input id={fieldId('phone')} value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
         <div>
-          <Label className="text-xs text-muted">Role</Label>
+          <Label htmlFor={fieldId('role')} className="text-xs text-muted">Edit role</Label>
           <select
+            id={fieldId('role')}
             value={role}
             onChange={(e) => setRole(e.target.value as StaffMember['role'])}
             className="flex h-9 w-full rounded-lg border border-[#333333] bg-[#111111] px-3 py-2 text-sm text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
@@ -197,16 +349,36 @@ function EditStaffForm({ staff, onSave, onCancel }: EditStaffFormProps) {
           </select>
         </div>
         <div>
-          <Label className="text-xs text-muted">Hourly Rate (R)</Label>
+          <Label htmlFor={fieldId('rate')} className="text-xs text-muted">Edit hourly rate (R)</Label>
           <Input
+            id={fieldId('rate')}
             type="number"
             value={hourlyRate}
             onChange={(e) => setHourlyRate(e.target.value)}
             min="0"
             step="0.5"
+            aria-required="true"
+          />
+        </div>
+        <div>
+          {/* Start date drives tenure and leave accrual, the add form pre-fills
+              today, and PUT /staff/:id has always accepted it — there was simply
+              no way to correct a retrospective capture. */}
+          <Label htmlFor={fieldId('start-date')} className="text-xs text-muted">Edit start date</Label>
+          <Input
+            id={fieldId('start-date')}
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
           />
         </div>
       </div>
+      {formError && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-900/40 bg-red-900/20 px-3 py-2">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
+          <p className="text-xs text-red-400">{formError}</p>
+        </div>
+      )}
       <div className="flex items-center gap-2 justify-end">
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel
@@ -232,14 +404,22 @@ function LeaveBar({
   total: number
   color: string
 }) {
-  const remaining = Math.max(0, total - used)
-  const pct = total > 0 ? (remaining / total) * 100 : 0
+  // Not clamped: over-taken leave is a payroll liability, and clamping rendered
+  // it identically to a staff member who had used exactly their allowance.
+  const remaining = total - used
+  const pct = total > 0 ? (Math.max(0, remaining) / total) * 100 : 0
+  const overdrawn = remaining < 0
 
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-muted">{label}</span>
-        <span className="text-[10px] text-text tabular-nums">
+        <span
+          className={cn(
+            'text-[10px] tabular-nums',
+            overdrawn ? 'text-guava-red-text font-bold' : 'text-text'
+          )}
+        >
           {remaining}/{total} days
         </span>
       </div>
@@ -255,25 +435,17 @@ function LeaveBar({
 function StaffCard({
   staff,
   balance,
+  canManage,
   onEdit,
   onDeactivate,
 }: {
   staff: StaffMember
   balance?: LeaveBalanceData
+  canManage: boolean
   onEdit: (id: string, data: Partial<StaffMember>) => Promise<void>
-  onDeactivate: (id: string) => Promise<void>
+  onDeactivate: (staff: StaffMember) => void
 }) {
   const [editing, setEditing] = useState(false)
-  const [deactivating, setDeactivating] = useState(false)
-
-  async function handleDeactivate() {
-    setDeactivating(true)
-    try {
-      await onDeactivate(staff._id)
-    } finally {
-      setDeactivating(false)
-    }
-  }
 
   async function handleSave(id: string, data: Partial<StaffMember>) {
     await onEdit(id, data)
@@ -281,6 +453,7 @@ function StaffCard({
   }
 
   const roleColor = ROLE_COLORS[staff.role] ?? '#888888'
+  const rate = payRate(staff)
 
   return (
     <Card className={cn(!staff.isActive && 'opacity-50')}>
@@ -299,18 +472,26 @@ function StaffCard({
               {!staff.isActive && <Badge variant="destructive" className="text-[10px]">Inactive</Badge>}
             </div>
           </div>
+          {/* POST/PUT/DELETE /staff are all ownerOnly. Showing a manager these
+              controls meant every click produced a 403 that was thrown away. */}
           <div className="flex items-center gap-1 shrink-0">
-            {staff.isActive && (
+            {canManage && staff.isActive && (
               <>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditing(!editing)}>
+                <Button
+                  aria-label={`Edit ${staff.name}`}
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setEditing(!editing)}
+                >
                   <Edit3 className="w-3.5 h-3.5" />
                 </Button>
                 <Button
+                  aria-label={`Deactivate ${staff.name}`}
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 text-guava-red-text hover:text-guava-red-text"
-                  onClick={handleDeactivate}
-                  disabled={deactivating}
+                  onClick={() => onDeactivate(staff)}
                 >
                   <UserX className="w-3.5 h-3.5" />
                 </Button>
@@ -333,10 +514,12 @@ function StaffCard({
               <span className="truncate">{staff.email}</span>
             </div>
           )}
-          <div className="flex items-center gap-1.5 text-muted">
-            <DollarSign className="w-3 h-3" />
-            <span>R{staff.hourlyRate}/hr</span>
-          </div>
+          {rate !== null && (
+            <div className="flex items-center gap-1.5 text-muted">
+              <DollarSign className="w-3 h-3" />
+              <span>R{rate}/hr</span>
+            </div>
+          )}
           <div className="flex items-center gap-1.5 text-muted">
             <Calendar className="w-3 h-3" />
             <span>{formatDate(staff.startDate)}</span>
@@ -368,10 +551,16 @@ function StaffCard({
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Staff() {
+  const { isOwner } = useAuth()
   const [staffList, setStaffList] = useState<StaffMember[]>([])
   const [balances, setBalances] = useState<LeaveBalanceData[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
+  // A 500, a 403 or a dropped connection all used to render as the onboarding
+  // empty state, telling an owner with twelve staff that they have none.
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -380,6 +569,7 @@ export default function Staff() {
         api.get<{ staff: StaffMember[] }>('/staff').catch(() => null),
         api.get<{ balances: LeaveBalanceData[] }>('/leave/balances').catch(() => null),
       ])
+      setLoadFailed(staffRes === null)
       setStaffList(staffRes?.data?.staff ?? [])
       setBalances(balancesRes?.data?.balances ?? [])
     } finally {
@@ -397,6 +587,8 @@ export default function Staff() {
     balanceMap.set(staffId, balance)
   })
 
+  // handleAdd and handleEdit deliberately let their rejection through: the form
+  // that made the call owns the inline message, and catching here would hide it.
   async function handleAdd(data: Omit<StaffMember, '_id' | 'isActive'>) {
     await api.post('/staff', data)
     setShowAddForm(false)
@@ -408,14 +600,42 @@ export default function Staff() {
     await loadData()
   }
 
-  async function handleDeactivate(id: string) {
-    await api.put(`/staff/${id}`, { isActive: false })
-    await loadData()
+  function askToDeactivate(staff: StaffMember) {
+    setActionError(null)
+    setConfirmRequest({
+      title: `Deactivate ${staff.name}?`,
+      body: `${staff.name} will be removed from this page, from the roster and its staff list, and from the leave request form. Their past shifts and leave records are kept, but the portal has no way to bring them back — that needs a support request.`,
+      confirmLabel: 'Deactivate',
+      onConfirm: async () => {
+        try {
+          await api.put(`/staff/${staff._id}`, { isActive: false })
+          setConfirmRequest(null)
+          await loadData()
+        } catch (error: unknown) {
+          setConfirmRequest(null)
+          setActionError(requestErrorMessage(error, `Could not deactivate ${staff.name}.`))
+        }
+      },
+    })
   }
 
   return (
     <AppLayout title="Staff">
-      {!showAddForm && (
+      {confirmRequest && (
+        <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
+      )}
+
+      {actionError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2.5 rounded-lg border border-red-900/40 bg-red-900/20 px-3.5 py-3"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+          <p className="text-sm text-red-400">{actionError}</p>
+        </div>
+      )}
+
+      {isOwner && !showAddForm && (
         <div className="mb-4 flex justify-end">
           <Button size="sm" variant="success" onClick={() => setShowAddForm(true)}>
             <UserPlus className="w-4 h-4" />
@@ -425,7 +645,9 @@ export default function Staff() {
       )}
 
       {/* Add Staff Form */}
-      {showAddForm && <AddStaffForm onSubmit={handleAdd} onCancel={() => setShowAddForm(false)} />}
+      {isOwner && showAddForm && (
+        <AddStaffForm onSubmit={handleAdd} onCancel={() => setShowAddForm(false)} />
+      )}
 
       {/* Staff Grid */}
       {loading ? (
@@ -441,6 +663,20 @@ export default function Staff() {
             </Card>
           ))}
         </div>
+      ) : loadFailed ? (
+        <div role="alert" className="flex flex-col items-center justify-center min-h-75 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl border border-red-900/40 bg-red-900/20">
+            <AlertCircle className="h-7 w-7 text-red-400" />
+          </div>
+          <h2 className="text-text text-lg font-semibold mb-2">Your staff could not be loaded</h2>
+          <p className="text-muted text-sm mb-6 max-w-xs">
+            The server did not answer. Nobody has been removed — this page just could not fetch
+            your roster.
+          </p>
+          <Button variant="outline" onClick={loadData}>
+            Try again
+          </Button>
+        </div>
       ) : staffList.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {staffList.map((staff) => (
@@ -448,8 +684,9 @@ export default function Staff() {
               key={staff._id}
               staff={staff}
               balance={balanceMap.get(staff._id)}
+              canManage={isOwner}
               onEdit={handleEdit}
-              onDeactivate={handleDeactivate}
+              onDeactivate={askToDeactivate}
             />
           ))}
         </div>
@@ -459,11 +696,19 @@ export default function Staff() {
             <UserPlus className="w-7 h-7 text-muted" />
           </div>
           <h2 className="text-text text-lg font-semibold mb-2">No staff yet</h2>
-          <p className="text-muted text-sm mb-6 max-w-xs">Add your first staff member to get started with scheduling.</p>
-          <Button variant="success" onClick={() => setShowAddForm(true)}>
-            <UserPlus className="w-4 h-4" />
-            Add Staff
-          </Button>
+          {isOwner ? (
+            <>
+              <p className="text-muted text-sm mb-6 max-w-xs">Add your first staff member to get started with scheduling.</p>
+              <Button variant="success" onClick={() => setShowAddForm(true)}>
+                <UserPlus className="w-4 h-4" />
+                Add Staff
+              </Button>
+            </>
+          ) : (
+            <p className="text-muted text-sm max-w-xs">
+              Nobody has been added to this cafe yet. Ask the account owner to add your team.
+            </p>
+          )}
         </div>
       )}
     </AppLayout>

@@ -1,13 +1,22 @@
-import { useState, useEffect, useCallback, useRef, type ComponentType, type FormEvent, type ReactNode } from 'react'
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  memo,
+  type ComponentType,
+  type FormEvent,
+  type ReactNode,
+} from 'react'
 import {
   Sparkles,
-  TrendingUp,
   AlertTriangle,
-  Lightbulb,
   RefreshCw,
   Clock,
   Upload,
   Send,
+  Square,
   Database,
   MapPin,
   BarChart3,
@@ -22,7 +31,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import api, { authenticatedFetch } from '@/lib/api'
+import api, { authenticatedFetch, isSessionRejection } from '@/lib/api'
 import { publishGuavaCredits, type GuavaCreditSnapshot } from '@/lib/creditEvents'
 import { secureRandomId } from '@/lib/idempotency'
 import { cn } from '@/lib/utils'
@@ -33,7 +42,6 @@ import guavaIcon from '@/assets/guava-icon.png'
 interface Insight {
   id: string
   text: string
-  category: 'trend' | 'warning' | 'tip' | 'highlight'
   generatedAt: string | null
 }
 
@@ -53,11 +61,33 @@ interface InsightRefreshResponse extends Omit<InsightReadResponse, 'cacheStatus'
   meta?: { replayed?: boolean; coalesced?: boolean }
 }
 
+// Every Ask Guava answer is a metered spend, so a failed turn has to say which
+// kind of failure it was. The backend already separates these: 402 out of
+// credits, 403 CREDIT_SPEND_FORBIDDEN, 429 AI_RATE_LIMITED. Collapsing them
+// into one "try again" told an owner with no credits to do the one thing that
+// cannot work.
+type ChatFailureKind =
+  | 'out-of-credits'
+  | 'not-permitted'
+  | 'rate-limited'
+  | 'session-ended'
+  | 'cancelled'
+  | 'offline'
+  | 'transient'
+
+interface ChatFailure {
+  kind: ChatFailureKind
+  available?: number
+  required?: number
+  retryAfterSeconds?: number
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   pending?: boolean
+  failure?: ChatFailure
 }
 
 interface ChatContextStats {
@@ -86,11 +116,141 @@ interface AssistantTypingState {
   lastFrameAt: number | null
 }
 
-const CATEGORY_CONFIG = {
-  trend: { icon: TrendingUp, color: '#4DA63B', bg: '#4DA63B', label: 'Trend' },
-  warning: { icon: AlertTriangle, color: '#FFD166', bg: '#FFD166', label: 'Watch' },
-  tip: { icon: Lightbulb, color: '#D43D3D', bg: '#D43D3D', label: 'Tip' },
-  highlight: { icon: Sparkles, color: '#4A9ECC', bg: '#4A9ECC', label: 'Highlight' },
+const CHAT_CREDIT_COST = 3
+const EMPTY_ANSWER = 'I could not generate an answer.'
+const DEFAULT_RATE_LIMIT_SECONDS = 60
+// Only a failure that could plausibly succeed on a second attempt earns the
+// non-streaming fallback, because that fallback is a second billable request.
+const RECOVERABLE_FAILURES = new Set<ChatFailureKind>(['offline', 'transient'])
+
+class ChatRequestError extends Error {
+  readonly failure: ChatFailure
+
+  constructor(failure: ChatFailure, message: string) {
+    super(message)
+    this.name = 'ChatRequestError'
+    this.failure = failure
+  }
+}
+
+function failureKindForStatus(status: number): ChatFailureKind | null {
+  if (status === 402) return 'out-of-credits'
+  if (status === 403) return 'not-permitted'
+  if (status === 429) return 'rate-limited'
+  if (status === 401) return 'session-ended'
+  return null
+}
+
+function retryAfterSecondsFrom(response: Response) {
+  const raw = typeof response.headers?.get === 'function' ? response.headers.get('retry-after') : null
+  const seconds = Number(raw)
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined
+}
+
+async function chatRequestErrorFrom(response: Response) {
+  const status = typeof response.status === 'number' ? response.status : 0
+  let body: {
+    code?: string
+    message?: string
+    details?: { available?: number; required?: number }
+  } | null = null
+  if (typeof response.json === 'function') {
+    body = await response.json().catch(() => null)
+  }
+
+  return new ChatRequestError(
+    {
+      kind: failureKindForStatus(status) ?? 'transient',
+      available: body?.details?.available,
+      required: body?.details?.required,
+      retryAfterSeconds: retryAfterSecondsFrom(response),
+    },
+    body?.message || `Streaming chat request failed (${status || 'no status'})`
+  )
+}
+
+function chatFailureFrom(error: unknown, cancelledByUser: boolean): ChatFailure {
+  if (cancelledByUser) return { kind: 'cancelled' }
+  if (error instanceof ChatRequestError) return error.failure
+
+  const name = (error as Error | undefined)?.name
+  // A torn-down or timed-out stream is recoverable in principle, but it is
+  // never worth a second reservation the user did not ask for.
+  if (name === 'AbortError' || name === 'CanceledError') return { kind: 'transient' }
+
+  const response = (error as {
+    response?: { status?: number; data?: { details?: { available?: number; required?: number } } }
+  })?.response
+  const status = response?.status
+
+  // api.ts now ends the session only for a refused credential, so 403 here is
+  // the credit-spend permission rather than a dead login, and a request with no
+  // response at all is a genuine transport failure instead of a logout.
+  if (isSessionRejection(error)) {
+    return status === 403 ? { kind: 'not-permitted' } : { kind: 'session-ended' }
+  }
+  if (typeof status === 'number') {
+    return {
+      kind: failureKindForStatus(status) ?? 'transient',
+      available: response?.data?.details?.available,
+      required: response?.data?.details?.required,
+    }
+  }
+  return { kind: 'offline' }
+}
+
+function chatFailureCopy(failure: ChatFailure) {
+  switch (failure.kind) {
+    case 'out-of-credits': {
+      const balance =
+        typeof failure.available === 'number'
+          ? `${failure.available} ${failure.available === 1 ? 'is' : 'are'} left`
+          : 'your balance could not cover it'
+      return {
+        title: 'You are out of Guava Credits',
+        detail: `This answer needs ${failure.required ?? CHAT_CREDIT_COST} credits and ${balance}. Nothing was charged for this question.`,
+        action: { kind: 'link' as const, label: 'Buy Guava Credits', to: '/settings?section=billing' },
+      }
+    }
+    case 'not-permitted':
+      return {
+        title: 'This login cannot spend Guava Credits',
+        detail: `Ask Guava costs ${CHAT_CREDIT_COST} credits per answer and the account owner has not enabled credit spending for your login. Ask them to turn it on under Team. Nothing was charged.`,
+        action: null,
+      }
+    case 'rate-limited': {
+      const seconds = failure.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_SECONDS
+      return {
+        title: 'Too many AI requests',
+        detail: `Ask Guava limits how fast questions can be asked. Wait ${seconds} seconds, then send this question again. Nothing was charged.`,
+        action: null,
+      }
+    }
+    case 'session-ended':
+      return {
+        title: 'Your session ended before the answer arrived',
+        detail: 'Sign in again and ask the question once more. Nothing was charged.',
+        action: null,
+      }
+    case 'cancelled':
+      return {
+        title: 'Stopped',
+        detail: 'Stopped. Anything above this line is the part of the answer that had already arrived.',
+        action: null,
+      }
+    case 'offline':
+      return {
+        title: 'I could not reach the AI analyst',
+        detail: 'Nothing came back from the server. Check your connection, then ask again.',
+        action: { kind: 'retry' as const, label: `Try again (${CHAT_CREDIT_COST} credits)` },
+      }
+    default:
+      return {
+        title: 'The AI analyst could not finish this answer',
+        detail: 'Anything above this line is what arrived before the answer stopped.',
+        action: { kind: 'retry' as const, label: `Try again (${CHAT_CREDIT_COST} credits)` },
+      }
+  }
 }
 
 const QUICK_PROMPTS = [
@@ -199,7 +359,17 @@ function timeAgo(isoDate: string) {
   if (diff < 1) return 'just now'
   if (diff < 60) return `${diff} minute${diff === 1 ? '' : 's'} ago`
   const hours = Math.floor(diff / 60)
-  return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`
+  // Past a week "504 hours ago" is unreadable, and the chat list is the only
+  // way to find an older thread by when it happened.
+  return new Date(isoDate).toLocaleDateString('en-ZA', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Africa/Johannesburg',
+  })
 }
 
 function createInsightRefreshKey() {
@@ -212,32 +382,20 @@ function createChatRequestKey() {
   return `ask-guava-${Date.now()}-${entropy}`.slice(0, 160)
 }
 
+// The old badge claimed a meaning ("Watch", "Tip") derived from nothing but the
+// insight's position in the array, so a growth insight in slot 2 was presented
+// as a warning. The model does not return a category, so none is shown.
 function InsightCard({ insight, index }: { insight: Insight; index: number }) {
-  const config = CATEGORY_CONFIG[insight.category]
-  const Icon = config.icon
-
   return (
     <div
       className="border-b border-[#242424] last:border-0 py-4"
       style={{ animationDelay: `${index * 80}ms` }}
     >
       <div className="flex items-start gap-3">
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
-          style={{ backgroundColor: `${config.bg}15` }}
-        >
-          <Icon className="w-4 h-4" style={{ color: config.color }} />
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-guava-green/10">
+          <Sparkles className="h-4 w-4 text-guava-green" />
         </div>
-        <div className="min-w-0">
-          <Badge
-            variant="outline"
-            className="text-[10px] py-0 h-4 px-2 mb-2"
-            style={{ borderColor: `${config.bg}40`, color: config.color }}
-          >
-            {config.label}
-          </Badge>
-          <p className="text-[#D0D0D0] text-sm leading-relaxed">{insight.text}</p>
-        </div>
+        <p className="min-w-0 text-[#D0D0D0] text-sm leading-relaxed">{insight.text}</p>
       </div>
     </div>
   )
@@ -284,7 +442,13 @@ function isMarkdownTableSeparator(line: string) {
 }
 
 function renderMarkdownTableRow(line: string, index: number, isHeader: boolean) {
-  const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean)
+  // Drop only the empty strings the leading and trailing pipes produce. A
+  // blanket filter(Boolean) also removed genuine blank cells, which shifted
+  // every value after the gap one column left — a revenue figure landing under
+  // "Quantity" with nothing to show it had moved.
+  const cells = line.split('|').map((cell) => cell.trim())
+  if (cells[0] === '') cells.shift()
+  if (cells[cells.length - 1] === '') cells.pop()
   if (cells.length < 2) return null
 
   return (
@@ -311,8 +475,12 @@ function renderMarkdownTableRow(line: string, index: number, isHeader: boolean) 
   )
 }
 
-function MarkdownLite({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  const lines = text.split('\n')
+// Memoised, and the line split memoised inside it: the typewriter re-renders
+// Insights on every animation frame, and without this every completed answer in
+// the transcript was re-split and re-regexed 60 times a second while a new
+// answer streamed.
+const MarkdownLite = memo(function MarkdownLite({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const lines = useMemo(() => text.split('\n'), [text])
   return (
     <div className="space-y-3 text-[15px] leading-7 text-[#E4E4E4]">
       {lines.map((rawLine, index) => {
@@ -367,53 +535,117 @@ function MarkdownLite({ text, streaming = false }: { text: string; streaming?: b
       {streaming && <span className="inline-block h-4 w-0.5 rounded bg-guava-green/80 animate-pulse align-middle ml-1" />}
     </div>
   )
+})
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2.5 text-sm text-muted">
+      <Sparkles className="h-4 w-4 animate-pulse text-guava-green" />
+      <span>Reading your cafe data...</span>
+    </div>
+  )
 }
 
-function MessageRow({
+function ChatFailureNotice({ failure, onRetry }: { failure: ChatFailure; onRetry: () => void }) {
+  const copy = chatFailureCopy(failure)
+
+  // A stopped answer is a choice the user made, not an error to alarm them with.
+  if (failure.kind === 'cancelled') {
+    return <p className="mt-3 text-xs text-muted">{copy.detail}</p>
+  }
+
+  return (
+    <div className="mt-4 max-w-2xl rounded-lg border border-red-900/30 bg-red-900/10 px-3.5 py-3 text-sm text-red-400">
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <div className="min-w-0 space-y-1">
+          <p className="font-semibold">{copy.title}</p>
+          <p className="leading-relaxed">{copy.detail}</p>
+          {copy.action?.kind === 'link' && (
+            <div className="pt-2">
+              <Button asChild variant="secondary" size="sm">
+                <Link to={copy.action.to}>{copy.action.label}</Link>
+              </Button>
+            </div>
+          )}
+          {copy.action?.kind === 'retry' && (
+            <div className="pt-2">
+              <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
+                {copy.action.label}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const MessageRow = memo(function MessageRow({
   message,
-  messageRef,
+  onMessageRef,
+  onRetry,
 }: {
   message: ChatMessage
-  messageRef?: (node: HTMLDivElement | null) => void
+  onMessageRef: (messageId: string, node: HTMLDivElement | null) => void
+  onRetry: (assistantId: string) => void
 }) {
-  const isAssistant = message.role === 'assistant'
+  const messageId = message.id
+  const setNode = useCallback(
+    (node: HTMLDivElement | null) => onMessageRef(messageId, node),
+    [messageId, onMessageRef]
+  )
+  const retry = useCallback(() => onRetry(messageId), [messageId, onRetry])
 
-  if (isAssistant) {
+  if (message.role === 'assistant') {
+    // Emptiness is not the same as thinking. A done event with no delta left the
+    // old falsy check showing "Thinking..." forever, with no cursor and nothing
+    // else coming, while the server had already saved a different string.
+    const isThinking = Boolean(message.pending) && !message.content
     return (
-      <div ref={messageRef} data-message-role="assistant" className="py-5 sm:py-6">
+      <div ref={setNode} data-message-role="assistant" className="py-5 sm:py-6">
         <div className="max-w-3xl">
-          <MarkdownLite text={message.content || 'Thinking...'} streaming={message.pending} />
+          {isThinking ? (
+            <ThinkingIndicator />
+          ) : (
+            message.content && <MarkdownLite text={message.content} streaming={message.pending} />
+          )}
+          {message.failure && <ChatFailureNotice failure={message.failure} onRetry={retry} />}
         </div>
       </div>
     )
   }
 
   return (
-    <div
-      ref={messageRef}
-      data-message-role="user"
-      className="flex justify-end py-4"
-    >
-      <div className="max-w-[88%] rounded-2xl rounded-tr-md bg-guava-green px-4 py-3 text-white shadow-lg shadow-black/15 sm:max-w-[72%]">
+    <div ref={setNode} data-message-role="user" className="flex justify-end py-4">
+      <div className="max-w-[88%] rounded-2xl rounded-tr-md bg-guava-green-strong px-4 py-3 text-white shadow-lg shadow-black/15 sm:max-w-[72%]">
         <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
       </div>
     </div>
   )
-}
+})
 
-function ChatComposer({
+const ChatComposer = memo(function ChatComposer({
   input,
   setInput,
   sendPrompt,
+  onStop,
   isChatLoading,
+  cooldownSeconds,
+  creditsRemaining,
   floating = false,
 }: {
   input: string
   setInput: (value: string) => void
   sendPrompt: (prompt: string) => void
+  onStop: () => void
   isChatLoading: boolean
+  cooldownSeconds: number
+  creditsRemaining: number | null
   floating?: boolean
 }) {
+  const isCoolingDown = cooldownSeconds > 0
+
   return (
     <div
       className={cn(
@@ -424,7 +656,10 @@ function ChatComposer({
       <form
         className={cn(
           'rounded-2xl border border-[#303030] bg-[#151515]/95 shadow-2xl shadow-black/30 backdrop-blur',
-          'p-3 transition-all',
+          // The textarea clears its own outline, so focus has to be visible on
+          // the shell that surrounds it or a keyboard user cannot see where
+          // they are in the composer.
+          'p-3 transition-all focus-within:border-guava-green focus-within:ring-2 focus-within:ring-guava-green/40',
           floating ? 'min-h-28' : 'min-h-37.5'
         )}
         onSubmit={(event) => {
@@ -442,6 +677,7 @@ function ChatComposer({
             }
           }}
           rows={floating ? 2 : 3}
+          aria-label="Ask a question about your cafe data"
           placeholder={floating ? 'Write a message...' : 'How can I help with your cafe today?'}
           className={cn(
             'w-full resize-none border-0 bg-transparent px-2 py-2 text-text placeholder:text-[#9E9E9E]',
@@ -449,20 +685,30 @@ function ChatComposer({
             floating ? 'min-h-12 text-sm' : 'min-h-20 text-base'
           )}
         />
-        <div className="flex items-center justify-between px-1 pt-1">
-          <button
-            type="button"
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-text"
-            aria-label="Add context"
-          >
-            <Database className="h-4 w-4" />
-          </button>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-[#9E9E9E]">3 credits per answer</span>
-            <Button type="submit" size="icon" disabled={!input.trim() || isChatLoading} aria-label="Send message">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1 pt-1">
+          <span className="text-xs text-[#9E9E9E]">
+            {CHAT_CREDIT_COST} credits per answer
+            {creditsRemaining != null ? ` · ${creditsRemaining} remaining` : ''}
+          </span>
+          {isChatLoading ? (
+            <Button type="button" variant="secondary" size="sm" onClick={onStop} aria-label="Stop generating">
+              <Square className="h-3.5 w-3.5" />
+              Stop
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!input.trim() || isCoolingDown}
+              aria-label={
+                isCoolingDown
+                  ? `Rate limited, you can send again in ${cooldownSeconds} seconds`
+                  : 'Send message'
+              }
+            >
               <Send className="w-4 h-4" />
             </Button>
-          </div>
+          )}
         </div>
       </form>
       {floating && (
@@ -472,12 +718,13 @@ function ChatComposer({
       )}
     </div>
   )
-}
+})
 
 function ChatHistoryPanel({
   chats,
   activeChatId,
   isLoading,
+  isBusy,
   hasMore,
   notice,
   onNewChat,
@@ -490,6 +737,7 @@ function ChatHistoryPanel({
   chats: InsightChat[]
   activeChatId: string | null
   isLoading: boolean
+  isBusy: boolean
   hasMore: boolean
   notice: string | null
   onNewChat: () => void
@@ -512,16 +760,26 @@ function ChatHistoryPanel({
           : 'border-transparent hover:border-border hover:bg-[#202020]'
       )}
     >
-      <button type="button" onClick={() => onSelectChat(chat)} className="min-w-0 flex-1 text-left">
+      <button
+        type="button"
+        onClick={() => onSelectChat(chat)}
+        className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50"
+        aria-current={chat._id === activeChatId ? 'true' : undefined}
+        disabled={isBusy}
+        title={isBusy ? 'Finish or stop the current answer before switching chats' : undefined}
+      >
         <p className="truncate text-sm font-medium text-text">{chat.title}</p>
         <p className="text-[11px] text-[#949494]">{timeAgo(chat.updatedAt)}</p>
       </button>
+      {/* Naming the chat in each label matters most on Delete: there is no undo,
+          and a dozen identical "Delete chat" buttons make a screen-reader user
+          count list positions to work out which conversation they are erasing. */}
       <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100">
         <button
           type="button"
           onClick={() => onRenameChat(chat)}
           className="rounded-md p-1.5 text-[#9E9E9E] hover:bg-border hover:text-text"
-          aria-label="Rename chat"
+          aria-label={`Rename chat "${chat.title}"`}
         >
           <Edit3 className="h-3.5 w-3.5" />
         </button>
@@ -529,7 +787,7 @@ function ChatHistoryPanel({
           type="button"
           onClick={() => onArchiveChat(chat, !chat.archived)}
           className="rounded-md p-1.5 text-[#9E9E9E] hover:bg-border hover:text-text"
-          aria-label={chat.archived ? 'Unarchive chat' : 'Archive chat'}
+          aria-label={`${chat.archived ? 'Unarchive' : 'Archive'} chat "${chat.title}"`}
         >
           <Archive className="h-3.5 w-3.5" />
         </button>
@@ -537,7 +795,7 @@ function ChatHistoryPanel({
           type="button"
           onClick={() => onDeleteChat(chat)}
           className="rounded-md p-1.5 text-[#9E9E9E] hover:bg-border hover:text-guava-red-text"
-          aria-label="Delete chat"
+          aria-label={`Delete chat "${chat.title}"`}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
@@ -553,7 +811,13 @@ function ChatHistoryPanel({
             <CardTitle className="text-base">Chats</CardTitle>
             <CardDescription>Saved Guava AI conversations.</CardDescription>
           </div>
-          <Button type="button" size="sm" onClick={() => onNewChat()}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => onNewChat()}
+            disabled={isBusy}
+            title={isBusy ? 'Finish or stop the current answer before starting a new chat' : undefined}
+          >
             <Plus className="h-3.5 w-3.5" />
             New
           </Button>
@@ -602,17 +866,24 @@ function ChatHistoryPanel({
 
 export default function Insights() {
   const { user } = useAuth()
-  const storageKeys = user
-    ? getInsightChatStorageKeys({
-        userId: user.id,
-        orgId: user.orgId,
-        cafeId: user.activeCafeId,
-      })
-    : null
+  const storageKeys = useMemo(
+    () =>
+      user
+        ? getInsightChatStorageKeys({ userId: user.id, orgId: user.orgId, cafeId: user.activeCafeId })
+        : null,
+    [user]
+  )
   const storageScopeId = storageKeys?.scopeId
   const currentStorageKey = storageKeys?.current
   const listStorageKey = storageKeys?.list
-  const initialStoredChat = loadCurrentChat(currentStorageKey, storageScopeId)
+  // Only the useState initialisers below read this. As a bare call it ran on
+  // every render — a synchronous localStorage read plus a JSON.parse of up to
+  // eighty saved messages, repeated on every animation frame of a streaming
+  // answer, which is exactly when the page must stay responsive.
+  const initialStoredChat = useMemo(
+    () => loadCurrentChat(currentStorageKey, storageScopeId),
+    [currentStorageKey, storageScopeId]
+  )
   const [insights, setInsights] = useState<Insight[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -665,6 +936,17 @@ export default function Insights() {
   const [deleteTarget, setDeleteTarget] = useState<InsightChat | null>(null)
   const [chatNotice, setChatNotice] = useState<string | null>(null)
   const [scrollRevision, setScrollRevision] = useState(0)
+  const [chatStatus, setChatStatus] = useState('')
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null)
+  const [cooldownSeconds, setCooldownSeconds] = useState(0)
+  const isMountedRef = useRef(true)
+  const userCancelledRef = useRef(false)
+  const cooldownUntilRef = useRef<number | null>(null)
+  // One question keeps one idempotency key across every attempt, including a
+  // user-initiated retry. Minting a fresh key on retry made the second attempt
+  // a separate paid reservation for an answer already charged for.
+  const chatRequestKeyRef = useRef<{ signature: string; key: string } | null>(null)
+  const sendPromptRef = useRef<(prompt: string) => void>(() => {})
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId
@@ -736,7 +1018,18 @@ export default function Insights() {
     })
   }, [])
 
+  // Replacing the transcript while a stream is in flight used to strand it: the
+  // remaining deltas landed on a message that no longer existed, the header
+  // stats of the newly opened chat were overwritten, and the composer stayed
+  // locked until the orphan finished. Treat the switch as a cancellation.
+  const cancelInFlightStream = useCallback(() => {
+    if (!isChatLoadingRef.current) return
+    userCancelledRef.current = true
+    activeStreamAbortRef.current?.abort()
+  }, [])
+
   const applyChat = useCallback((chat: InsightChat) => {
+    cancelInFlightStream()
     cancelAssistantTyping()
     const normalized = withMessageIds(chat)
     setActiveChat(normalized._id)
@@ -744,7 +1037,7 @@ export default function Insights() {
     setContextStats(normalized.contextStats || null)
     setInput('')
     requestScrollToBottom('auto')
-  }, [cancelAssistantTyping, requestScrollToBottom, setActiveChat, setTrackedMessages])
+  }, [cancelAssistantTyping, cancelInFlightStream, requestScrollToBottom, setActiveChat, setTrackedMessages])
 
   const openChat = useCallback(async (chat: InsightChat) => {
     if (isLocalChat(chat._id)) {
@@ -779,7 +1072,6 @@ export default function Insights() {
     const mapped: Insight[] = texts.map((text, index) => ({
       id: String(index + 1),
       text,
-      category: (['trend', 'warning', 'tip', 'highlight'] as const)[index % 4],
       generatedAt,
     }))
     setInsights(mapped)
@@ -932,10 +1224,17 @@ export default function Insights() {
     if (messages.some((message) => message.pending)) return
     if (!currentStorageKey || !storageScopeId) return
 
+    // Failure markers describe one attempt, not the conversation, so they are
+    // not carried into storage. The partial answer above them is.
     const storedMessages = messages
       .filter((message) => message.id !== 'welcome' || messages.length === 1)
       .slice(-80)
-      .map((message) => ({ ...message, pending: false }))
+      .map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        pending: false,
+      }))
 
     writeScopedStorage(currentStorageKey, {
       scopeId: storageScopeId,
@@ -958,7 +1257,26 @@ export default function Insights() {
     })
   }, [chats, listStorageKey, storageScopeId])
 
+  // The rate limiter is per-minute and per-user. Inviting a retry inside the
+  // window just spends another token, so the composer stays shut until it lifts.
+  useEffect(() => {
+    cooldownUntilRef.current = cooldownUntil
+    if (!cooldownUntil) {
+      setCooldownSeconds(0)
+      return
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000))
+      setCooldownSeconds(remaining)
+      if (remaining === 0) setCooldownUntil(null)
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [cooldownUntil])
+
   useEffect(() => () => {
+    isMountedRef.current = false
     activeStreamAbortRef.current?.abort()
     activeStreamAbortRef.current = null
     cancelAssistantTyping()
@@ -1147,8 +1465,12 @@ export default function Insights() {
         body: JSON.stringify({ chatId, messages: payloadMessages }),
         signal: controller.signal,
       })
-      if (!response.ok || !response.body) {
-        throw new Error('Streaming chat request failed')
+      // response.status is the whole difference between "wait a moment" and
+      // "buy credits". Reading it is what lets sendPrompt refuse to re-bill a
+      // request that can never succeed.
+      if (!response.ok) throw await chatRequestErrorFrom(response)
+      if (!response.body) {
+        throw new ChatRequestError({ kind: 'transient' }, 'The AI stream returned no body')
       }
 
       const reader = response.body.getReader()
@@ -1236,9 +1558,11 @@ export default function Insights() {
         sortChats([updatedChat, ...current.filter((chat) => chat._id !== updatedChat._id)])
       )
     } catch {
-      const localChat = createLocalChat(chatMessages, stats)
-      setActiveChat(localChat._id)
-      setChats((current) => sortChats([localChat, ...current.filter((chat) => chat._id !== chatId)]))
+      // Replacing the server chat with a local clone forked the conversation:
+      // the user kept talking into a copy that only ever existed in this
+      // browser, while the untouched server row reappeared, stale, at the next
+      // load. The server chat stays; only the save is reported as failed.
+      setChatNotice('Could not save this chat to your account. It is kept on this device for now.')
     }
   }
 
@@ -1279,6 +1603,7 @@ export default function Insights() {
   }
 
   const resetDraftChat = () => {
+    cancelInFlightStream()
     cancelAssistantTyping()
     setActiveChat(null)
     setTrackedMessages([WELCOME_MESSAGE])
@@ -1371,9 +1696,41 @@ export default function Insights() {
     setChatNotice(`Deleted "${chat.title}".`)
   }
 
+  const applyChatFailure = (assistantId: string, failure: ChatFailure) => {
+    // Never replace what is already on screen. A drop nine hundred characters
+    // into a useful answer used to erase all of it and leave one generic line,
+    // for a turn the customer had already been charged for.
+    finishAssistantMessage(assistantId)
+    updateTrackedMessages((current) =>
+      current.map((message) => (message.id === assistantId ? { ...message, failure } : message))
+    )
+    if (failure.kind === 'rate-limited') {
+      setCooldownUntil(Date.now() + (failure.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_SECONDS) * 1000)
+    }
+    setChatStatus(chatFailureCopy(failure).title)
+  }
+
+  const stopAnswer = useCallback(() => {
+    userCancelledRef.current = true
+    activeStreamAbortRef.current?.abort()
+  }, [])
+
+  const retryFailedAnswer = useCallback((assistantId: string) => {
+    const current = messagesRef.current
+    const index = current.findIndex((message) => message.id === assistantId)
+    if (index < 1) return
+    const question = current[index - 1].role === 'user' ? current[index - 1].content : ''
+    if (!question) return
+    // Drop the failed turn so the retry does not stack a second copy of the
+    // same question; the idempotency key is what keeps it from being re-billed.
+    setTrackedMessages(current.slice(0, index - 1))
+    sendPromptRef.current(question)
+  }, [setTrackedMessages])
+
   const sendPrompt = async (prompt: string) => {
     const trimmed = prompt.trim()
-    if (!trimmed || isChatLoading) return
+    if (!trimmed || isChatLoadingRef.current) return
+    if (cooldownUntilRef.current && cooldownUntilRef.current > Date.now()) return
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -1394,12 +1751,18 @@ export default function Insights() {
     setTrackedMessages([...nextMessages, assistantMessage])
     setInput('')
     isChatLoadingRef.current = true
+    userCancelledRef.current = false
     setIsChatLoading(true)
+    setChatStatus('Guava is working on your answer.')
 
     try {
       const chatId = await ensureActiveChat(nextMessages)
       const payloadMessages = messagesForApi(nextMessages)
-      const idempotencyKey = createChatRequestKey()
+      const signature = `${chatId}::${trimmed}`
+      if (chatRequestKeyRef.current?.signature !== signature) {
+        chatRequestKeyRef.current = { signature, key: createChatRequestKey() }
+      }
+      const idempotencyKey = chatRequestKeyRef.current.key
 
       try {
         const streamed = await streamAssistantMessage(
@@ -1408,18 +1771,39 @@ export default function Insights() {
           idempotencyKey,
           chatId
         )
+        if (!isMountedRef.current) return
+        // A done event with no delta text is an empty answer, not a pending
+        // one. Say so, and say the same thing the server just saved.
+        const answer = streamed.answer.trim() || EMPTY_ANSWER
+        if (!streamed.answer.trim()) revealAssistantMessage(assistantId, EMPTY_ANSWER)
         const stats = streamed.contextStats || contextStatsRef.current
-        const finalMessages = [
-          ...nextMessages,
-          { ...assistantMessage, content: streamed.answer || 'I could not generate an answer.', pending: false },
-        ]
-        await saveChat(chatId, finalMessages, stats)
-      } catch {
+        chatRequestKeyRef.current = null
+        setChatStatus('Guava has finished this answer.')
+        await saveChat(
+          chatId,
+          [...nextMessages, { ...assistantMessage, content: answer, pending: false }],
+          stats
+        )
+      } catch (streamError) {
+        const failure = chatFailureFrom(streamError, userCancelledRef.current)
+        // The fallback is a second billable request. It is only worth issuing
+        // when the failure could plausibly resolve: a 402, 403 or 429 cannot,
+        // a stopped answer was not wanted, and an unmounted page has nowhere to
+        // render what it would pay for.
+        if (!isMountedRef.current || !RECOVERABLE_FAILURES.has(failure.kind)) throw streamError
+
         const { data } = await api.post(
           '/forecasts/insights/chat',
           { chatId, messages: payloadMessages },
-          { headers: { 'Idempotency-Key': idempotencyKey } }
+          {
+            headers: { 'Idempotency-Key': idempotencyKey },
+            // The stream and the insight refresh both allow 90s. On the axios
+            // default of 20s the client gave up while the server finished and
+            // committed the charge: billed, and shown a failure.
+            timeout: 90_000,
+          }
         )
+        if (!isMountedRef.current) return
         const creditSnapshot = data.guavaCredits ?? data.aiCredits
         setCreditsRemaining(creditSnapshot?.available ?? null)
         publishGuavaCredits(creditSnapshot)
@@ -1427,26 +1811,39 @@ export default function Insights() {
         // A retry with the same idempotency key either replays the already
         // committed full result or safely reruns a refunded stream. Replace any
         // partial stream rather than leaving a truncated paid answer visible.
-        revealAssistantMessage(assistantId, data.answer || 'I could not generate an answer.')
+        revealAssistantMessage(assistantId, data.answer || EMPTY_ANSWER)
+        chatRequestKeyRef.current = null
+        setChatStatus('Guava has finished this answer.')
         await saveChat(
           chatId,
-          [
-            ...nextMessages,
-            { ...assistantMessage, content: data.answer || 'I could not generate an answer.', pending: false },
-          ],
+          [...nextMessages, { ...assistantMessage, content: data.answer || EMPTY_ANSWER, pending: false }],
           data.contextStats || null
         )
       }
-    } catch {
-      revealAssistantMessage(
-        assistantId,
-        'I could not reach the AI analyst right now. Please try again in a moment.'
-      )
+    } catch (error) {
+      if (!isMountedRef.current) return
+      const failure = chatFailureFrom(error, userCancelledRef.current)
+      // A refusal is settled: the same question later is a new request, so it
+      // must not reuse a key the server would replay.
+      if (failure.kind === 'out-of-credits' || failure.kind === 'not-permitted' || failure.kind === 'session-ended') {
+        chatRequestKeyRef.current = null
+      }
+      applyChatFailure(assistantId, failure)
     } finally {
       isChatLoadingRef.current = false
-      setIsChatLoading(false)
+      userCancelledRef.current = false
+      if (isMountedRef.current) setIsChatLoading(false)
     }
   }
+
+  useEffect(() => {
+    sendPromptRef.current = sendPrompt
+  })
+
+  // A stable handle for the memoised composer. sendPrompt is a fresh closure on
+  // every render, so passing it directly re-rendered the composer — and the
+  // textarea the user is trying to type into — on every streamed frame.
+  const submitPrompt = useCallback((prompt: string) => sendPromptRef.current(prompt), [])
 
   return (
     <>
@@ -1489,6 +1886,12 @@ export default function Insights() {
             </CardHeader>
 
             <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+              {/* Lifecycle only. Announcing every typewriter frame would flood
+                  the buffer; announcing nothing left a blind user unable to
+                  tell whether their three credits had produced anything. */}
+              <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                {chatStatus}
+              </p>
               {!hasConversation ? (
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
                   <div className="mb-8 text-center">
@@ -1503,8 +1906,11 @@ export default function Insights() {
                   <ChatComposer
                     input={input}
                     setInput={setInput}
-                    sendPrompt={sendPrompt}
+                    sendPrompt={submitPrompt}
+                    onStop={stopAnswer}
                     isChatLoading={isChatLoading}
+                    cooldownSeconds={cooldownSeconds}
+                    creditsRemaining={creditsRemaining}
                   />
                   <div className="mt-5 flex max-w-215 flex-wrap justify-center gap-2">
                     {QUICK_PROMPTS.map((prompt) => (
@@ -1528,14 +1934,23 @@ export default function Insights() {
                     aria-hidden
                     className="pointer-events-none absolute bottom-0 left-0 right-0 z-10 h-40 bg-gradient-to-t from-[#0F0F0F] via-[#0F0F0F]/85 to-transparent"
                   />
-                  <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-64">
+                  {/* role="log" plus a tab stop: without them the transcript was
+                      neither announced nor scrollable without a mouse. */}
+                  <div
+                    ref={chatScrollRef}
+                    role="log"
+                    aria-label="Conversation"
+                    tabIndex={0}
+                    className="min-h-0 flex-1 overflow-y-auto px-6 pb-64 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-green/40"
+                  >
                     {messages
                       .filter((message) => message.id !== 'welcome')
                       .map((message) => (
                         <MessageRow
                           key={message.id}
                           message={message}
-                          messageRef={(node) => setMessageNode(message.id, node)}
+                          onMessageRef={setMessageNode}
+                          onRetry={retryFailedAnswer}
                         />
                       ))}
                     <div className="pb-10 pt-4">
@@ -1557,8 +1972,11 @@ export default function Insights() {
                   <ChatComposer
                     input={input}
                     setInput={setInput}
-                    sendPrompt={sendPrompt}
+                    sendPrompt={submitPrompt}
+                    onStop={stopAnswer}
                     isChatLoading={isChatLoading}
+                    cooldownSeconds={cooldownSeconds}
+                    creditsRemaining={creditsRemaining}
                     floating
                   />
                 </>
@@ -1571,6 +1989,7 @@ export default function Insights() {
               chats={chats}
               activeChatId={activeChatId}
               isLoading={isChatsLoading}
+              isBusy={isChatLoading}
               hasMore={hasMoreChats}
               notice={chatNotice}
               onNewChat={startNewChat}
@@ -1615,7 +2034,10 @@ export default function Insights() {
               </CardHeader>
               <CardContent className="min-h-0 flex-1 overflow-y-auto">
                 {!isLoading && insightsError && (
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-900/30 bg-red-900/10 px-3.5 py-2.5 text-sm text-red-400">
+                  <div
+                    role="alert"
+                    className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-900/30 bg-red-900/10 px-3.5 py-2.5 text-sm text-red-400"
+                  >
                     <span>
                       {insightsRetryKind === 'refresh'
                         ? insights.length > 0

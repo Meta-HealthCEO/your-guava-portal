@@ -7,9 +7,15 @@ import api from '@/lib/api'
 // Mock the logo asset
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 
-// Mock the api module
+// Mock the api module. The named exports are what AuthProvider's cold-load
+// bootstrap uses: it exchanges the refresh cookie before asking /auth/me, and
+// reads isSessionRejection to tell "logged out" from "server unreachable".
 vi.mock('@/lib/api', () => {
   return {
+    refreshAccessToken: vi.fn().mockRejectedValue(new Error('No refresh session')),
+    isSessionRejection: vi.fn(() => true),
+    API_CONFIG_ERROR: null,
+    API_BASE_URL: 'http://localhost:5000/api',
     default: {
       get: vi.fn(),
       post: vi.fn(),
@@ -124,6 +130,19 @@ describe('Signup', () => {
     })
   })
 
+  it('announces a submission failure to assistive technology', async () => {
+    mockRegister.mockRejectedValueOnce({
+      response: { data: { message: 'That email is already registered.' } },
+    })
+
+    render(<Signup />)
+    await completeSignupForm()
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('That email is already registered.')
+  })
+
   it('uses the pending email from a nested registration response when supplied', async () => {
     mockRegister.mockRejectedValueOnce({
       response: {
@@ -145,5 +164,119 @@ describe('Signup', () => {
     expect(screen.getByRole('button', {
       name: /resend verification email/i,
     })).toBeInTheDocument()
+  })
+})
+
+describe('Signup password rules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  // A placeholder disappears the moment the field is typed into, which is
+  // exactly when the rule is needed. Both bounds have to be readable while the
+  // user is choosing a password, not revealed by a failed round trip.
+  it('states both password bounds before anything is submitted', () => {
+    render(<Signup />)
+
+    const help = screen.getByText(/at least 8 characters/i)
+    expect(help).toBeInTheDocument()
+    expect(help).toHaveTextContent(/72/)
+    expect(screen.getByLabelText(/^password$/i)).toHaveAttribute(
+      'aria-describedby',
+      'signup-password-help'
+    )
+  })
+
+  it('refuses a password over the bcrypt byte ceiling without a round trip', async () => {
+    render(<Signup />)
+
+    await userEvent.type(screen.getByLabelText(/full name/i), 'Jane Smith')
+    await userEvent.type(screen.getByLabelText(/email address/i), 'jane@cafe.co.za')
+    const long = 'a'.repeat(80)
+    await userEvent.type(screen.getByLabelText(/^password$/i), long)
+    await userEvent.type(screen.getByLabelText(/confirm password/i), long)
+    await userEvent.type(screen.getByLabelText(/cafe name/i), 'The Daily Grind')
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/72/)
+    expect(mockRegister).not.toHaveBeenCalled()
+  }, 20000)
+})
+
+describe('Signup credential autofill', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  it('names every field so password managers can build a credential record', () => {
+    render(<Signup />)
+
+    const expected: [RegExp, string, string][] = [
+      [/full name/i, 'name', 'name'],
+      [/email address/i, 'email', 'email'],
+      [/^password$/i, 'password', 'new-password'],
+      [/confirm password/i, 'confirm-password', 'new-password'],
+      [/cafe name/i, 'cafeName', 'organization'],
+    ]
+
+    for (const [label, name, autocomplete] of expected) {
+      const field = screen.getByLabelText(label)
+      expect(field).toHaveAttribute('name', name)
+      expect(field).toHaveAttribute('autocomplete', autocomplete)
+    }
+  })
+})
+
+describe('Signup pending screen', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  async function reachPendingScreen() {
+    mockRegister.mockResolvedValueOnce({
+      email: 'jane@cafe.co.za',
+      message: 'Check your email.',
+    })
+    render(<Signup />)
+    await completeSignupForm()
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    await screen.findByText(/verify your email/i)
+  }
+
+  // This screen is the entire gap between "I signed up" and "I can use the
+  // product", and it is where the journey most often stalls.
+  it('tells the owner how long the link lasts and where else to look', async () => {
+    await reachPendingScreen()
+
+    expect(screen.getByText(/24 hours/i)).toBeInTheDocument()
+    expect(screen.getByText(/spam/i)).toBeInTheDocument()
+  })
+
+  it('offers a way out when the email never arrives at all', async () => {
+    await reachPendingScreen()
+
+    expect(screen.getByRole('link', { name: /support@yourguava/i })).toHaveAttribute(
+      'href',
+      expect.stringContaining('mailto:')
+    )
+  })
+
+  // resendVerification answers the same 200 whether a link went out or the mail
+  // provider refused the send and the token was rolled back, so a flat "a fresh
+  // link has been sent" is an assertion the server never actually made.
+  it('does not promise delivery it cannot confirm', async () => {
+    await reachPendingScreen()
+    vi.mocked(api.post).mockResolvedValueOnce({ data: { success: true } })
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /resend verification email/i })
+    )
+
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent(/if .*(still|pending)/i)
+    expect(status).not.toHaveTextContent(/^A fresh link has been sent\.$/)
   })
 })

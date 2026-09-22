@@ -26,8 +26,17 @@ export function ItemsHeatmap({ forecasts }: Props) {
     .slice(0, 12)
     .map(([name]) => name)
 
+  // A week with no forecast items — an all-closed week, say — has nothing to
+  // plot. An empty grid of day headers is noise, not information.
+  if (topItems.length === 0) return null
+
   // Build matrix: rows = items, cols = days
   const dayLabels = forecasts.map((f) => shortDay(forecastDateKey(f)))
+  // A closed day is not "we predict none of anything". Every other closed-day
+  // surface in the product says so explicitly; this one rendered a column of
+  // em-dashes identical to "this item is not in the forecast", which on the
+  // live demo made a shut Sunday read as a rendering failure.
+  const closedDays = forecasts.map((f) => f.availability?.status === 'closed')
   const matrix: number[][] = topItems.map((itemName) =>
     forecasts.map((f) => {
       const found = f.items.find((i) => i.itemName === itemName)
@@ -35,14 +44,23 @@ export function ItemsHeatmap({ forecasts }: Props) {
     })
   )
 
-  const maxVal = Math.max(1, ...matrix.flat())
+  const maxVal = Math.max(
+    1,
+    ...matrix.flatMap((row) => row.filter((_, colIdx) => !closedDays[colIdx]))
+  )
 
   function cellBg(value: number): string {
     if (value === 0) return 'transparent'
-    const opacity = Math.max(0.08, value / maxVal)
+    // Capped at 0.9 so the busiest cell stays readable. At full opacity the cell
+    // is exactly #D43D3D, and the count printed on it in --color-text lands at
+    // 4.06:1 — under the 4.5:1 the rest of the product now meets. Backing off a
+    // tenth costs nothing visually and takes the worst cell to 4.68:1.
+    const opacity = Math.min(0.9, Math.max(0.08, value / maxVal))
     // Return inline style; we'll apply as style prop
     return `rgba(212, 61, 61, ${opacity})`
   }
+
+  const hasClosedDay = closedDays.some(Boolean)
 
   return (
     <div className="rounded-xl border border-border bg-surface overflow-hidden">
@@ -50,20 +68,41 @@ export function ItemsHeatmap({ forecasts }: Props) {
         <p className="text-text text-sm font-semibold">Items × days heatmap</p>
         <p className="text-muted text-xs mt-0.5">Top 12 items by weekly predicted quantity</p>
       </div>
-      <div className="overflow-x-auto">
+      {/* Focusable so a keyboard-only user can reach the days that overflow the
+          viewport. There is nothing else focusable inside, so without this the
+          later columns were unreachable without a mouse. */}
+      <div
+        className="overflow-x-auto"
+        role="region"
+        aria-label="Predicted quantity by item and day, scrollable"
+        tabIndex={0}
+      >
         <table className="w-full text-xs border-collapse">
+          <caption className="sr-only">
+            Predicted quantity for the top 12 items across each day of the week
+            {hasClosedDay ? ', with closed days marked' : ''}
+          </caption>
           <thead>
             <tr>
               {/* Sticky first header cell */}
-              <th className="sticky left-0 bg-surface text-left px-4 py-2.5 text-muted font-medium w-36 min-w-36 border-b border-border border-r border-border">
+              <th
+                scope="col"
+                className="sticky left-0 bg-surface text-left px-4 py-2.5 text-muted font-medium w-36 min-w-36 border-b border-border border-r border-border"
+              >
                 Item
               </th>
               {dayLabels.map((day, i) => (
                 <th
                   key={i}
-                  className="text-center px-3 py-2.5 text-muted font-medium min-w-14 border-b border-border"
+                  scope="col"
+                  className={`text-center px-3 py-2.5 text-muted font-medium min-w-14 border-b border-border ${
+                    closedDays[i] ? 'bg-surface-2' : ''
+                  }`}
                 >
                   {day}
+                  {closedDays[i] && (
+                    <span className="block text-[10px] font-normal leading-tight text-muted">Closed</span>
+                  )}
                 </th>
               ))}
             </tr>
@@ -71,20 +110,32 @@ export function ItemsHeatmap({ forecasts }: Props) {
           <tbody>
             {topItems.map((itemName, rowIdx) => (
               <tr key={itemName} className="border-b border-[#1F1F1F] last:border-0">
-                <td className="sticky left-0 bg-surface px-4 py-2 text-muted truncate max-w-36 border-r border-border">
+                <th
+                  scope="row"
+                  className="sticky left-0 bg-surface px-4 py-2 text-muted font-normal text-left truncate max-w-36 border-r border-border"
+                >
                   {itemName}
-                </td>
-                {matrix[rowIdx].map((val, colIdx) => (
-                  <td
-                    key={colIdx}
-                    className="text-center px-3 py-2"
-                    style={{ backgroundColor: cellBg(val) }}
-                  >
-                    <span className={val === 0 ? 'text-[#8A8A8A]' : 'text-text'}>
-                      {val === 0 ? '—' : val}
-                    </span>
-                  </td>
-                ))}
+                </th>
+                {matrix[rowIdx].map((val, colIdx) =>
+                  closedDays[colIdx] ? (
+                    <td key={colIdx} className="text-center px-3 py-2 bg-surface-2">
+                      <span className="sr-only">Closed</span>
+                      <span aria-hidden="true" className="text-muted">
+                        ·
+                      </span>
+                    </td>
+                  ) : (
+                    <td
+                      key={colIdx}
+                      className="text-center px-3 py-2"
+                      style={{ backgroundColor: cellBg(val) }}
+                    >
+                      <span className={val === 0 ? 'text-[#8A8A8A]' : 'text-text'}>
+                        {val === 0 ? '—' : val}
+                      </span>
+                    </td>
+                  )
+                )}
               </tr>
             ))}
           </tbody>

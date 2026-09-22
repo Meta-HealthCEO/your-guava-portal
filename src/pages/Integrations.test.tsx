@@ -10,6 +10,12 @@ vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 const mockGet = vi.fn()
 const mockPost = vi.fn()
 vi.mock('@/lib/api', () => ({
+  // AuthContext reads these at module scope, so a partial mock throws before the
+  // page ever renders.
+  API_CONFIG_ERROR: null,
+  isSessionRejection: (error: unknown) =>
+    [401, 403].includes((error as { response?: { status?: number } })?.response?.status as number),
+  refreshAccessToken: vi.fn(),
   default: {
     get: (...args: unknown[]) => mockGet(...args),
     post: (...args: unknown[]) => mockPost(...args),

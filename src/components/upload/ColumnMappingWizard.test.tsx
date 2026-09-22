@@ -109,4 +109,175 @@ describe('ColumnMappingWizard', () => {
       'line-per-row'
     )
   })
+
+  it('accepts one combined timestamp column for both Date and Time', async () => {
+    const onConfirm = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={{ date: 'When', time: 'When', items: 'Description', total: 'Amount' }}
+        initialItemsMode="packed"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(screen.queryByText(/each field needs its own source column/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /confirm/i }))
+    expect(onConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({ date: 'When', time: 'When' }),
+      'packed'
+    )
+  })
+
+  it('does not treat a column from a different file as a completed mapping', () => {
+    render(
+      <ColumnMappingWizard
+        open
+        headers={['Trans. Date', 'Products', 'Gross']}
+        preview={[]}
+        // The names a previously staged file used. None of them exist here.
+        initialMapping={{ date: 'When', items: 'Description', total: 'Amount' }}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
+    expect(screen.getByLabelText(/^Date/)).toHaveValue('')
+  })
+
+  it('explains an unmappable file instead of offering an empty form', () => {
+    render(
+      <ColumnMappingWizard
+        open
+        headers={[]}
+        preview={[]}
+        initialMapping={{ date: 'Date', items: 'Items', total: 'Total' }}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/no longer stored/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
+  })
+
+  it('keeps Tab inside the dialog', async () => {
+    const user = userEvent.setup()
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    const confirm = screen.getByRole('button', { name: /confirm/i })
+    confirm.focus()
+    await user.tab()
+
+    expect(document.activeElement).toBe(screen.getByLabelText(/^Date/))
+  })
+
+  it('returns focus to whatever opened it', async () => {
+    const user = userEvent.setup()
+    const trigger = document.createElement('button')
+    trigger.textContent = 'open'
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const { rerender } = render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    // A parent re-render (new inline onCancel each time) must not re-capture
+    // the dialog itself as the restore target.
+    rerender(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+    rerender(
+      <ColumnMappingWizard
+        open={false}
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="packed"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(document.activeElement).toBe(trigger)
+    trigger.remove()
+  })
+
+  it('points a blocked required field at the message that explains it', () => {
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="line-per-row"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    const receipt = screen.getByLabelText(/^Receipt ID/)
+    expect(receipt).toHaveAttribute('aria-required', 'true')
+    expect(receipt).toHaveAttribute('aria-invalid', 'true')
+    const describedBy = receipt.getAttribute('aria-describedby') || ''
+    expect(document.getElementById(describedBy)).toHaveTextContent(/receipt id is required/i)
+  })
+
+  it('can be given copy for a re-mapping context', () => {
+    render(
+      <ColumnMappingWizard
+        open
+        headers={headers}
+        preview={preview}
+        initialMapping={baseMapping}
+        initialItemsMode="packed"
+        title="Change how this file is read"
+        description="Re-importing replaces the 412 transactions currently linked to this upload."
+        confirmLabel="Re-import with these columns"
+        onConfirm={vi.fn()}
+        onCancel={() => {}}
+      />
+    )
+
+    expect(screen.getByRole('dialog', { name: /change how this file is read/i })).toBeInTheDocument()
+    expect(screen.getByText(/replaces the 412 transactions/i)).toBeInTheDocument()
+    expect(screen.queryByText(/couldn't auto-detect/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /re-import with these columns/i })).toBeInTheDocument()
+  })
 })

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useAuth } from '@/hooks/useAuth'
-import { Loader2, Download, Trash2, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Loader2, Download, RefreshCw, Trash2, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,59 @@ interface RowsPagination {
 const ROWS_LIMIT = 50
 const uploadSourceLabel = (posType: Upload['posType']) =>
   posType === 'yoco' ? 'POS preset' : 'Mapped'
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Escape to dismiss, focus moved into the dialog, Tab kept inside it, and focus
+ * returned to the trigger on close. The delete dialog guards the one
+ * irreversible action on this page and had none of it: focus stayed on the
+ * button behind the overlay and the warning text was never read out.
+ */
+function useDialogKeyboard(open: boolean, onClose: () => void) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const restoreRef = useRef<HTMLElement | null>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
+  useEffect(() => {
+    if (!open) return
+    if (document.activeElement instanceof HTMLElement) restoreRef.current = document.activeElement
+    const node = dialogRef.current
+    const initial = node?.querySelectorAll<HTMLElement>(FOCUSABLE)
+    ;(initial && initial.length > 0 ? initial[0] : node)?.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = node?.querySelectorAll<HTMLElement>(FOCUSABLE)
+      if (!items || items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      restoreRef.current?.focus()
+      restoreRef.current = null
+    }
+  }, [open])
+
+  return dialogRef
+}
 
 const DEFAULT_ROWS_PAGINATION: RowsPagination = {
   total: 0,
@@ -106,7 +159,13 @@ export default function UploadDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [remapping, setRemapping] = useState(false)
+  const [showRemapConfirm, setShowRemapConfirm] = useState(false)
   const [remapError, setRemapError] = useState<string | null>(null)
+
+  const deleteDialogRef = useDialogKeyboard(showDeleteConfirm, () => {
+    if (!deleting) setShowDeleteConfirm(false)
+  })
+  const remapDialogRef = useDialogKeyboard(showRemapConfirm, () => setShowRemapConfirm(false))
 
   const saveRemapping = async (
     mapping: ColumnMapping,
@@ -428,20 +487,58 @@ export default function UploadDetail() {
         {tab === 'file' && (
           <Card>
             <CardContent className="space-y-3">
-              <p className="text-sm text-muted">Download the original file you uploaded.</p>
-              <Button asChild variant="success">
-                <a href={downloadUrl} target="_blank" rel="noreferrer">
-                  <Download className="w-4 h-4" /> Download {upload.fileName}
-                </a>
-              </Button>
+              {/* An empty href resolves to the current URL, so this button used
+                  to open a second copy of this page in a new tab and call it a
+                  download. */}
+              {downloadUrl ? (
+                <>
+                  <p className="text-sm text-muted">
+                    Download the original file you uploaded. The link is signed and expires about 15
+                    minutes after the page loads — refresh it if the download fails.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild variant="success">
+                      <a href={downloadUrl} target="_blank" rel="noreferrer">
+                        <Download className="w-4 h-4" /> Download {upload.fileName}
+                      </a>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setDetailReloadToken((current) => current + 1)}
+                    >
+                      <RefreshCw className="w-4 h-4" /> Refresh download link
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted">
+                    The original file is not available to download. It may have been removed from
+                    storage, or the signed link could not be created.
+                  </p>
+                  <Button variant="outline" onClick={() => setDetailReloadToken((current) => current + 1)}>
+                    <RefreshCw className="w-4 h-4" /> Try again
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         )}
 
         <div className="pt-4 border-t border-border">
-          <Button variant="outline" size="sm" className="mr-2" onClick={() => setRemapping(true)}>
-            Re-map columns
-          </Button>
+          {/* Re-mapping is only possible once a first mapping has been
+              committed. Offering it for a pending_mapping upload produced a
+              guaranteed "Cannot remap while pending_mapping" from the API. */}
+          {upload.status === 'pending_mapping' ? (
+            <p className="mb-3 text-sm text-muted">
+              This upload was never finished, so there is no mapping to change. Upload the file again
+              from Data Health to import it.
+            </p>
+          ) : (
+            <Button variant="outline" size="sm" className="mr-2" onClick={() => { setRemapError(null); setShowRemapConfirm(true) }}>
+              Re-map columns
+            </Button>
+          )}
           {user?.role === 'owner' && (
             <Button
               variant="ghost"
@@ -461,13 +558,46 @@ export default function UploadDetail() {
         </div>
       </div>
 
+      {showRemapConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <div
+            ref={remapDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remap-upload-title"
+            tabIndex={-1}
+            className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-2xl"
+          >
+            <h2 id="remap-upload-title" className="text-lg font-semibold text-text">
+              Re-import this file with different columns?
+            </h2>
+            <p className="mt-2 text-sm text-muted">
+              Re-importing deletes the {upload.stats.imported.toLocaleString('en-ZA')} transaction
+              {upload.stats.imported === 1 ? '' : 's'} currently linked to {upload.fileName} and reads
+              the file again using the columns you choose. Forecasts for those days are refreshed.
+              This cannot be undone.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowRemapConfirm(false)}>Cancel</Button>
+              <Button onClick={() => { setShowRemapConfirm(false); setRemapping(true) }}>Choose columns</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {remapping && upload && (
         <ColumnMappingWizard
           open
-          headers={upload.headers || Object.values(upload.columnMapping).filter((v): v is string => typeof v === 'string')}
+          // The old fallback offered the columns the user had already mapped,
+          // which can never contain the one they got wrong -- and an empty
+          // `headers` array from Mongoose is truthy, so it never even ran.
+          headers={upload.headers ?? []}
           preview={upload.sampleRows || []}
           initialMapping={upload.columnMapping}
           initialItemsMode={upload.itemsMode}
+          title="Change how this file's columns are read"
+          description={`Re-importing replaces the ${upload.stats.imported.toLocaleString('en-ZA')} transaction${upload.stats.imported === 1 ? '' : 's'} currently linked to this upload. Required fields are marked with *.`}
+          confirmLabel="Re-import with these columns"
           onCancel={() => {
             setRemapError(null)
             setRemapping(false)
@@ -476,7 +606,10 @@ export default function UploadDetail() {
             try {
               setRemapError(null)
               await saveRemapping(mapping, itemsMode)
-              window.location.reload()
+              setRemapping(false)
+              // A hard reload threw away every bit of context about what had
+              // just changed. Re-fetching shows the new stats in place.
+              setDetailReloadToken((current) => current + 1)
             } catch (err: unknown) {
               setRemapError(extractApiError(err, 'Re-map failed. Check the column choices and try again.'))
               setRemapping(false)
@@ -488,9 +621,11 @@ export default function UploadDetail() {
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
           <div
+            ref={deleteDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-upload-title"
+            tabIndex={-1}
             className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-2xl"
           >
             <div className="flex items-start gap-3">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ComponentType, type FormEvent } from 'react'
+import { useState, useEffect, useCallback, useRef, type ComponentType, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import {
   AlertCircle,
@@ -27,7 +27,23 @@ import { AccountSettingsContent } from './Account'
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error'
 
+// Mirrors the Cafe model (required, minlength 2, maxlength 120).
+const CAFE_NAME_MIN = 2
+const CAFE_NAME_MAX = 120
+
 const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
+
+/**
+ * Overnight trading (17:00–01:00) has no representation in the model: the
+ * backend's normalizeTradingHours throws 400 on closeTime <= openTime too. Say
+ * so, rather than letting the owner think they mistyped and keep fighting the
+ * form. Until it is modelled, the honest answer is that it is unsupported.
+ */
+const OVERNIGHT_UNSUPPORTED_HINT =
+  'Closing time must be after opening time — overnight trading is not supported yet.'
+
+const invalidTradingDays = (entries: TradingHoursEntry[]) =>
+  new Set(entries.filter((entry) => entry.isOpen && entry.closeTime <= entry.openTime).map((entry) => entry.dayOfWeek))
 
 const defaultTradingHours = (): TradingHoursEntry[] => [
   { dayOfWeek: 0, isOpen: false, openTime: '08:00', closeTime: '14:00' },
@@ -197,9 +213,11 @@ export default function Settings() {
     factorsUnlocked?: number
     factorsTotal?: number
   }>({})
+  const summarySequenceRef = useRef(0)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [cafeState, setCafeState] = useState<SaveState>('idle')
   const [cafeError, setCafeError] = useState<string | undefined>()
+  const [cafeNameInvalid, setCafeNameInvalid] = useState(false)
   const [isEditingCafe, setIsEditingCafe] = useState(false)
   const [tradingHours, setTradingHours] = useState<TradingHoursEntry[]>([])
   const [hoursState, setHoursState] = useState<SaveState>('idle')
@@ -243,11 +261,16 @@ export default function Settings() {
     try {
       const { data } = await api.get<{ success: boolean; cafe: Cafe }>('/cafe/me', { signal })
       // Best-effort: the page still works fully if either call fails.
+      const summarySequence = (summarySequenceRef.current += 1)
       void (async () => {
         const [accountRes, factorRes] = await Promise.allSettled([
           api.get('/account', { signal }),
           api.get('/forecasts/factors', { signal }),
         ])
+        // Promise.allSettled turns an abort into a rejection, so an aborted pair
+        // produced an empty object that overwrote a good summary. Only the most
+        // recent load may write, and a partial result merges rather than clears.
+        if (signal?.aborted || summarySequence !== summarySequenceRef.current) return
         const next: typeof sectionSummary = {}
         if (accountRes.status === 'fulfilled') {
           const usage = accountRes.value.data?.account?.usage
@@ -262,7 +285,7 @@ export default function Settings() {
           next.factorsUnlocked = ent?.unlockedKeys?.length
           next.factorsTotal = (ent?.unlockedKeys?.length ?? 0) + (ent?.lockedKeys?.length ?? 0)
         }
-        setSectionSummary(next)
+        setSectionSummary((prev) => ({ ...prev, ...next }))
       })()
       if (!data?.cafe) throw new Error('Cafe response was empty')
         const cafe = data.cafe
@@ -322,6 +345,20 @@ export default function Settings() {
   const handleCafeSave = async (e: FormEvent) => {
     e.preventDefault()
     if (!loaded) return
+    // The form is noValidate, which makes the `required` attribute on the name
+    // input inert, and this handler used to check only the coordinates. An empty
+    // or one-character name therefore reached PUT /cafe/me and came back as raw
+    // Mongoose text ("Path `name` is required.") in the red banner.
+    // Reported at the field rather than in the banner at the foot of the form,
+    // so the owner can see which of a dozen inputs is at fault.
+    const trimmedName = cafeName.trim()
+    if (trimmedName.length < CAFE_NAME_MIN || trimmedName.length > CAFE_NAME_MAX) {
+      setCafeNameInvalid(true)
+      setCafeError(undefined)
+      setCafeState('idle')
+      return
+    }
+    setCafeNameInvalid(false)
     const latitude = cafeLatitude.trim()
     const longitude = cafeLongitude.trim()
     if (Boolean(latitude) !== Boolean(longitude)) {
@@ -412,7 +449,9 @@ export default function Settings() {
       (entry) => entry.isOpen && entry.closeTime <= entry.openTime
     )
     if (invalidDay) {
-      setHoursError(`${DAY_LABELS[invalidDay.dayOfWeek]}: closing time must be after opening time.`)
+      // The row itself already says what is wrong; the banner says that a save
+      // was refused and points at the row, rather than repeating the sentence.
+      setHoursError(`${DAY_LABELS[invalidDay.dayOfWeek]} has invalid hours. Fix the highlighted row before saving.`)
       setHoursState('error')
       return
     }
@@ -440,6 +479,53 @@ export default function Settings() {
     setIsEditingHours(false)
   }
 
+  const invalidDays = invalidTradingDays(tradingHours)
+
+  const isCafeDirty =
+    isEditingCafe &&
+    Boolean(
+      loaded &&
+        (cafeName !== loaded.cafeName ||
+          cafeAddress !== loaded.cafeAddress ||
+          cafeAddressLine2 !== loaded.cafeAddressLine2 ||
+          cafeSuburb !== loaded.cafeSuburb ||
+          cafeCity !== loaded.cafeCity ||
+          cafePostalCode !== loaded.cafePostalCode ||
+          cafeProvince !== loaded.cafeProvince ||
+          cafeCountry !== loaded.cafeCountry ||
+          cafeLatitude !== loaded.cafeLatitude ||
+          cafeLongitude !== loaded.cafeLongitude)
+    )
+
+  const isHoursDirty =
+    isEditingHours &&
+    Boolean(
+      loaded &&
+        tradingHours.some((entry, index) => {
+          const original = loaded.tradingHours[index]
+          return (
+            !original ||
+            entry.isOpen !== original.isOpen ||
+            entry.openTime !== original.openTime ||
+            entry.closeTime !== original.closeTime
+          )
+        })
+    )
+
+  // switchCafe in AuthContext calls window.location.reload(), and the cafe
+  // switcher sits in the sidebar right next to whatever is being edited. Only a
+  // beforeunload handler stands between seven rows of deliberate input and one
+  // stray click.
+  useEffect(() => {
+    if (!isCafeDirty && !isHoursDirty) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [isCafeDirty, isHoursDirty])
+
   return (
     <AppLayout title="Settings">
       <div className="space-y-6 xl:space-y-0 xl:pl-[244px]">
@@ -464,7 +550,7 @@ export default function Settings() {
                   <Icon className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">{section.label}</span>
-                    <span className={active ? 'block text-xs text-guava-red-text/80' : 'block text-xs text-muted'}>
+                    <span className={active ? 'block text-xs text-guava-red-muted' : 'block text-xs text-muted'}>
                       {section.description}
                     </span>
                   </span>
@@ -505,7 +591,7 @@ export default function Settings() {
                   Tell Guava when the cafe is open. Closed hours are excluded from analytics so revenue averages and forecast accuracy aren't dragged down by hours you weren't trading.
                 </CardDescription>
               </div>
-              {!isEditingHours && (
+              {isOwner && !isEditingHours && (
                 <Button
                   type="button"
                   variant="outline"
@@ -532,6 +618,8 @@ export default function Settings() {
                   </div>
                   {tradingHours.map((entry) => {
                     const dayLabel = DAY_LABELS[entry.dayOfWeek]
+                    const dayInvalid = invalidDays.has(entry.dayOfWeek)
+                    const hintId = `hours-error-${entry.dayOfWeek}`
                     return (
                       <div
                         key={entry.dayOfWeek}
@@ -566,8 +654,17 @@ export default function Settings() {
                           value={entry.closeTime}
                           onChange={(e) => updateDay(entry.dayOfWeek, { closeTime: e.target.value })}
                           disabled={!entry.isOpen}
+                          aria-invalid={dayInvalid || undefined}
+                          aria-describedby={dayInvalid ? hintId : undefined}
                           className={!entry.isOpen ? 'opacity-50' : ''}
                         />
+                        {/* Explained at the row, as it is typed — not saved up
+                            for a banner at the bottom after Save is pressed. */}
+                        {dayInvalid && (
+                          <p id={hintId} className="col-span-2 sm:col-span-4 text-xs text-red-400">
+                            {dayLabel}: {OVERNIGHT_UNSUPPORTED_HINT}
+                          </p>
+                        )}
                       </div>
                     )
                   })}
@@ -591,6 +688,13 @@ export default function Settings() {
             ) : (
               <div className="space-y-4">
                 <div className="rounded-lg border border-border bg-[#111111] divide-y divide-border">
+                  {/* Without this the card rendered an empty bordered rectangle
+                      on a load failure, which reads as "no hours configured". */}
+                  {tradingHours.length === 0 && (
+                    <p className="px-4 py-6 text-center text-sm text-muted">
+                      Trading hours could not be loaded.
+                    </p>
+                  )}
                   {tradingHours.map((entry) => {
                     const dayLabel = DAY_LABELS[entry.dayOfWeek]
                     return (
@@ -630,7 +734,7 @@ export default function Settings() {
                   Update the active cafe's name and location for weather, local context, and forecasting.
                 </CardDescription>
               </div>
-              {!isEditingCafe && (
+              {isOwner && !isEditingCafe && (
                 <Button
                   type="button"
                   variant="outline"
@@ -650,7 +754,22 @@ export default function Settings() {
               <form onSubmit={handleCafeSave} className="space-y-5 pb-4" noValidate>
                 <div className="space-y-1.5">
                   <Label htmlFor="cafe-name">Cafe Name</Label>
-                  <Input id="cafe-name" value={cafeName} onChange={(e) => setCafeName(e.target.value)} placeholder="The Good Bean" required />
+                  <Input
+                    id="cafe-name"
+                    value={cafeName}
+                    onChange={(e) => {
+                      setCafeName(e.target.value)
+                      if (cafeNameInvalid) setCafeNameInvalid(false)
+                    }}
+                    placeholder="The Good Bean"
+                    aria-invalid={cafeNameInvalid || undefined}
+                    aria-describedby={cafeNameInvalid ? 'cafe-name-error' : undefined}
+                  />
+                  {cafeNameInvalid && (
+                    <p id="cafe-name-error" role="alert" className="text-xs text-red-400">
+                      Cafe name must be between {CAFE_NAME_MIN} and {CAFE_NAME_MAX} characters.
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -704,8 +823,13 @@ export default function Settings() {
                 <div className="space-y-3">
                   <div>
                     <p className="text-[11px] uppercase tracking-wider text-muted font-medium">Forecast coordinates</p>
+                    {/* These are not a precision refinement: forecast.service
+                        gates the entire weather factor on both being finite, so
+                        calling them "optional" told owners the product's headline
+                        capability was already on when it was off. */}
                     <p className="mt-1 text-xs text-muted">
-                      Optional decimal coordinates for precise local weather. Enter both values or leave both blank.
+                      Weather is off until both are set — without coordinates, forecasts fall back to a plain
+                      same-weekday average and the Weather panels stay empty. Enter both values or leave both blank.
                     </p>
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

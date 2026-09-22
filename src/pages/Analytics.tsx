@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, type KeyboardEvent } from 'react'
+import { Link } from 'react-router'
 import {
   BarChart3,
   TrendingUp,
@@ -40,8 +41,18 @@ import type {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatZAR(amount: number) {
-  return `R${amount.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}`
+// Whole rands are right for totals and wrong for the per-transaction and
+// per-hour averages this also formats: an average tip of R4.50 printed as "R5",
+// and R0.40 as "R0", which reads as "nobody tips".
+function formatZAR(amount: number, decimals = 0) {
+  return `R${amount.toLocaleString('en-ZA', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`
+}
+
+function formatTrend(trend: number) {
+  return `${trend >= 0 ? '+' : ''}${trend.toFixed(1)}%`
 }
 
 function formatCount(value: number) {
@@ -56,11 +67,19 @@ function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 }
 
+// The backend buckets transactions by cafe-local day. Reading the browser's
+// local calendar instead meant a device on UTC computed yesterday's Johannesburg
+// date for the first two hours of every trading day, so today's takings silently
+// dropped out of every tab — and a phone and a laptop disagreed.
+const JOHANNESBURG_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Africa/Johannesburg',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 function formatDateParam(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  return JOHANNESBURG_DATE.format(date)
 }
 
 type TabId = 'revenue' | 'items' | 'heatmap' | 'customers' | 'combos'
@@ -82,6 +101,12 @@ const CHART_TOOLTIP_STYLE = {
 
 const BAR_HOVER_CURSOR = { fill: 'rgba(77, 166, 59, 0.08)' }
 const BAR_ACTIVE_STYLE = { fill: '#62B84D' }
+// Recharts only measures its wrapper after mount. Until then it renders
+// nothing and warns "width(-1) and height(-1)". Start each chart from a
+// plausible size so first paint is a chart; the measured size follows at once.
+const CHART_INITIAL_WIDTH = 600
+const CHART_HEIGHT = 300
+const DONUT_SIZE = 200
 
 type PeriodId = '7d' | '30d' | '90d'
 
@@ -120,16 +145,17 @@ function daysForPeriod(period: PeriodId): number {
 }
 
 function getDateRange(period: PeriodId) {
-  const end = new Date()
-  const start = new Date(end)
-  start.setDate(end.getDate() - (daysForPeriod(period) - 1))
-  return {
-    startDate: formatDateParam(start),
-    endDate: formatDateParam(end),
-  }
+  // Anchor on the Johannesburg calendar day, then step back whole days from
+  // that anchor so both ends of the window agree with the server's bucketing.
+  const endDate = formatDateParam(new Date())
+  const anchor = new Date(`${endDate}T00:00:00Z`)
+  const start = new Date(anchor)
+  start.setUTCDate(anchor.getUTCDate() - (daysForPeriod(period) - 1))
+  return { startDate: start.toISOString().slice(0, 10), endDate }
 }
 
 const DAY_LABELS_BY_INDEX = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const DAY_NAMES_BY_INDEX = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const DAY_ROWS = [
   { label: 'Mon', value: 1 },
   { label: 'Tue', value: 2 },
@@ -154,14 +180,18 @@ function tradingHoursFrom(cells: HeatmapCell[]): number[] {
 
 // ── Period Selector ───────────────────────────────────────────────────────────
 
+// Colour was the only thing saying which range was applied, so every number on
+// the page was unattributed for a screen-reader user.
 function PeriodSelector({ period, onChange }: { period: PeriodId; onChange: (p: PeriodId) => void }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" role="group" aria-label="Date range">
       {(['7d', '30d', '90d'] as PeriodId[]).map((p) => (
         <Button
           key={p}
           variant={period === p ? 'default' : 'outline'}
           size="sm"
+          aria-pressed={period === p}
+          aria-label={`Last ${daysForPeriod(p)} days`}
           onClick={() => onChange(p)}
         >
           {p}
@@ -171,10 +201,23 @@ function PeriodSelector({ period, onChange }: { period: PeriodId; onChange: (p: 
   )
 }
 
+// Every tab used to dead-end on its own error: no retry, and the range selector
+// unmounted with it, so the one thing that might have helped — asking for a
+// smaller window — was gone too.
+function TabError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center" role="alert">
+      <p className="text-muted text-sm">{message}</p>
+      <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  )
+}
+
 // ── Revenue Tab ──────────────────────────────────────────────────────────────
 
-function RevenueTab() {
-  const [period, setPeriod] = useState<PeriodId>('30d')
+function RevenueTab({ period }: { period: PeriodId }) {
   const [reloadKey, setReloadKey] = useState(0)
   const [data, setData] = useState<RevenueAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -203,22 +246,10 @@ function RevenueTab() {
     return () => controller.abort()
   }, [period, reloadKey])
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-muted text-sm">{error}</p>
-        <Button variant="outline" size="sm" className="mt-4" onClick={() => setReloadKey((key) => key + 1)}>
-          Retry
-        </Button>
-      </div>
-    )
-  }
+  if (error) return <TabError message={error} onRetry={() => setReloadKey((key) => key + 1)} />
 
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <PeriodSelector period={period} onChange={setPeriod} />
-
       {/* KPI Row */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {loading ? (
@@ -260,8 +291,20 @@ function RevenueTab() {
           {loading ? (
             <Skeleton className="h-75 rounded-lg" />
           ) : data && data.data.length > 0 ? (
-            <div style={{ width: '100%', height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <div
+              style={{ width: '100%', height: CHART_HEIGHT }}
+              role="img"
+              aria-label={`Daily revenue chart, ${data.data.length} ${
+                data.data.length === 1 ? 'day' : 'days'
+              }, ${formatZAR(data.totalRevenue)} in total. The same figures follow in a table.`}
+            >
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                minWidth={0}
+                minHeight={0}
+                initialDimension={{ width: CHART_INITIAL_WIDTH, height: CHART_HEIGHT }}
+              >
                 <AreaChart data={data.data} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
                   <defs>
                     <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
@@ -295,6 +338,9 @@ function RevenueTab() {
                     dataKey="revenue"
                     stroke="#4DA63B"
                     strokeWidth={2}
+                    // One or two days of data draws a line with nothing to join,
+                    // so the only day the cafe has is invisible without a dot.
+                    dot={data.data.length < 3}
                     fill="url(#revenueGradient)"
                   />
                 </AreaChart>
@@ -303,16 +349,58 @@ function RevenueTab() {
           ) : (
             <p className="text-muted text-sm text-center py-16">No revenue data for this period</p>
           )}
+          {!loading && data && data.data.length > 0 && (
+            <ChartDataTable
+              caption="Daily revenue"
+              columns={['Date', 'Revenue']}
+              rows={data.data.map((point) => [formatDate(point.date), formatZAR(point.revenue)])}
+            />
+          )}
         </CardContent>
       </Card>
     </div>
   )
 }
 
+// A chart conveys nothing to a screen reader, and neither the Revenue nor the
+// Customers tab rendered its series as text anywhere. This is the same pattern
+// the Items tab gets for free from its real table.
+function ChartDataTable({
+  caption,
+  columns,
+  rows,
+}: {
+  caption: string
+  columns: string[]
+  rows: string[][]
+}) {
+  return (
+    <table className="sr-only">
+      <caption>{caption}</caption>
+      <thead>
+        <tr>
+          {columns.map((column) => (
+            <th key={column} scope="col">{column}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row[0]}>
+            {row.map((cell, index) => (
+              <td key={index}>{cell}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 // ── Items Tab ────────────────────────────────────────────────────────────────
 
-function ItemsTab() {
-  const [period, setPeriod] = useState<PeriodId>('90d')
+function ItemsTab({ period }: { period: PeriodId }) {
+  const [reloadKey, setReloadKey] = useState(0)
   const [items, setItems] = useState<ItemPerformance[]>([])
   const [risingItems, setRisingItems] = useState<MoverItem[]>([])
   const [decliningItems, setDecliningItems] = useState<MoverItem[]>([])
@@ -337,59 +425,50 @@ function ItemsTab() {
       .catch(() => { if (!controller.signal.aborted) setError('Failed to load item data') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [period])
+  }, [period, reloadKey])
 
   const sorted = useMemo(() => [...items].sort((a, b) => b.totalQty - a.totalQty), [items])
   const top10 = sorted.slice(0, 10)
 
   // A line that went from one unit to eight is "+700%", which crowds out real
   // movement on lines that matter. Only rank items carrying enough volume for
-  // the percentage to mean something.
-  // Scale with the window: roughly two a day. A flat threshold let a line
-  // selling 0.2/day still qualify over a 90-day range.
+  // the percentage to mean something: roughly two a day across the range.
   const moverMinQty = daysForPeriod(period) * 2
   const substantialNames = useMemo(
     () => new Set(items.filter((item) => item.totalQty >= moverMinQty).map((item) => item.name)),
     [items, moverMinQty]
   )
-  const isSubstantial = (name: string) => substantialNames.size === 0 || substantialNames.has(name)
+  // No escape hatch when nothing qualifies. The old `size === 0 || ...` turned
+  // the filter off for exactly the small cafes whose movers are noisiest, under
+  // a caption promising those had been excluded.
+  const isSubstantial = (name: string) => substantialNames.has(name)
 
-  // Use backend-provided movers; fall back to client-side sort if backend didn't return them
-  const rising = (risingItems.length > 0
-    ? risingItems
-    : [...items].sort((a, b) => b.trend - a.trend).map(({ name, trend }) => ({ name, trend })))
-    .filter((item) => isSubstantial(item.name))
-    .slice(0, 5)
-  const declining = (decliningItems.length > 0
-    ? decliningItems
-    : [...items].sort((a, b) => a.trend - b.trend).map(({ name, trend }) => ({ name, trend })))
-    .filter((item) => isSubstantial(item.name))
-    .slice(0, 5)
+  // The backend already sign-filters these, so an empty array means nothing is
+  // rising, not that the data is missing. The old client fallback sorted every
+  // item and listed the five least-negative under "Rising" as "+-4.2%".
+  const rising = risingItems.filter((item) => isSubstantial(item.name)).slice(0, 5)
+  const declining = decliningItems.filter((item) => isSubstantial(item.name)).slice(0, 5)
+  const hasMovers = items.length > 0
 
   const risingNames = new Set(rising.map((i) => i.name))
   const decliningNames = new Set(declining.map((i) => i.name))
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-muted text-sm">{error}</p>
-      </div>
-    )
-  }
+  if (error) return <TabError message={error} onRetry={() => setReloadKey((key) => key + 1)} />
 
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <PeriodSelector period={period} onChange={setPeriod} />
-
       {/* Movers Card */}
-      {!loading && (rising.length > 0 || declining.length > 0) && (
+      {!loading && hasMovers && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Movers</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-sm">Movers</CardTitle>
+              <Badge variant="secondary" className="text-[10px]">Fixed 7-day window</Badge>
+            </div>
             <p className="text-muted text-xs mt-0.5">
-              Last 7 days vs the 7 before — always, regardless of the range above.
-              Only lines averaging 2+ a day, so a jump from 1 to 8 doesn&rsquo;t rank as &ldquo;+700%&rdquo;.
+              Last 7 days against the 7 before. This panel ignores the range above — changing
+              it will not change these percentages. Only lines averaging 2+ a day over the
+              selected range are ranked, so a jump from 1 to 8 doesn&rsquo;t show as &ldquo;+700%&rdquo;.
             </p>
           </CardHeader>
           <CardContent>
@@ -397,14 +476,18 @@ function ItemsTab() {
               <div>
                 <p className="text-guava-green text-xs font-semibold uppercase tracking-wider mb-2">Rising</p>
                 {rising.length === 0 ? (
-                  <p className="text-muted text-xs">No rising items</p>
+                  <p className="text-muted text-xs">
+                    {substantialNames.size === 0
+                      ? 'Not enough volume to rank movers yet'
+                      : 'No rising items'}
+                  </p>
                 ) : (
                   <ul className="space-y-1.5">
                     {rising.map((item) => (
                       <li key={item.name} className="flex items-center justify-between text-xs">
                         <span className="text-text truncate mr-2">{item.name}</span>
                         <span className="text-guava-green font-medium tabular-nums shrink-0">
-                          +{item.trend.toFixed(1)}%
+                          {formatTrend(item.trend)}
                         </span>
                       </li>
                     ))}
@@ -414,14 +497,18 @@ function ItemsTab() {
               <div>
                 <p className="text-guava-red-text text-xs font-semibold uppercase tracking-wider mb-2">Declining</p>
                 {declining.length === 0 ? (
-                  <p className="text-muted text-xs">No declining items</p>
+                  <p className="text-muted text-xs">
+                    {substantialNames.size === 0
+                      ? 'Not enough volume to rank movers yet'
+                      : 'No declining items'}
+                  </p>
                 ) : (
                   <ul className="space-y-1.5">
                     {declining.map((item) => (
                       <li key={item.name} className="flex items-center justify-between text-xs">
                         <span className="text-text truncate mr-2">{item.name}</span>
                         <span className="text-guava-red-text font-medium tabular-nums shrink-0">
-                          {item.trend.toFixed(1)}%
+                          {formatTrend(item.trend)}
                         </span>
                       </li>
                     ))}
@@ -442,8 +529,12 @@ function ItemsTab() {
           {loading ? (
             <Skeleton className="h-75 rounded-lg" />
           ) : top10.length > 0 ? (
-            <div style={{ height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
+            <div style={{ height: CHART_HEIGHT }}>
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                initialDimension={{ width: CHART_INITIAL_WIDTH, height: CHART_HEIGHT }}
+              >
                 <BarChart data={top10} margin={{ top: 5, right: 5, left: 0, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2A" />
                   <XAxis
@@ -492,7 +583,9 @@ function ItemsTab() {
                     <th className="text-right py-2 px-4 text-muted font-medium">Sold</th>
                     <th className="text-right py-2 px-4 text-muted font-medium">Revenue</th>
                     <th className="text-right py-2 px-4 text-muted font-medium">Avg/Day</th>
-                    <th className="text-right py-2 pl-4 text-muted font-medium">Trend</th>
+                    {/* Sold, Revenue and Avg/Day follow the range above; the
+                        trend does not. Two windows in one row, one heading. */}
+                    <th className="text-right py-2 pl-4 text-muted font-medium">Trend (7d vs prior 7d)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -519,7 +612,7 @@ function ItemsTab() {
                             ) : (
                               <TrendingDown className="w-3 h-3 mr-0.5" />
                             )}
-                            {item.trend >= 0 ? '+' : ''}{item.trend.toFixed(1)}%
+                            {formatTrend(item.trend)}
                           </Badge>
                         </td>
                       </tr>
@@ -539,8 +632,8 @@ function ItemsTab() {
 
 // ── Heatmap Tab ──────────────────────────────────────────────────────────────
 
-function HeatmapTab() {
-  const [period, setPeriod] = useState<PeriodId>('90d')
+function HeatmapTab({ period }: { period: PeriodId }) {
+  const [reloadKey, setReloadKey] = useState(0)
   const [cells, setCells] = useState<HeatmapCell[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -557,9 +650,18 @@ function HeatmapTab() {
       .catch(() => { if (!controller.signal.aborted) setError('Failed to load heatmap data') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [period])
+  }, [period, reloadKey])
 
   const HOURS = useMemo(() => tradingHoursFrom(cells), [cells])
+  // The backend always emits a complete 7x17 grid with an explicit zero for
+  // every missing slot, so cells.length was never 0 and the empty branch was
+  // dead code. A cafe with no imports was shown 119 confident dark squares and
+  // tooltips reporting "R0 avg" — a measurement claim about a window nobody
+  // measured.
+  const hasActivity = useMemo(
+    () => cells.some((cell) => (cell.revenue ?? 0) > 0 || (cell.transactions ?? 0) > 0),
+    [cells]
+  )
 
   const cellMap = useMemo(() => {
     const map = new Map<string, HeatmapCell>()
@@ -578,19 +680,10 @@ function HeatmapTab() {
     return '#4DA63B'
   }
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-muted text-sm">{error}</p>
-      </div>
-    )
-  }
+  if (error) return <TabError message={error} onRetry={() => setReloadKey((key) => key + 1)} />
 
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <PeriodSelector period={period} onChange={setPeriod} />
-
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Average Revenue Heatmap</CardTitle>
@@ -598,15 +691,16 @@ function HeatmapTab() {
         <CardContent>
           {loading ? (
             <Skeleton className="h-75 rounded-lg" />
-          ) : cells.length > 0 ? (
+          ) : hasActivity ? (
             <div className="relative">
-              {/* Tooltip */}
+              {/* Tooltip. pointer-events-none so it cannot steal the hover from
+                  the cell underneath it and flicker. */}
               {hoveredCell && (
-                <div className="absolute top-0 right-0 bg-[#111111] border border-border rounded-lg px-3 py-2 z-10 text-xs">
+                <div className="pointer-events-none absolute top-0 right-0 bg-[#111111] border border-border rounded-lg px-3 py-2 z-10 text-xs">
                   <p className="text-text font-medium">
                     {DAY_LABELS_BY_INDEX[hoveredCell.dayOfWeek]} {String(hoveredCell.hour).padStart(2, '0')}:00
                   </p>
-                  <p className="text-muted">{formatZAR(hoveredCell.revenue)} avg</p>
+                  <p className="text-muted">{formatZAR(hoveredCell.revenue, 2)} avg</p>
                   <p className="text-muted">{formatCount(hoveredCell.transactions)} avg transactions</p>
                   {(hoveredCell.observedDays ?? 0) > 0 && (
                     <p className="text-muted">{hoveredCell.observedDays} observed days</p>
@@ -614,39 +708,60 @@ function HeatmapTab() {
                 </div>
               )}
               <div className="overflow-x-auto">
-                <div className="min-w-150">
-                  {/* Hour headers */}
-                  <div className="flex items-center mb-1">
-                    <div className="w-10 shrink-0" />
-                    {HOURS.map((h) => (
-                      <div key={h} className="flex-1 text-center text-[10px] text-muted">
-                        {String(h).padStart(2, '0')}
-                      </div>
+                {/* A real table with real headers, and a focusable cell carrying
+                    the figure in its accessible name. As a grid of empty divs
+                    the whole tab was unreachable by keyboard and carried no
+                    text at all, so its numbers did not exist for a screen
+                    reader. */}
+                <table className="min-w-150 w-full border-separate border-spacing-0.5">
+                  <caption className="sr-only">
+                    Average revenue by day of week and hour
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th className="w-10" />
+                      {HOURS.map((h) => (
+                        <th key={h} scope="col" className="text-center text-[10px] font-normal text-muted">
+                          {String(h).padStart(2, '0')}:00
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {DAY_ROWS.map((row) => (
+                      <tr key={row.value}>
+                        <th scope="row" className="w-10 text-left text-[11px] font-normal text-muted">
+                          {row.label}
+                        </th>
+                        {HOURS.map((hour) => {
+                          const cell = cellMap.get(`${row.value}-${hour}`)
+                          const revenue = cell?.revenue ?? 0
+                          const transactions = cell?.transactions ?? 0
+                          const hourLabel = `${String(hour).padStart(2, '0')}:00`
+                          return (
+                            <td key={hour} className="p-0">
+                              <button
+                                type="button"
+                                className="block aspect-square w-full rounded-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-green"
+                                style={{ backgroundColor: getCellColor(revenue) }}
+                                title={`${row.label} ${hourLabel} - ${formatZAR(revenue)} avg`}
+                                aria-label={`${DAY_NAMES_BY_INDEX[row.value]} ${hourLabel}, ${formatZAR(revenue, 2)} average revenue, ${formatCount(transactions)} average transactions`}
+                                onMouseEnter={() =>
+                                  setHoveredCell(cell ?? { dayOfWeek: row.value, hour, revenue: 0, transactions: 0 })
+                                }
+                                onMouseLeave={() => setHoveredCell(null)}
+                                onFocus={() =>
+                                  setHoveredCell(cell ?? { dayOfWeek: row.value, hour, revenue: 0, transactions: 0 })
+                                }
+                                onBlur={() => setHoveredCell(null)}
+                              />
+                            </td>
+                          )
+                        })}
+                      </tr>
                     ))}
-                  </div>
-                  {/* Grid rows */}
-                  {DAY_ROWS.map((row) => (
-                    <div key={row.value} className="flex items-center mb-0.5">
-                      <div className="w-10 shrink-0 text-[11px] text-muted">{row.label}</div>
-                      {HOURS.map((hour) => {
-                        const cell = cellMap.get(`${row.value}-${hour}`)
-                        const revenue = cell?.revenue ?? 0
-                        return (
-                          <div
-                            key={hour}
-                            className="flex-1 aspect-square rounded-sm mx-0.5 cursor-pointer transition-opacity hover:opacity-80"
-                            style={{ backgroundColor: getCellColor(revenue) }}
-                            title={`${row.label} ${String(hour).padStart(2, '0')}:00 - ${formatZAR(revenue)} avg`}
-                            onMouseEnter={() =>
-                              setHoveredCell(cell ?? { dayOfWeek: row.value, hour, revenue: 0, transactions: 0 })
-                            }
-                            onMouseLeave={() => setHoveredCell(null)}
-                          />
-                        )
-                      })}
-                    </div>
-                  ))}
-                </div>
+                  </tbody>
+                </table>
               </div>
               {/* Legend */}
               <div className="flex items-center justify-end gap-1 mt-3">
@@ -658,7 +773,16 @@ function HeatmapTab() {
               </div>
             </div>
           ) : (
-            <p className="text-muted text-sm text-center py-16">No heatmap data available</p>
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <p className="text-text text-sm font-medium">No trading activity in this window</p>
+              <p className="text-muted text-sm mt-1 max-w-sm">
+                Nothing has been imported for the selected range, so there is nothing to chart —
+                this is not a measured result of zero.
+              </p>
+              <Button asChild variant="outline" size="sm" className="mt-4">
+                <Link to="/data-health">Upload sales data</Link>
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -670,8 +794,8 @@ function HeatmapTab() {
 
 const DONUT_COLORS = ['#4DA63B', '#D43D3D']
 
-function CustomersTab() {
-  const [period, setPeriod] = useState<PeriodId>('90d')
+function CustomersTab({ period }: { period: PeriodId }) {
+  const [reloadKey, setReloadKey] = useState(0)
   const [data, setData] = useState<CustomerInsights | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -687,28 +811,45 @@ function CustomersTab() {
       .catch(() => { if (!controller.signal.aborted) setError('Failed to load customer insights') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [period])
+  }, [period, reloadKey])
 
-  if (error) {
+  if (error) return <TabError message={error} onRetry={() => setReloadKey((key) => key + 1)} />
+
+  // The backend answers an unmeasured range with a full object of zeros, so
+  // "R0 average transaction, 0% tipping" read as a measurement of a period that
+  // was never measured.
+  const hasCustomerData = Boolean(
+    data &&
+      (data.avgTransactionValue > 0 ||
+        data.avgItemsPerTransaction > 0 ||
+        data.tippingRate > 0 ||
+        data.avgTip > 0 ||
+        data.cashVsCardRatio)
+  )
+  const paymentSplit = data?.cashVsCardRatio ?? null
+  const donutData = paymentSplit
+    ? [
+        { name: 'Card', value: paymentSplit.card },
+        { name: 'Cash', value: paymentSplit.cash },
+      ]
+    : []
+
+  if (!loading && !hasCustomerData) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-muted text-sm">{error}</p>
+        <p className="text-text text-sm font-medium">No customer data for this period</p>
+        <p className="text-muted text-sm mt-1 max-w-sm">
+          Nothing has been imported for the selected range, so there is nothing to average.
+        </p>
+        <Button asChild variant="outline" size="sm" className="mt-4">
+          <Link to="/data-health">Upload sales data</Link>
+        </Button>
       </div>
     )
   }
 
-  const donutData = data
-    ? [
-        { name: 'Card', value: data.cashVsCardRatio?.card ?? 0 },
-        { name: 'Cash', value: data.cashVsCardRatio?.cash ?? 0 },
-      ]
-    : []
-
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <PeriodSelector period={period} onChange={setPeriod} />
-
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {loading ? (
           Array.from({ length: 5 }).map((_, i) => (
@@ -723,7 +864,7 @@ function CustomersTab() {
           <>
             <KpiCard
               label="Avg Transaction"
-              value={formatZAR(data.avgTransactionValue)}
+              value={formatZAR(data.avgTransactionValue, 2)}
               icon={DollarSign}
               accent="#4DA63B"
             />
@@ -741,7 +882,7 @@ function CustomersTab() {
             />
             <KpiCard
               label="Avg Tip"
-              value={formatZAR(data.avgTip)}
+              value={formatZAR(data.avgTip, 2)}
               icon={Banknote}
               accent="#4DA63B"
             />
@@ -756,42 +897,60 @@ function CustomersTab() {
             <CardTitle className="text-sm">Payment Method Split</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-center gap-8">
-              <div style={{ height: 200, width: 200 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      isAnimationActive={false}
-                      data={donutData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={55}
-                      outerRadius={80}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {donutData.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={DONUT_COLORS[index]} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{ background: '#1A1A1A', border: '1px solid #2A2A2A', borderRadius: 8, color: '#F0F0F0' }}
-                      formatter={(value: unknown) => [`${numberValue(value).toFixed(1)}%`, '']}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-guava-green" />
-                  <span className="text-text text-sm">Card: {(data.cashVsCardRatio?.card ?? 0).toFixed(1)}%</span>
+            {/* cashVsCardRatio is null whenever the import carried no payment
+                type. Defaulting it to zero drew an empty donut beside a
+                confident "Card: 0.0% / Cash: 0.0%" — a split the product had
+                never counted, next to the fee decision it would inform. */}
+            {!paymentSplit ? (
+              <p className="text-muted text-sm text-center py-10">
+                Your import does not include payment methods, so cash and card cannot be split.
+              </p>
+            ) : (
+              <div className="flex items-center justify-center gap-8">
+                <div
+                  style={{ height: DONUT_SIZE, width: DONUT_SIZE }}
+                  role="img"
+                  aria-label={`Payment method split: card ${paymentSplit.card.toFixed(1)} percent, cash ${paymentSplit.cash.toFixed(1)} percent`}
+                >
+                  <ResponsiveContainer
+                    width="100%"
+                    height="100%"
+                    initialDimension={{ width: DONUT_SIZE, height: DONUT_SIZE }}
+                  >
+                    <PieChart>
+                      <Pie
+                        isAnimationActive={false}
+                        data={donutData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={80}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {donutData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={DONUT_COLORS[index]} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{ background: '#1A1A1A', border: '1px solid #2A2A2A', borderRadius: 8, color: '#F0F0F0' }}
+                        formatter={(value: unknown) => [`${numberValue(value).toFixed(1)}%`, '']}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Banknote className="w-4 h-4 text-guava-red-text" />
-                  <span className="text-text text-sm">Cash: {(data.cashVsCardRatio?.cash ?? 0).toFixed(1)}%</span>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-guava-green" />
+                    <span className="text-text text-sm">Card: {paymentSplit.card.toFixed(1)}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Banknote className="w-4 h-4 text-guava-red-text" />
+                    <span className="text-text text-sm">Cash: {paymentSplit.cash.toFixed(1)}%</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -801,8 +960,8 @@ function CustomersTab() {
 
 // ── Combos Tab ───────────────────────────────────────────────────────────────
 
-function CombosTab() {
-  const [period, setPeriod] = useState<PeriodId>('90d')
+function CombosTab({ period }: { period: PeriodId }) {
+  const [reloadKey, setReloadKey] = useState(0)
   const [combos, setCombos] = useState<ComboItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -818,21 +977,12 @@ function CombosTab() {
       .catch(() => { if (!controller.signal.aborted) setError('Failed to load combo data') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [period])
+  }, [period, reloadKey])
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <p className="text-muted text-sm">{error}</p>
-      </div>
-    )
-  }
+  if (error) return <TabError message={error} onRetry={() => setReloadKey((key) => key + 1)} />
 
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <PeriodSelector period={period} onChange={setPeriod} />
-
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Frequently Bought Together</CardTitle>
@@ -921,15 +1071,50 @@ function KpiCard({
 
 export default function Analytics() {
   const [activeTab, setActiveTab] = useState<TabId>('revenue')
+  // One range for the page. Per-tab state reset the selector on every switch,
+  // so a user comparing one window across tabs ended up reading 7-day revenue
+  // against 90-day items without being told the window had changed.
+  const [period, setPeriod] = useState<PeriodId>('30d')
+  const tabRefs = useRef(new Map<TabId, HTMLButtonElement>())
+
+  const focusTab = (id: TabId) => {
+    setActiveTab(id)
+    tabRefs.current.get(id)?.focus()
+  }
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (step === 0) return
+    event.preventDefault()
+    const index = TABS.findIndex((tab) => tab.id === activeTab)
+    focusTab(TABS[(index + step + TABS.length) % TABS.length].id)
+  }
 
   return (
     <AppLayout title="Performance">
-      {/* Tab Selector */}
-      <div className="flex items-center gap-1 mb-6 border-b border-border pb-px overflow-x-auto">
+      {/* Bare buttons announced as five unrelated controls with no selected
+          state, so a screen-reader user could not tell which view they were
+          looking at. */}
+      <div
+        role="tablist"
+        aria-label="Performance views"
+        className="flex items-center gap-1 mb-6 border-b border-border pb-px overflow-x-auto"
+      >
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            id={`analytics-tab-${tab.id}`}
+            ref={(node) => {
+              if (node) tabRefs.current.set(tab.id, node)
+              else tabRefs.current.delete(tab.id)
+            }}
+            role="tab"
+            type="button"
+            aria-selected={activeTab === tab.id}
+            aria-controls={`analytics-panel-${tab.id}`}
+            tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
+            onKeyDown={handleTabKeyDown}
             className={cn(
               'px-4 py-2.5 text-sm font-medium transition-colors relative',
               activeTab === tab.id
@@ -945,12 +1130,23 @@ export default function Analytics() {
         ))}
       </div>
 
+      <div className="mb-6">
+        <PeriodSelector period={period} onChange={setPeriod} />
+      </div>
+
       {/* Tab Content */}
-      {activeTab === 'revenue' && <RevenueTab />}
-      {activeTab === 'items' && <ItemsTab />}
-      {activeTab === 'heatmap' && <HeatmapTab />}
-      {activeTab === 'customers' && <CustomersTab />}
-      {activeTab === 'combos' && <CombosTab />}
+      <div
+        role="tabpanel"
+        id={`analytics-panel-${activeTab}`}
+        aria-labelledby={`analytics-tab-${activeTab}`}
+        tabIndex={0}
+      >
+        {activeTab === 'revenue' && <RevenueTab period={period} />}
+        {activeTab === 'items' && <ItemsTab period={period} />}
+        {activeTab === 'heatmap' && <HeatmapTab period={period} />}
+        {activeTab === 'customers' && <CustomersTab period={period} />}
+        {activeTab === 'combos' && <CombosTab period={period} />}
+      </div>
     </AppLayout>
   )
 }

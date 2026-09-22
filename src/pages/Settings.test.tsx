@@ -30,12 +30,12 @@ vi.mock('@/lib/api', () => {
   }
 })
 
-function renderWithAuth(ui: ReactNode) {
+function renderWithAuth(ui: ReactNode, { role = 'owner' }: { role?: 'owner' | 'manager' } = {}) {
   const user = {
     id: 'user123',
     email: 'test@yourguava.com',
-    name: 'Test Owner',
-    role: 'owner' as const,
+    name: role === 'owner' ? 'Test Owner' : 'Test Manager',
+    role,
     orgId: 'org123',
     cafeIds: ['cafe123'],
     activeCafeId: 'cafe123',
@@ -47,7 +47,7 @@ function renderWithAuth(ui: ReactNode) {
         value={{
           user,
           isLoading: false,
-          isOwner: true,
+          isOwner: role === 'owner',
           login: vi.fn(),
           logout: vi.fn(),
           register: vi.fn(),
@@ -108,6 +108,33 @@ describe('Settings', () => {
     expect(screen.getByText('123 Main St')).toBeInTheDocument()
     expect(screen.queryByDisplayValue('Blouberg Coffee')).not.toBeInTheDocument()
     expect(screen.queryByText('Save Cafe Details')).not.toBeInTheDocument()
+  })
+
+  it('shows managers the cafe details and trading hours read-only, without edit controls', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            cafe: { name: 'Manager View Cafe', location: { address: '9 Kloof St', city: 'Cape Town' } },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Settings />, { role: 'manager' })
+
+    expect(await screen.findByText('9 Kloof St')).toBeInTheDocument()
+    expect(screen.getAllByText('Manager View Cafe').length).toBeGreaterThan(0)
+    expect(screen.getByText('Trading Hours')).toBeInTheDocument()
+    expect(screen.getByText('Monday')).toBeInTheDocument()
+
+    expect(screen.queryByRole('button', { name: /edit cafe details/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /edit trading hours/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('Save Cafe Details')).not.toBeInTheDocument()
+    expect(screen.queryByText('Save Trading Hours')).not.toBeInTheDocument()
+    expect(mockPut).not.toHaveBeenCalled()
   })
 
   it('keeps the settings section menu fixed on desktop', async () => {
@@ -509,6 +536,47 @@ describe('Settings', () => {
       expect(mockPut).not.toHaveBeenCalledWith('/cafe/me', expect.objectContaining({ tradingHours: expect.any(Array) }))
     })
 
+    it('explains an invalid day at the field, before the user submits', async () => {
+      renderWithAuth(<Settings />)
+      await enterEditMode()
+
+      const mondayClose = (await screen.findByLabelText(/Monday closing time/i)) as HTMLInputElement
+      await userEvent.clear(mondayClose)
+      await userEvent.type(mondayClose, '06:00')
+
+      // No Save click: the row itself has to say what is wrong.
+      await waitFor(() => {
+        expect(mondayClose).toHaveAttribute('aria-invalid', 'true')
+      })
+      expect(screen.getByText(/overnight trading is not supported/i)).toBeInTheDocument()
+      expect(mockPut).not.toHaveBeenCalled()
+    })
+
+    it('does not leave an empty bordered box when hours could not be loaded', async () => {
+      mockGet.mockRejectedValue(new Error('network unavailable'))
+
+      renderWithAuth(<Settings />)
+
+      expect(await screen.findByText(/trading hours could not be loaded/i)).toBeInTheDocument()
+    })
+
+    it('warns before a reload discards unsaved trading hours', async () => {
+      renderWithAuth(<Settings />)
+      await enterEditMode()
+
+      const mondayClose = (await screen.findByLabelText(/Monday closing time/i)) as HTMLInputElement
+      await userEvent.clear(mondayClose)
+      await userEvent.type(mondayClose, '18:00')
+
+      // The cafe switcher in the sidebar calls window.location.reload(), so
+      // beforeunload is the only thing standing between seven rows of
+      // deliberate input and a single stray click.
+      const event = new Event('beforeunload', { cancelable: true })
+      await waitFor(() => {
+        expect(window.dispatchEvent(event)).toBe(false)
+      })
+    })
+
     it('cancels trading hours edits without saving', async () => {
       renderWithAuth(<Settings />)
       await enterEditMode()
@@ -524,6 +592,56 @@ describe('Settings', () => {
       })
       expect(mockPut).not.toHaveBeenCalledWith('/cafe/me', expect.objectContaining({ tradingHours: expect.any(Array) }))
       expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('Cafe name validation', () => {
+    beforeEach(() => {
+      mockGet.mockImplementation((url: string) => {
+        if (url.includes('/cafe/me')) {
+          return Promise.resolve({
+            data: { success: true, cafe: { name: 'Blouberg Coffee', location: { city: 'Cape Town' } } },
+          })
+        }
+        return Promise.resolve({ data: {} })
+      })
+    })
+
+    it('rejects a too-short cafe name in the browser rather than via Mongoose', async () => {
+      renderWithAuth(<Settings />)
+      await userEvent.click(await screen.findByRole('button', { name: /edit cafe details/i }))
+
+      const nameInput = screen.getByLabelText(/cafe name/i)
+      await userEvent.clear(nameInput)
+      await userEvent.type(nameInput, 'B')
+      await userEvent.click(screen.getByText('Save Cafe Details'))
+
+      // The form is noValidate, so the `required` attribute is inert and an
+      // empty name reached the API, coming back as raw Mongoose text.
+      expect(await screen.findByText(/cafe name must be between 2 and 120 characters/i)).toBeInTheDocument()
+      expect(nameInput).toHaveAttribute('aria-invalid', 'true')
+      expect(mockPut).not.toHaveBeenCalled()
+    })
+
+    it('rejects an empty cafe name', async () => {
+      renderWithAuth(<Settings />)
+      await userEvent.click(await screen.findByRole('button', { name: /edit cafe details/i }))
+
+      await userEvent.clear(screen.getByLabelText(/cafe name/i))
+      await userEvent.click(screen.getByText('Save Cafe Details'))
+
+      expect(await screen.findByText(/cafe name must be between 2 and 120 characters/i)).toBeInTheDocument()
+      expect(mockPut).not.toHaveBeenCalled()
+    })
+
+    it('says plainly that weather needs coordinates rather than calling them optional', async () => {
+      renderWithAuth(<Settings />)
+      await userEvent.click(await screen.findByRole('button', { name: /edit cafe details/i }))
+
+      // They are the on/off switch for the product's headline capability, not a
+      // precision refinement: forecast.service gates the whole weather factor on
+      // Number.isFinite(lat) && Number.isFinite(lng).
+      expect(screen.getByText(/weather.*(off|unavailable|not).*until/i)).toBeInTheDocument()
     })
   })
 })

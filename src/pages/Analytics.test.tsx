@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@/test/test-utils'
+import { render, screen, waitFor, within } from '@/test/test-utils'
 import userEvent from '@testing-library/user-event'
 import Analytics from './Analytics'
 
@@ -8,7 +8,8 @@ vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
 // Mock recharts
-vi.mock('recharts', () => {
+vi.mock('recharts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('recharts')>()
   const fillFrom = (value: unknown) => {
     if (value && typeof value === 'object' && 'fill' in value) {
       return String((value as { fill?: unknown }).fill ?? '')
@@ -17,7 +18,8 @@ vi.mock('recharts', () => {
   }
 
   return {
-    ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div data-testid="responsive-container">{children}</div>,
+    // The real container: how it sizes itself before layout is behaviour under test.
+    ResponsiveContainer: actual.ResponsiveContainer,
     AreaChart: ({ children }: { children: React.ReactNode }) => <svg data-testid="area-chart">{children}</svg>,
     Area: () => <div data-testid="area" />,
     BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
@@ -32,10 +34,15 @@ vi.mock('recharts', () => {
   }
 })
 
-// Mock the api module
+// Mock the api module. Partial: AuthProvider reads API_CONFIG_ERROR and
+// isSessionRejection from it while rendering, and a factory that omits them
+// makes vitest throw the moment one is touched.
 const mockGet = vi.fn()
-vi.mock('@/lib/api', () => {
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
+    ...actual,
+    refreshAccessToken: () => Promise.resolve('test-access-token'),
     default: {
       get: (...args: unknown[]) => mockGet(...args),
       post: vi.fn(),
@@ -70,7 +77,7 @@ describe('Analytics', () => {
     mockGet.mockImplementation(() => new Promise(() => {}))
     render(<Analytics />)
 
-    const itemsTab = screen.getByRole('button', { name: 'Items' })
+    const itemsTab = screen.getByRole('tab', { name: 'Items' })
     await userEvent.click(itemsTab)
 
     await waitFor(() => {
@@ -160,7 +167,7 @@ describe('Analytics', () => {
     render(<Analytics />)
 
     // Click Items tab
-    await userEvent.click(screen.getByRole('button', { name: 'Items' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Items' }))
 
     await waitFor(() => {
       expect(screen.getByText('Item Performance')).toBeInTheDocument()
@@ -191,7 +198,7 @@ describe('Analytics', () => {
 
     render(<Analytics />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Items' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Items' }))
 
     await waitFor(() => {
       expect(screen.getByText('Top 10 Items by Quantity')).toBeInTheDocument()
@@ -223,7 +230,7 @@ describe('Analytics', () => {
 
     render(<Analytics />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Combos' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Combos' }))
 
     await waitFor(() => {
       expect(screen.getByText('Frequently Bought Together')).toBeInTheDocument()
@@ -251,7 +258,7 @@ describe('Analytics', () => {
 
     render(<Analytics />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Heatmap' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Heatmap' }))
 
     await waitFor(() => {
       expect(screen.getByText('Average Revenue Heatmap')).toBeInTheDocument()
@@ -285,7 +292,7 @@ describe('Analytics', () => {
 
     render(<Analytics />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Customers' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Customers' }))
 
     await waitFor(() => {
       expect(screen.getByText('Tipping Rate')).toBeInTheDocument()
@@ -293,5 +300,330 @@ describe('Analytics', () => {
 
     // Should display "23.5%" not "2350.0%"
     expect(screen.getByText('23.5%')).toBeInTheDocument()
+  })
+
+  it('does not invent movers when the backend reports none', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/items')) {
+        return Promise.resolve({
+          data: {
+            items: [
+              { name: 'Flat White', totalQty: 400, totalRevenue: 8000, avgPerDay: 10, trend: -1.0 },
+              { name: 'Long White', totalQty: 380, totalRevenue: 7200, avgPerDay: 9, trend: -2.0 },
+            ],
+            // Backend sign-filters, so an empty array means nothing is rising.
+            meta: { startDate: null, endDate: null, risingItems: [], decliningItems: [] },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /items/i }))
+
+    await waitFor(() => expect(screen.getByText('Movers')).toBeInTheDocument())
+    expect(screen.getByText(/no rising items/i)).toBeInTheDocument()
+    expect(screen.queryByText('+-2.0%')).not.toBeInTheDocument()
+    expect(screen.queryByText('+-1.0%')).not.toBeInTheDocument()
+  })
+
+  it('marks the Movers window as fixed and independent of the range selector', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/items')) {
+        return Promise.resolve({
+          data: {
+            items: [{ name: 'Flat White', totalQty: 400, totalRevenue: 8000, avgPerDay: 10, trend: 5 }],
+            meta: { risingItems: [{ name: 'Flat White', trend: 5 }], decliningItems: [] },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /items/i }))
+
+    await waitFor(() => expect(screen.getByText('Movers')).toBeInTheDocument())
+    expect(screen.getByText(/ignores the range above/i)).toBeInTheDocument()
+    expect(screen.getByText('Fixed 7-day window')).toBeInTheDocument()
+  })
+
+  it('names the window the item Trend column actually measures', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/items')) {
+        return Promise.resolve({
+          data: {
+            items: [{ name: 'Flat White', totalQty: 400, totalRevenue: 8000, avgPerDay: 10, trend: 5 }],
+            meta: {},
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /items/i }))
+
+    expect(await screen.findByRole('columnheader', { name: /7d vs prior 7d/i })).toBeInTheDocument()
+  })
+
+  it('says the heatmap window has no trade rather than drawing an all-zero grid', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/heatmap')) {
+        // The backend always emits a full grid, zero-filled.
+        const heatmap = []
+        for (let day = 0; day <= 6; day++) {
+          for (let hour = 6; hour <= 22; hour++) {
+            heatmap.push({ dayOfWeek: day, hour, revenue: 0, transactions: 0, observedDays: 0 })
+          }
+        }
+        return Promise.resolve({ data: { success: true, heatmap } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /heatmap/i }))
+
+    expect(await screen.findByText(/no trading activity in this window/i)).toBeInTheDocument()
+    expect(screen.queryByTitle(/Mon 08:00/)).not.toBeInTheDocument()
+  })
+
+  it('makes heatmap values reachable by keyboard and screen reader', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/heatmap')) {
+        return Promise.resolve({
+          data: { success: true, heatmap: [{ dayOfWeek: 1, hour: 8, revenue: 100, transactions: 3 }] },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /heatmap/i }))
+
+    const cell = await screen.findByRole('button', { name: /monday 08:00/i })
+    expect(cell).toHaveAccessibleName(/R100/)
+    expect(screen.getByRole('rowheader', { name: 'Mon' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '08:00' })).toBeInTheDocument()
+  })
+
+  it('does not report a fabricated payment split when the import has no payment methods', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/customers')) {
+        return Promise.resolve({
+          data: {
+            insights: {
+              avgTransactionValue: 85,
+              avgItemsPerTransaction: 2.1,
+              cashVsCardRatio: null,
+              tippingRate: 12,
+              avgTip: 4.5,
+            },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /customers/i }))
+
+    expect(await screen.findByText(/does not include payment methods/i)).toBeInTheDocument()
+    expect(screen.queryByText('Card: 0.0%')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cash: 0.0%')).not.toBeInTheDocument()
+  })
+
+  it('calls an unmeasured customer period empty instead of reporting authoritative zeros', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/customers')) {
+        return Promise.resolve({
+          data: {
+            insights: {
+              avgTransactionValue: 0,
+              avgItemsPerTransaction: 0,
+              cashVsCardRatio: null,
+              tippingRate: 0,
+              avgTip: 0,
+            },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /customers/i }))
+
+    expect(await screen.findByText(/no customer data for this period/i)).toBeInTheDocument()
+    expect(screen.queryByText('Tipping Rate')).not.toBeInTheDocument()
+  })
+
+  it('rounds small per-transaction money to cents', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/customers')) {
+        return Promise.resolve({
+          data: {
+            insights: {
+              avgTransactionValue: 85.4,
+              avgItemsPerTransaction: 2.1,
+              cashVsCardRatio: { cash: 30, card: 70 },
+              tippingRate: 12,
+              avgTip: 4.5,
+            },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /customers/i }))
+
+    // en-ZA writes the decimal separator as a comma.
+    expect(await screen.findByText('R4,50')).toBeInTheDocument()
+  })
+
+  it('keeps the range selector and offers a retry when a tab fails to load', async () => {
+    let attempts = 0
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/heatmap')) {
+        attempts += 1
+        return Promise.reject(new Error('timeout'))
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /heatmap/i }))
+
+    expect(await screen.findByText(/failed to load heatmap data/i)).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: /date range/i })).toBeInTheDocument()
+
+    const before = attempts
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(attempts).toBeGreaterThan(before))
+  })
+
+  it('exposes tab state through tab semantics rather than colour alone', async () => {
+    mockGet.mockImplementation(() => new Promise(() => {}))
+    render(<Analytics />)
+
+    const revenue = screen.getByRole('tab', { name: 'Revenue' })
+    expect(revenue).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Items' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tablist')).toBeInTheDocument()
+
+    revenue.focus()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Items' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('announces which range is applied', async () => {
+    mockGet.mockImplementation(() => new Promise(() => {}))
+    render(<Analytics />)
+
+    const group = screen.getByRole('group', { name: /date range/i })
+    const thirty = within(group).getByRole('button', { name: /last 30 days/i })
+    expect(thirty).toHaveAttribute('aria-pressed', 'true')
+    expect(within(group).getByRole('button', { name: /last 7 days/i })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('carries one range across tabs instead of silently resetting it', async () => {
+    mockGet.mockImplementation(() => Promise.resolve({ data: {} }))
+    render(<Analytics />)
+
+    await userEvent.click(within(screen.getByRole('group', { name: /date range/i })).getByRole('button', { name: /last 7 days/i }))
+    await userEvent.click(screen.getByRole('tab', { name: /items/i }))
+    await userEvent.click(screen.getByRole('tab', { name: /revenue/i }))
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('group', { name: /date range/i })).getByRole('button', { name: /last 7 days/i })
+      ).toHaveAttribute('aria-pressed', 'true')
+    })
+  })
+
+  it('anchors the date range to Johannesburg rather than the browser clock', async () => {
+    mockGet.mockImplementation(() => new Promise(() => {}))
+    render(<Analytics />)
+
+    await waitFor(() => expect(mockGet).toHaveBeenCalled())
+    const revenueCall = mockGet.mock.calls.find((call) => String(call[0]).includes('/analytics/revenue'))
+    const endDate = String(revenueCall?.[0]).match(/endDate=(\d{4}-\d{2}-\d{2})/)?.[1]
+    const johannesburgToday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Johannesburg',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date())
+    expect(endDate).toBe(johannesburgToday)
+  })
+
+  it('gives screen readers the revenue numbers the chart draws', async () => {
+    const summary = {
+      totalRevenue: 11000,
+      avgDailyRevenue: 5500,
+      bestDay: { date: '2026-03-02', revenue: 6000 },
+      worstDay: { date: '2026-03-01', revenue: 5000 },
+      trend: 5.2,
+    }
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/revenue')) {
+        return Promise.resolve({
+          data: {
+            data: [
+              { date: '2026-03-01', revenue: 5000, transactions: 50 },
+              { date: '2026-03-02', revenue: 6000, transactions: 60 },
+            ],
+            summary,
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+
+    const table = await screen.findByRole('table', { name: /daily revenue/i })
+    expect(
+      within(table).getByText((text) => text.replace(/\s/g, '') === 'R6000')
+    ).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /daily revenue/i })).toBeInTheDocument()
+  })
+
+  it('renders the revenue chart on first paint without a width(-1) size warning', async () => {
+    // jsdom has no layout and no ResizeObserver, so Recharts never measures the
+    // wrapper: whatever size the container assumes initially is what renders.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const summary = {
+      totalRevenue: 11000,
+      avgDailyRevenue: 5500,
+      bestDay: { date: '2026-03-02', revenue: 6000 },
+      worstDay: { date: '2026-03-01', revenue: 5000 },
+      trend: 5.2,
+    }
+    const revenueData = {
+      data: [
+        { date: '2026-03-01', revenue: 5000, transactions: 50 },
+        { date: '2026-03-02', revenue: 6000, transactions: 60 },
+      ],
+      summary,
+      meta: { startDate: '2026-03-01', endDate: '2026-03-02', period: 'daily', summary },
+    }
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: revenueData })
+    })
+
+    render(<Analytics />)
+
+    expect(await screen.findByTestId('area-chart')).toBeInTheDocument()
+    const sizeWarnings = warn.mock.calls.filter((call) => String(call[0]).includes('width(-1)'))
+    expect(sizeWarnings).toEqual([])
+    warn.mockRestore()
   })
 })

@@ -17,6 +17,11 @@ const mockDelete = vi.fn()
 vi.mock('@/lib/api', () => {
   return {
     authenticatedFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+    // Mirrors the real helper: only a refused credential ends the session.
+    isSessionRejection: (error: unknown) => {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      return status === 401 || status === 403
+    },
     default: {
       get: (...args: unknown[]) => mockGet(...args),
       post: (...args: unknown[]) => mockPost(...args),
@@ -137,6 +142,91 @@ function streamResponse(body: string): Response {
       }),
     },
   } as unknown as Response
+}
+
+// The blocking statuses the backend distinguishes: 402 out of credits,
+// 403 CREDIT_SPEND_FORBIDDEN, 429 AI_RATE_LIMITED.
+function refusedResponse(
+  status: number,
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {}
+): Response {
+  return {
+    ok: false,
+    status,
+    body: null,
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    json: () => Promise.resolve(body),
+  } as unknown as Response
+}
+
+// Delivers one chunk, then the socket dies mid-answer.
+function droppedStreamResponse(chunk: string): Response {
+  let delivered = false
+  const value = new TextEncoder().encode(chunk)
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: () => {
+          if (delivered) return Promise.reject(new TypeError('network error'))
+          delivered = true
+          return Promise.resolve({ done: false, value })
+        },
+      }),
+    },
+  } as unknown as Response
+}
+
+// Delivers one chunk, then hangs until the caller's AbortController fires.
+function openStreamResponse(chunk: string) {
+  return (_url: string, init: RequestInit = {}) => {
+    let delivered = false
+    const value = new TextEncoder().encode(chunk)
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: () => {
+            if (!delivered) {
+              delivered = true
+              return Promise.resolve({ done: false, value })
+            }
+            return new Promise((_resolve, reject) => {
+              init.signal?.addEventListener('abort', () => {
+                const abortError = new Error('The operation was aborted.')
+                abortError.name = 'AbortError'
+                reject(abortError)
+              })
+            })
+          },
+        }),
+      },
+    } as unknown as Response)
+  }
+}
+
+function deltaEvent(text: string) {
+  return `event: delta\ndata: ${JSON.stringify({ text })}\n\n`
+}
+
+async function askQuestion(question: string) {
+  const input = await screen.findByPlaceholderText(/how can i help/i)
+  await userEvent.type(input, question)
+  fireEvent.submit(input.closest('form')!)
+}
+
+function chatFallbackCalls() {
+  return mockPost.mock.calls.filter((call) => call[0] === '/forecasts/insights/chat')
+}
+
+// The failure headline is also announced in the sr-only status region, so
+// assertions about what is drawn in the transcript are scoped to the bubble.
+function answerBubble() {
+  const rows = document.querySelectorAll('[data-message-role="assistant"]')
+  return rows[rows.length - 1] as HTMLElement
 }
 
 describe('Insights', () => {
@@ -294,34 +384,6 @@ describe('Insights', () => {
     expect(mockPost.mock.calls[1][2].headers['Idempotency-Key']).toBe(firstKey)
   })
 
-  it('shows category badges on insights', async () => {
-    mockGet.mockImplementation((url: string) => {
-      if (url.includes('/forecasts/insights')) {
-        return Promise.resolve({
-          data: {
-            insights: ['First insight', 'Second insight', 'Third insight', 'Fourth insight'],
-            generatedAt: new Date().toISOString(),
-          },
-        })
-      }
-      if (url.includes('/cafe/me')) {
-        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
-      }
-      return Promise.resolve({ data: {} })
-    })
-
-    render(<Insights />)
-
-    await waitFor(() => {
-      // Categories cycle trend → warning → tip → highlight
-      expect(screen.getAllByText('Trend').length).toBeGreaterThanOrEqual(1)
-    })
-
-    expect(screen.getByText('Watch')).toBeInTheDocument()
-    expect(screen.getByText('Tip')).toBeInTheDocument()
-    expect(screen.getByText('Highlight')).toBeInTheDocument()
-  })
-
   it('restores saved chat messages', async () => {
     localStorage.setItem(
       CHAT_STORAGE_KEY,
@@ -425,7 +487,10 @@ describe('Insights', () => {
           chatId: 'chat-first',
           messages: [{ role: 'user', content: 'What are my best sellers?' }],
         },
-        { headers: { 'Idempotency-Key': expect.stringMatching(/^ask-guava-/) } }
+        {
+          headers: { 'Idempotency-Key': expect.stringMatching(/^ask-guava-/) },
+          timeout: 90_000,
+        }
       )
     })
     const userPrompt = screen
@@ -471,7 +536,7 @@ describe('Insights', () => {
         chatId: 'chat-partial',
         messages: [{ role: 'user', content: 'Interrupt this answer' }],
       },
-      { headers: { 'Idempotency-Key': streamHeaders['Idempotency-Key'] } }
+      { headers: { 'Idempotency-Key': streamHeaders['Idempotency-Key'] }, timeout: 90_000 }
     )
     expect(screen.queryByText(/stream stopped before it finished/i)).not.toBeInTheDocument()
   })
@@ -560,6 +625,361 @@ describe('Insights', () => {
     })
     expect(screen.getByText(/deleted "what are my best sellers\?\?"/i)).toBeInTheDocument()
     confirmSpy.mockRestore()
+  })
+
+  it('sends an out-of-credits refusal to Buy Credits instead of asking for a retry', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(
+      refusedResponse(402, {
+        success: false,
+        message: 'Guava credit limit reached for this billing period',
+        details: { available: 1, required: 3 },
+      })
+    )
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-402', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('What should I prep tomorrow?')
+
+    await screen.findAllByText(/you are out of guava credits/i)
+    expect(within(answerBubble()).getByText(/you are out of guava credits/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /buy guava credits/i })).toHaveAttribute(
+      'href',
+      '/settings?section=billing'
+    )
+    expect(screen.queryByText(/try again in a moment/i)).not.toBeInTheDocument()
+    // A refusal cannot succeed on retry, so it must not spend a second reservation.
+    expect(chatFallbackCalls()).toHaveLength(0)
+  })
+
+  it('names the missing permission when the owner has not enabled credit spending', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(
+      refusedResponse(403, {
+        success: false,
+        code: 'CREDIT_SPEND_FORBIDDEN',
+        message: 'The account owner has not enabled Guava Credit spending for this member',
+      })
+    )
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-403', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('Which items are slowing down?')
+
+    await screen.findAllByText(/cannot spend guava credits/i)
+    const notice = within(answerBubble())
+    expect(notice.getByText(/cannot spend guava credits/i)).toBeInTheDocument()
+    expect(notice.getByText(/account owner has not enabled credit spending/i)).toBeInTheDocument()
+    expect(chatFallbackCalls()).toHaveLength(0)
+  })
+
+  it('holds the composer closed for the rate-limit window instead of inviting a retry', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(
+      refusedResponse(
+        429,
+        { success: false, code: 'AI_RATE_LIMITED', message: 'Too many AI requests.' },
+        { 'retry-after': '45' }
+      )
+    )
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-429', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('Busiest hours please')
+
+    await screen.findAllByText(/too many ai requests/i)
+    expect(within(answerBubble()).getByText(/wait 45 seconds/i)).toBeInTheDocument()
+    // Firing the fallback would burn another rate-limit token and guarantee failure.
+    expect(chatFallbackCalls()).toHaveLength(0)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /rate limited/i })).toBeDisabled()
+    })
+  })
+
+  it('keeps the partial answer when the connection drops mid-stream', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(droppedStreamResponse(deltaEvent('Your Friday mornings are the busiest window')))
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-drop', messages: [] }) } })
+      }
+      if (url === '/forecasts/insights/chat') {
+        return Promise.reject(new TypeError('Network Error'))
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('When am I busiest?')
+
+    await screen.findAllByText(/could not reach the ai analyst/i)
+    // The paid partial must survive the failure notice, not be replaced by it.
+    await waitFor(() =>
+      expect(within(answerBubble()).getByText(/your friday mornings are the busiest window/i)).toBeInTheDocument()
+    )
+  })
+
+  it('offers a Stop control that keeps the partial answer and skips the paid fallback', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockImplementation(openStreamResponse(deltaEvent('Half of an answer')) as typeof fetch)
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-stop', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('Give me a long answer')
+
+    const stop = await screen.findByRole('button', { name: /stop/i })
+    await userEvent.click(stop)
+
+    await waitFor(() => expect(within(answerBubble()).getByText(/^stopped\./i)).toBeInTheDocument())
+    await waitFor(() =>
+      expect(within(answerBubble()).getByText(/half of an answer/i)).toBeInTheDocument()
+    )
+    expect(chatFallbackCalls()).toHaveLength(0)
+  })
+
+  it('does not issue a paid fallback after the user has navigated away', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockImplementation(openStreamResponse(deltaEvent('Answer in progress')) as typeof fetch)
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-unmount', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    const view = render(<Insights />)
+    await askQuestion('Start an answer I will abandon')
+    await screen.findByText(/answer in progress/i)
+
+    view.unmount()
+    await waitFor(() => {
+      expect(chatFallbackCalls()).toHaveLength(0)
+    })
+  })
+
+  it('gives the fallback the same 90s budget as the stream so a slow model is not billed for nothing', async () => {
+    mockBaseRequests()
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-timeout', messages: [] }) } })
+      }
+      if (url === '/forecasts/insights/chat') {
+        return Promise.resolve({ data: { answer: 'Recovered', contextStats } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('Slow question')
+
+    await waitFor(() => expect(chatFallbackCalls()).toHaveLength(1))
+    expect(chatFallbackCalls()[0][2]).toEqual(
+      expect.objectContaining({ timeout: 90_000 })
+    )
+  })
+
+  it('reuses the idempotency key when the user retries the same question', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(droppedStreamResponse(deltaEvent('Partial')))
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-key', messages: [] }) } })
+      }
+      if (url === '/forecasts/insights/chat') {
+        return Promise.reject(new TypeError('Network Error'))
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('Repeatable question')
+
+    const retry = await screen.findByRole('button', { name: /try again \(3 credits\)/i })
+    const firstKey = (vi.mocked(fetch).mock.calls[0][1] as RequestInit)
+      .headers as Record<string, string>
+    await userEvent.click(retry)
+
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(1))
+    const secondKey = (vi.mocked(fetch).mock.calls[1][1] as RequestInit)
+      .headers as Record<string, string>
+    expect(secondKey['Idempotency-Key']).toBe(firstKey['Idempotency-Key'])
+  })
+
+  it('says the answer was empty instead of sitting on Thinking forever', async () => {
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(
+      streamResponse('event: done\ndata: ' + JSON.stringify({ contextStats }) + '\n\n')
+    )
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-empty', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('Ask for nothing')
+
+    expect(await screen.findByText(/could not generate an answer/i)).toBeInTheDocument()
+    expect(screen.queryByText('Thinking...')).not.toBeInTheDocument()
+  })
+
+  it('renders hostile item names from the model as text, never as markup', async () => {
+    const hostile = '<img src=x onerror=alert(1)>Latte'
+    mockBaseRequests()
+    vi.mocked(fetch).mockResolvedValue(
+      streamResponse(
+        deltaEvent(`Your top seller is ${hostile}.`) +
+          'event: done\ndata: ' + JSON.stringify({ contextStats }) + '\n\n'
+      )
+    )
+    mockPost.mockImplementation((url: string) => {
+      if (url === '/insight-chats') {
+        return Promise.resolve({ data: { chat: chat({ _id: 'chat-xss', messages: [] }) } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+    await askQuestion('What is my top seller?')
+
+    const answer = await screen.findByText(new RegExp(hostile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    expect(answer).toBeInTheDocument()
+    expect(document.querySelector('img[src="x"]')).toBeNull()
+  })
+
+  it('keeps blank cells in a markdown table so values stay under their heading', async () => {
+    localStorage.setItem(
+      CHAT_STORAGE_KEY,
+      JSON.stringify({
+        scopeId: CHAT_SCOPE_ID,
+        messages: [
+          { id: 'user-table', role: 'user', content: 'Compare last week' },
+          {
+            id: 'assistant-table',
+            role: 'assistant',
+            content: '| Item | Qty | Revenue |\n| --- | --- | --- |\n| Croissant |  | R412 |',
+          },
+        ],
+      })
+    )
+    mockBaseRequests()
+
+    render(<Insights />)
+
+    const revenueCell = await screen.findByText('R412')
+    const row = revenueCell.parentElement!
+    // Three headings, so the body row must still lay out in three columns.
+    expect(row.style.gridTemplateColumns).toContain('repeat(3')
+    expect(row.children).toHaveLength(3)
+  })
+
+  it('does not label insights with a category invented from their position', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/insights')) {
+        return Promise.resolve({
+          data: {
+            insights: ['First insight', 'Second insight', 'Third insight', 'Fourth insight'],
+            generatedAt: new Date().toISOString(),
+          },
+        })
+      }
+      if (url.includes('/insight-chats')) return Promise.resolve({ data: { chats: [] } })
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Insights />)
+
+    expect(await screen.findByText('Second insight')).toBeInTheDocument()
+    expect(screen.queryByText('Watch')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tip')).not.toBeInTheDocument()
+    expect(screen.queryByText('Highlight')).not.toBeInTheDocument()
+  })
+
+  it('gives the composer a real label and drops the inert Add context control', async () => {
+    mockBaseRequests()
+
+    render(<Insights />)
+
+    expect(await screen.findByRole('textbox', { name: /ask a question about your cafe data/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add context/i })).not.toBeInTheDocument()
+  })
+
+  it('exposes the transcript as a keyboard-reachable log with a status announcer', async () => {
+    const savedChat = chat({ _id: 'chat-log' })
+    storeActiveChat(savedChat)
+    mockBaseRequests([savedChat])
+
+    render(<Insights />)
+
+    const log = await screen.findByRole('log', { name: /conversation/i })
+    expect(log).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('status')).toBeInTheDocument()
+  })
+
+  it('names the chat in every row action so destructive buttons are distinguishable', async () => {
+    const savedChat = chat({ _id: 'chat-labels', title: 'Weekend prep' })
+    mockBaseRequests([savedChat])
+
+    render(<Insights />)
+
+    expect(await screen.findByRole('button', { name: /delete chat "weekend prep"/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /rename chat "weekend prep"/i })).toBeInTheDocument()
+  })
+
+  it('reads older timestamps in days rather than hundreds of hours', async () => {
+    const savedChat = chat({ _id: 'chat-old', title: 'Old thread' })
+    savedChat.updatedAt = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString()
+    mockBaseRequests([savedChat])
+
+    render(<Insights />)
+
+    expect(await screen.findByText('Old thread')).toBeInTheDocument()
+    expect(screen.queryByText(/\d{3,} hours ago/)).not.toBeInTheDocument()
+  })
+
+  it('keeps the server chat when a save fails instead of forking a local copy', async () => {
+    const savedChat = chat({ _id: 'chat-fork', title: 'Server thread' })
+    mockBaseRequests([savedChat])
+    vi.mocked(fetch).mockResolvedValue(
+      streamResponse(
+        deltaEvent('Fresh answer') + 'event: done\ndata: ' + JSON.stringify({ contextStats }) + '\n\n'
+      )
+    )
+    mockPost.mockResolvedValue({ data: {} })
+    mockPatch.mockRejectedValue(new Error('PATCH failed'))
+
+    render(<Insights />)
+    expect(await screen.findByText('Server thread')).toBeInTheDocument()
+
+    const composer = await screen.findByPlaceholderText(/write a message/i)
+    await userEvent.type(composer, 'Another question')
+    fireEvent.submit(composer.closest('form')!)
+
+    expect(await screen.findByText(/fresh answer/i)).toBeInTheDocument()
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled())
+    // One conversation, not a server row plus a divergent local clone.
+    expect(screen.getAllByText('Server thread')).toHaveLength(1)
   })
 
   it('renames chats through the in-app dialog', async () => {

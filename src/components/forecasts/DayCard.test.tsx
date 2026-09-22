@@ -140,4 +140,121 @@ describe('DayCard', () => {
     expect(screen.getByText('Scheduled weekly closure')).toBeInTheDocument()
     expect(screen.queryByText(/Awaiting sales data/i)).not.toBeInTheDocument()
   })
+
+  it('plans on volume, not confidence: a busy line with little history stays in the plan', () => {
+    render(
+      <DayCard
+        forecast={{
+          ...mockForecast,
+          _id: 'f-low-evidence',
+          date: '2026-04-06',
+          items: [
+            { itemName: 'Flat White (Blend)', predictedQty: 20, baseQty: 20, confidence: 'low' },
+            { itemName: 'Brownie', predictedQty: 1, baseQty: 1.2, confidence: 'low' },
+          ],
+        }}
+        weekAvg={20000}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.getByText('Flat White (Blend)')).toBeInTheDocument()
+    expect(screen.queryByText('Brownie')).not.toBeInTheDocument()
+  })
+
+  it('explains a card whose every line sells under two a day instead of leaving a blank', () => {
+    render(
+      <DayCard
+        forecast={{
+          ...mockForecast,
+          _id: 'f-all-occasional',
+          date: '2026-04-07',
+          items: [
+            { itemName: 'Brownie', predictedQty: 1, baseQty: 1.2 },
+            { itemName: 'Lemon Cake', predictedQty: 1, baseQty: 1.4 },
+          ],
+        }}
+        weekAvg={20000}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/every line here sells under 2 a day/i)).toBeInTheDocument()
+  })
+
+  it('leaves the numbers an owner orders against in the accessibility tree', () => {
+    // The card used to be the button. role="button" is Children Presentational,
+    // so every figure inside it was stripped and a screen-reader user heard
+    // only "Open forecast details for Tuesday, button".
+    const handleClick = vi.fn()
+    render(
+      <DayCard
+        forecast={{ ...mockForecast, _id: 'f-a11y', date: '2026-04-08', totalPredictedRevenue: 20100 }}
+        weekAvg={20000}
+        mode="plan"
+        onClick={handleClick}
+      />
+    )
+
+    const button = screen.getByRole('button', { name: /open forecast details/i })
+    expect(button.tagName).toBe('BUTTON')
+    // No ancestor claims the button role, so the card's content is readable.
+    expect(document.querySelectorAll('[role="button"]')).toHaveLength(0)
+    expect(screen.getByText('Flat White (Blend)')).toBeInTheDocument()
+
+    fireEvent.click(button)
+    expect(handleClick).toHaveBeenCalledOnce()
+  })
+
+  it('offers the same keyboard route into a closed day', () => {
+    const handleClick = vi.fn()
+    render(
+      <DayCard
+        forecast={{
+          ...mockForecast,
+          _id: 'f-closed-a11y',
+          date: '2026-04-09',
+          availability: { status: 'closed', reason: 'Scheduled weekly closure' },
+          items: [],
+          totalPredictedRevenue: 0,
+        }}
+        weekAvg={0}
+        mode="plan"
+        onClick={handleClick}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /open forecast details/i }))
+    expect(handleClick).toHaveBeenCalledOnce()
+    expect(screen.getByText('Scheduled weekly closure')).toBeInTheDocument()
+  })
+
+  it('draws bars even when a non-occasional line is forecast to zero', () => {
+    // A stage-6 day with rain can round a real seller to 0. Dividing by that
+    // produced width: NaN%, which the browser drops, so every bar vanished.
+    render(
+      <DayCard
+        forecast={{
+          ...mockForecast,
+          _id: 'f-zero-max',
+          date: '2026-04-10',
+          items: [
+            { itemName: 'Flat White (Blend)', predictedQty: 0, baseQty: 30 },
+            { itemName: 'Long White (Blend)', predictedQty: 0, baseQty: 28 },
+          ],
+        }}
+        weekAvg={20000}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    const bars = document.querySelectorAll('[style*="width"]')
+    expect(bars.length).toBeGreaterThan(0)
+    bars.forEach((bar) => {
+      expect((bar as HTMLElement).style.width).not.toContain('NaN')
+    })
+  })
 })

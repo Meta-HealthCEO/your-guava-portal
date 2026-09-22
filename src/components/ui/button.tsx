@@ -20,8 +20,11 @@ const buttonVariants = cva(
           'text-muted hover:bg-white/5 hover:text-text',
         link:
           'text-guava-red-text underline-offset-4 hover:underline',
+        // White on the bright --color-guava-green is 3.07. This uses the
+        // button-surface green instead (white 4.62), with hover/active shading
+        // darker still (5.84 / 7.26).
         success:
-          'bg-guava-green text-white hover:bg-[#3E8F2E] active:bg-[#337826]',
+          'bg-guava-green-strong text-white hover:bg-[#35722A] active:bg-[#2E6224]',
       },
       size: {
         default: 'h-9 px-4 py-2',

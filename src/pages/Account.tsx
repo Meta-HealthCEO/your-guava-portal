@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router'
 import {
   AlertCircle,
   CheckCircle,
+  Clock,
   CreditCard,
   KeyRound,
   Pencil,
@@ -24,15 +25,35 @@ import { secureRandomId } from '@/lib/idempotency'
 import type { Account, BillingPlan } from '@/types'
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error'
-type NoticeState = { type: 'success' | 'error'; message: string } | null
+type NoticeTone = 'success' | 'error' | 'info'
+type NoticeState = { type: NoticeTone; message: string } | null
 type BillingCycle = 'monthly' | 'annual'
+
+/**
+ * Every value PaymentSession.status can hold
+ * (backend/src/models/PaymentSession.model.js:54). Enumerating it here rather
+ * than a convenient subset is the point: the checkout-return handler used to
+ * treat anything outside paid/pending/cancelled as an outright failure, which
+ * meant a card sitting in 'processing' — the fulfilment lock held *while* a
+ * successful charge is applied to the organisation — was reported to the owner
+ * as "payment was not completed, no billing changes were made". The rational
+ * response to that message is to pay again.
+ */
+type PaymentSessionStatus = 'pending' | 'processing' | 'paid' | 'failed' | 'cancelled'
+/**
+ * Not a PaymentSession.status. The checkout and credit endpoints substitute it
+ * on their 202 response while the gateway session is still being created
+ * (account.controller.js:52).
+ */
+type PaymentInitializationStatus = 'initializing' | 'ready' | 'failed'
 type PaymentIntent = {
   provider: 'mock' | 'onegate' | 'paystack'
   reference?: string
   redirectUrl?: string
   amount?: number
   currency?: string
-  status?: 'pending' | 'paid' | 'failed' | 'cancelled'
+  status?: PaymentSessionStatus | 'initializing'
+  initializationStatus?: PaymentInitializationStatus
 }
 type CheckoutResponse = { success: boolean; account?: Account; checkout: PaymentIntent }
 type CreditPurchaseResponse = {
@@ -44,6 +65,70 @@ type PaymentStatusResponse = {
   success: boolean
   payment: PaymentIntent
 }
+
+type PaymentOutcome = { tone: NoticeTone; message: string; terminal: boolean }
+
+/**
+ * Exhaustive over PaymentSessionStatus, so adding a status to the backend enum
+ * without deciding what the customer is told is a compile error here.
+ */
+const PAYMENT_OUTCOMES: Record<PaymentSessionStatus, PaymentOutcome> = {
+  paid: {
+    tone: 'success',
+    message: 'Card payment confirmed. Billing has been updated.',
+    terminal: true,
+  },
+  processing: {
+    tone: 'info',
+    message:
+      'Payment received. Guava is finalising your billing — this can take a moment. Do not pay again; this page updates as soon as it lands.',
+    terminal: false,
+  },
+  pending: {
+    tone: 'info',
+    message:
+      'Card payment has not been confirmed by your bank yet. Guava will update billing as soon as it is. Do not pay again.',
+    terminal: false,
+  },
+  failed: {
+    tone: 'error',
+    message: 'Card payment failed. No billing changes were made, and you have not been charged.',
+    terminal: true,
+  },
+  cancelled: {
+    tone: 'error',
+    message: 'Card payment was cancelled. No billing changes were made.',
+    terminal: true,
+  },
+}
+
+/**
+ * A status the portal has never heard of is not evidence of failure. Saying
+ * "no billing changes were made" about a charge we cannot account for is the
+ * one answer that can cost the customer money.
+ */
+const UNKNOWN_PAYMENT_OUTCOME: PaymentOutcome = {
+  tone: 'info',
+  message:
+    "We're still confirming this payment with the gateway. Nothing else is needed from you — please check billing again shortly rather than paying a second time.",
+  terminal: false,
+}
+
+const PAYMENT_POLL_ATTEMPTS = 4
+const PAYMENT_POLL_INTERVAL_MS = 4000
+
+const PREPARING_CHECKOUT_MESSAGE =
+  'Secure checkout is still being prepared. Nothing has been charged. Try again in a moment — retrying resumes this same payment rather than starting a second one.'
+
+/**
+ * HTTP 202 PAYMENT_SESSION_INITIALIZING. The response is a 2xx, so axios
+ * resolves it, and it carries an `account` object — which is why the portal
+ * mistook it for a completed purchase.
+ */
+const isStillInitializing = (httpStatus: number | undefined, intent: PaymentIntent) =>
+  httpStatus === 202 ||
+  intent.status === 'initializing' ||
+  intent.initializationStatus === 'initializing'
 
 const formatRand = (value: number) => `R${value.toLocaleString('en-ZA')}`
 const formatDate = (value?: string | null) =>
@@ -58,14 +143,23 @@ function StatusBanner({
   state,
   successMessage = 'Account details saved.',
   errorMessage = 'Failed to save account details.',
+  messageId,
 }: {
   state: SaveState
   successMessage?: string
   errorMessage?: string
+  messageId?: string
 }) {
+  // Settings.tsx's StatusBanner has always carried these roles; this copy had
+  // dropped them, so a screen-reader user changing their password submitted and
+  // heard nothing at all.
   if (state === 'success') {
     return (
-      <div className="flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green">
+      <div
+        role="status"
+        id={messageId}
+        className="flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green"
+      >
         <CheckCircle className="w-4 h-4 shrink-0" />
         <span>{successMessage}</span>
       </div>
@@ -73,7 +167,11 @@ function StatusBanner({
   }
   if (state === 'error') {
     return (
-      <div className="flex items-center gap-2 bg-red-900/10 border border-red-900/30 rounded-lg px-3.5 py-2.5 text-sm text-red-400">
+      <div
+        role="alert"
+        id={messageId}
+        className="flex items-center gap-2 bg-red-900/10 border border-red-900/30 rounded-lg px-3.5 py-2.5 text-sm text-red-400"
+      >
         <AlertCircle className="w-4 h-4 shrink-0" />
         <span>{errorMessage}</span>
       </div>
@@ -82,18 +180,23 @@ function StatusBanner({
   return null
 }
 
+const NOTICE_STYLES: Record<NoticeTone, string> = {
+  success: 'bg-guava-green/10 border-guava-green/20 text-guava-green',
+  error: 'bg-red-900/10 border-red-900/30 text-red-400',
+  // Neutral: a payment that is still settling is not a failure and must not be
+  // dressed as one.
+  info: 'bg-surface border-border text-text',
+}
+
 function Notice({ notice }: { notice: NoticeState }) {
   if (!notice) return null
+  const Icon = notice.type === 'error' ? AlertCircle : notice.type === 'success' ? CheckCircle : Clock
   return (
     <div
-      role={notice.type === 'success' ? 'status' : 'alert'}
-      className={
-        notice.type === 'success'
-          ? 'flex items-center gap-2 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-2.5 text-sm text-guava-green'
-          : 'flex items-center gap-2 bg-red-900/10 border border-red-900/30 rounded-lg px-3.5 py-2.5 text-sm text-red-400'
-      }
+      role={notice.type === 'error' ? 'alert' : 'status'}
+      className={`flex items-center gap-2 border rounded-lg px-3.5 py-2.5 text-sm ${NOTICE_STYLES[notice.type]}`}
     >
-      {notice.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+      <Icon className="w-4 h-4 shrink-0" />
       <span>{notice.message}</span>
     </div>
   )
@@ -109,13 +212,16 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 }
 
 function UsageMeter({ label, used, total }: { label: string; used: number; total: number }) {
-  const pct = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
+  const hasAllowance = total > 0
+  const pct = hasAllowance ? Math.min(100, Math.round((used / total) * 100)) : 0
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted">{label}</span>
+        {/* A divide-by-zero guard used to leak into this label as a fabricated
+            denominator: an account with no allowance read "0 / 1". */}
         <span className="text-text font-medium">
-          {used} / {total}
+          {hasAllowance ? `${used} / ${total}` : 'No credit allowance on this plan'}
         </span>
       </div>
       <div className="h-2 rounded-full bg-[#111111] border border-border overflow-hidden">
@@ -127,19 +233,32 @@ function UsageMeter({ label, used, total }: { label: string; used: number; total
 
 function PlanCard({
   plan,
-  active,
+  isCurrentPlan,
+  isCurrentCycle,
   cycle,
   onSelect,
   disabled,
 }: {
   plan: BillingPlan
-  active: boolean
+  /** The organisation is on this plan tier, whatever the cycle. */
+  isCurrentPlan: boolean
+  /** The displayed cycle matches the one the organisation is billed on. */
+  isCurrentCycle: boolean
   cycle: BillingCycle
   onSelect: () => void
   disabled: boolean
 }) {
   const price = cycle === 'annual' ? plan.priceAnnual : plan.priceMonthly
   const includedCredits = plan.includedGuavaCredits ?? plan.includedAiCredits
+  // "Active" means this exact plan *and* cycle. Deriving it from the plan id
+  // alone disabled the only control that could move a Growth-monthly customer
+  // to Growth-annual — the cheaper option the cycle toggle is advertising.
+  const active = isCurrentPlan && isCurrentCycle
+  const label = active
+    ? 'Active plan'
+    : isCurrentPlan
+      ? `Switch to ${cycle === 'annual' ? 'annual' : 'monthly'}`
+      : `Move to ${plan.name}`
   return (
     <div
       className={
@@ -152,7 +271,7 @@ function PlanCard({
         <div>
           <div className="flex items-center gap-2">
             <h4 className="text-text font-semibold">{plan.name}</h4>
-            {active && <Badge variant="success">Current</Badge>}
+            {isCurrentPlan && <Badge variant="success">Current</Badge>}
           </div>
           <p className="text-muted text-sm mt-1">
             {plan.includedSeats} seats, {plan.includedLocations} locations, {includedCredits} Guava Credits
@@ -172,11 +291,115 @@ function PlanCard({
         ))}
       </div>
       <Button type="button" variant={active ? 'secondary' : 'default'} className="w-full" onClick={onSelect} disabled={disabled || active}>
-        {active ? 'Active plan' : `Move to ${plan.name}`}
+        {label}
       </Button>
     </div>
   )
 }
+
+/**
+ * Confirmation for the two irreversible money actions on this page. Both used
+ * to fire a real charge on a single click, with no statement of the amount and
+ * no mention that the period already paid for is neither refunded nor credited
+ * (the backend has no proration: account.controller charges the full plan price
+ * whatever point of the cycle you are at).
+ *
+ * The shared Dialog in Team.tsx implements none of the modal behaviour it
+ * claims, so this one carries its own: Escape closes it, focus moves in on open
+ * and returns to the trigger on close, and Tab is trapped between the two
+ * buttons.
+ */
+function ConfirmDialog({
+  open,
+  title,
+  confirmLabel,
+  busy,
+  onConfirm,
+  onCancel,
+  children,
+}: {
+  open: boolean
+  title: string
+  confirmLabel: string
+  busy: boolean
+  onConfirm: () => void
+  onCancel: () => void
+  children: React.ReactNode
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const titleId = 'confirm-purchase-title'
+
+  useEffect(() => {
+    if (!open) return
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const panel = panelRef.current
+    panel?.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) {
+        event.stopPropagation()
+        onCancel()
+        return
+      }
+      if (event.key !== 'Tab' || !panel) return
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      previouslyFocused?.focus?.()
+    }
+  }, [open, busy, onCancel])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4 py-6">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="w-full max-w-lg rounded-xl border border-border bg-surface p-5 shadow-2xl focus-visible:outline-none"
+      >
+        <h2 id={titleId} className="text-base font-semibold text-text">
+          {title}
+        </h2>
+        <div className="mt-3 space-y-2 text-sm leading-6 text-muted">{children}</div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Opening checkout...' : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type PasswordField = 'current' | 'new' | 'confirm'
+const PASSWORD_MESSAGE_ID = 'password-change-message'
+
+type PendingPurchase =
+  | { kind: 'plan'; plan: BillingPlan; cycle: BillingCycle }
+  | { kind: 'credits'; credits: number; price: number }
+  | null
 
 export type AccountSettingsSection = 'all' | 'account' | 'billing'
 
@@ -194,20 +417,43 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   const [organizationName, setOrganizationName] = useState('')
   const [billingEmail, setBillingEmail] = useState(user?.email ?? '')
   const [profileState, setProfileState] = useState<SaveState>('idle')
+  const [profileError, setProfileError] = useState<string | undefined>()
   const [isEditingProfile, setIsEditingProfile] = useState(false)
+  const [pendingPurchase, setPendingPurchase] = useState<PendingPurchase>(null)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordState, setPasswordState] = useState<SaveState>('idle')
   const [passwordError, setPasswordError] = useState<string | undefined>()
+  const [invalidPasswordFields, setInvalidPasswordFields] = useState<Set<PasswordField>>(new Set())
   const planCheckoutRef = useRef<{ intent: string; key: string } | null>(null)
   const creditCheckoutRef = useRef<{ intent: string; key: string } | null>(null)
   const paymentQuery = searchParams.toString()
 
-  const showNotice = useCallback((type: 'success' | 'error', message: string) => {
+  const noticeTimerRef = useRef<number | null>(null)
+  // `persist` keeps a notice on screen. A payment that has not resolved yet is
+  // exactly the case where a four-second toast leaves the owner with no record
+  // that anything happened — which is what drives a second attempt to pay.
+  const showNotice = useCallback((type: NoticeTone, message: string, options?: { persist?: boolean }) => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current)
+      noticeTimerRef.current = null
+    }
     setNotice({ type, message })
-    setTimeout(() => setNotice(null), 4000)
+    if (!options?.persist) {
+      noticeTimerRef.current = window.setTimeout(() => {
+        setNotice(null)
+        noticeTimerRef.current = null
+      }, 4000)
+    }
   }, [])
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current)
+    },
+    []
+  )
 
   const hydrateAccount = useCallback(
     () => api
@@ -238,46 +484,85 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     if (!paymentHint || (section !== 'all' && section !== 'billing')) return
 
     let cancelled = false
+    let pollTimer: number | undefined
+    let releaseWait: (() => void) | undefined
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        releaseWait = resolve
+        pollTimer = window.setTimeout(resolve, ms)
+      })
+
+    // Only a settled outcome may erase the reference. Stripping it while the
+    // gateway is still working leaves the owner on a page showing their old
+    // plan, with no way to re-check what their money did.
+    const clearPaymentParams = ({ billingResolved }: { billingResolved: boolean }) => {
+      const nextParams = new URLSearchParams(searchParams)
+      nextParams.delete('payment')
+      nextParams.delete('reference')
+      // The 402 interceptor sets billing=required. Leaving it set after a
+      // successful payment made the page report success and failure at once.
+      if (billingResolved) nextParams.delete('billing')
+      setSearchParams(nextParams, { replace: true })
+    }
+
     const verifyPayment = async () => {
       if (!reference) {
         showNotice('error', 'Payment could not be verified because its reference is missing.')
-      } else {
+        if (!cancelled) clearPaymentParams({ billingResolved: false })
+        return
+      }
+
+      for (let attempt = 0; attempt < PAYMENT_POLL_ATTEMPTS; attempt += 1) {
+        let status: PaymentIntent['status']
         try {
           const { data } = await api.get<PaymentStatusResponse>(`/account/payments/${encodeURIComponent(reference)}`)
           if (cancelled) return
-          const status = data.payment.status
-          if (status === 'paid') {
-            await hydrateAccount()
-            if (!cancelled) showNotice('success', 'Card payment confirmed. Billing has been updated.')
-          } else if (status === 'pending') {
-            showNotice('success', 'Card payment is still pending. Guava will update billing after confirmation.')
-          } else if (status === 'cancelled') {
-            showNotice('error', 'Card payment was cancelled. No billing changes were made.')
-          } else {
-            showNotice('error', 'Card payment was not completed. No billing changes were made.')
-          }
+          status = data.payment.status
         } catch {
-          if (!cancelled) showNotice('error', 'Payment status could not be verified. Please refresh and check billing again.')
+          if (cancelled) return
+          showNotice(
+            'error',
+            'Payment status could not be verified. Nothing has been charged twice — refresh and check billing again before retrying.',
+            { persist: true }
+          )
+          return
         }
-      }
 
-      if (!cancelled) {
-        const nextParams = new URLSearchParams(searchParams)
-        nextParams.delete('payment')
-        nextParams.delete('reference')
-        setSearchParams(nextParams, { replace: true })
+        const outcome =
+          status && status in PAYMENT_OUTCOMES
+            ? PAYMENT_OUTCOMES[status as PaymentSessionStatus]
+            : UNKNOWN_PAYMENT_OUTCOME
+
+        if (outcome.terminal) {
+          if (status === 'paid') {
+            await hydrateAccount().catch(() => undefined)
+            if (cancelled) return
+          }
+          showNotice(outcome.tone, outcome.message)
+          clearPaymentParams({ billingResolved: status === 'paid' })
+          return
+        }
+
+        // Still settling: say so now, keep the reference, and re-check.
+        showNotice(outcome.tone, outcome.message, { persist: true })
+        if (attempt === PAYMENT_POLL_ATTEMPTS - 1) return
+        await wait(PAYMENT_POLL_INTERVAL_MS)
+        if (cancelled) return
       }
     }
 
     void verifyPayment()
     return () => {
       cancelled = true
+      if (pollTimer !== undefined) window.clearTimeout(pollTimer)
+      releaseWait?.()
     }
   }, [hydrateAccount, paymentQuery, section, searchParams, setSearchParams, showNotice])
 
   const handleProfileSave = async (e: FormEvent) => {
     e.preventDefault()
     setProfileState('saving')
+    setProfileError(undefined)
     try {
       const profilePayload = isOwner
         ? { name: profileName, organizationName, billingEmail }
@@ -288,7 +573,13 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
       setProfileState('success')
       setIsEditingProfile(false)
       setTimeout(() => setProfileState('idle'), 3000)
-    } catch {
+    } catch (err: unknown) {
+      // The owner-only fields here (organisation name, billing email) are the
+      // ones the backend has rules about. Swallowing its message left "Failed to
+      // save account details." as the only clue across four inputs.
+      setProfileError(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message || undefined
+      )
       setProfileState('error')
     }
   }
@@ -304,6 +595,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
       setBillingEmail(user?.email ?? '')
     }
     setProfileState('idle')
+    setProfileError(undefined)
     setIsEditingProfile(false)
   }
 
@@ -311,25 +603,36 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     e.preventDefault()
     setPasswordError(undefined)
 
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      setPasswordError('Current password, new password, and confirmation are required.')
+    // Each rule names the fields it is about, so the message in the alert and
+    // the aria-invalid marking on the inputs agree with each other.
+    const failPassword = (message: string, fields: PasswordField[]) => {
+      setPasswordError(message)
+      setInvalidPasswordFields(new Set(fields))
       setPasswordState('error')
+    }
+
+    const missing: PasswordField[] = [
+      ...(currentPassword ? [] : (['current'] as PasswordField[])),
+      ...(newPassword ? [] : (['new'] as PasswordField[])),
+      ...(confirmPassword ? [] : (['confirm'] as PasswordField[])),
+    ]
+    if (missing.length > 0) {
+      failPassword('Current password, new password, and confirmation are required.', missing)
       return
     }
 
     if (newPassword.length < 8) {
-      setPasswordError('New password must be at least 8 characters.')
-      setPasswordState('error')
+      failPassword('New password must be at least 8 characters.', ['new'])
       return
     }
 
     if (newPassword !== confirmPassword) {
-      setPasswordError('New password and confirmation do not match.')
-      setPasswordState('error')
+      failPassword('New password and confirmation do not match.', ['new', 'confirm'])
       return
     }
 
     setPasswordState('saving')
+    setInvalidPasswordFields(new Set())
     try {
       await api.post('/auth/change-password', { currentPassword, newPassword })
       setCurrentPassword('')
@@ -339,8 +642,8 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
       showNotice('success', 'Password changed. Please sign in again.')
       await logout()
     } catch (err: any) {
-      setPasswordError(err?.response?.data?.message || 'Failed to change password.')
-      setPasswordState('error')
+      // Only the current password can be rejected server-side here.
+      failPassword(err?.response?.data?.message || 'Failed to change password.', ['current'])
     }
   }
 
@@ -357,16 +660,27 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     }
     const idempotencyKey = planCheckoutRef.current.key
     try {
-      const { data } = await api.post<CheckoutResponse>('/account/checkout', {
+      const response = await api.post<CheckoutResponse>('/account/checkout', {
         plan: plan.id,
         billingCycle,
       }, {
         headers: { 'Idempotency-Key': idempotencyKey },
       })
+      const { data } = response
 
       if (data.checkout.redirectUrl) {
         showNotice('success', 'Opening secure card checkout...')
         window.location.assign(data.checkout.redirectUrl)
+        return
+      }
+
+      if (isStillInitializing(response.status, data.checkout)) {
+        // Deliberately before the `data.account` branch: a 202 carries the
+        // account payload too, and it is the account *as it was*. Reading it as
+        // proof of success told the owner "Growth plan activated" while the
+        // gateway session did not yet exist. Keep the idempotency key so a
+        // retry resumes this session rather than opening a second one.
+        showNotice('info', PREPARING_CHECKOUT_MESSAGE, { persist: true })
         return
       }
 
@@ -395,15 +709,21 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     }
     const idempotencyKey = creditCheckoutRef.current.key
     try {
-      const { data } = await api.post<CreditPurchaseResponse>(
+      const response = await api.post<CreditPurchaseResponse>(
         '/account/ai-credits',
         { credits: packCredits },
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
+      const { data } = response
 
       if (data.purchase.redirectUrl) {
         showNotice('success', 'Opening secure card checkout...')
         window.location.assign(data.purchase.redirectUrl)
+        return
+      }
+
+      if (isStillInitializing(response.status, data.purchase)) {
+        showNotice('info', PREPARING_CHECKOUT_MESSAGE, { persist: true })
         return
       }
 
@@ -429,9 +749,10 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   }
 
   const selectedPlan = account?.organization.plan || 'starter'
-  const billingRequired =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('billing') === 'required'
+  const currentCycle: BillingCycle = account?.organization.billingCycle || 'monthly'
+  // Read through the router hook so it reacts when the flag is cleared after a
+  // successful payment; the raw window.location read never did.
+  const billingRequired = searchParams.get('billing') === 'required'
   const credits = account?.usage.guavaCredits ?? account?.usage.aiCredits
   const creditTotal = credits ? credits.included + credits.bonus : 0
   // Pack sizes offered by the organisation's current plan.
@@ -440,6 +761,40 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   const creditLedger = account?.usage.creditLedger
   const showAccountSection = section === 'all' || section === 'account'
   const showBillingSection = section === 'all' || section === 'billing'
+
+  const confirmPurchaseLabel = (() => {
+    if (!pendingPurchase) return 'Confirm'
+    const amount =
+      pendingPurchase.kind === 'plan'
+        ? pendingPurchase.cycle === 'annual'
+          ? pendingPurchase.plan.priceAnnual
+          : pendingPurchase.plan.priceMonthly
+        : pendingPurchase.price
+    return amount > 0 ? `Confirm and pay ${formatRand(amount)}` : 'Confirm and pay at checkout'
+  })()
+
+  // The cafe switcher in the sidebar calls window.location.reload(), so an
+  // owner half-way through retyping their organisation details can lose the lot
+  // to one click. Only beforeunload can intercept that.
+  const isProfileDirty =
+    isEditingProfile &&
+    Boolean(
+      account &&
+        (profileName !== account.user.name ||
+          (isOwner &&
+            (organizationName !== account.organization.name ||
+              billingEmail !== (account.organization.billingEmail || account.user.email))))
+    )
+
+  useEffect(() => {
+    if (!isProfileDirty) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [isProfileDirty])
 
   return (
       <div className="space-y-6">
@@ -506,7 +861,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                     </div>
                   </div>
                 )}
-                <StatusBanner state={profileState} />
+                <StatusBanner state={profileState} errorMessage={profileError || 'Failed to save account details.'} />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="submit" disabled={profileState === 'saving'}>
                     <CheckCircle className="w-3.5 h-3.5" />
@@ -530,7 +885,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                   <ReadOnlyField label="Organisation Name" value={displayOrgName} />
                   {isOwner && <ReadOnlyField label="Billing Email" value={displayBillingEmail} />}
                 </div>
-                <StatusBanner state={profileState} />
+                <StatusBanner state={profileState} errorMessage={profileError || 'Failed to save account details.'} />
               </div>
             )}
           </CardContent>
@@ -557,6 +912,8 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     autoComplete="current-password"
+                    aria-invalid={invalidPasswordFields.has('current') || undefined}
+                    aria-describedby={passwordState === 'error' ? PASSWORD_MESSAGE_ID : undefined}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -567,6 +924,8 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     autoComplete="new-password"
+                    aria-invalid={invalidPasswordFields.has('new') || undefined}
+                    aria-describedby={passwordState === 'error' ? PASSWORD_MESSAGE_ID : undefined}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -577,11 +936,14 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     autoComplete="new-password"
+                    aria-invalid={invalidPasswordFields.has('confirm') || undefined}
+                    aria-describedby={passwordState === 'error' ? PASSWORD_MESSAGE_ID : undefined}
                   />
                 </div>
               </div>
               <StatusBanner
                 state={passwordState}
+                messageId={PASSWORD_MESSAGE_ID}
                 successMessage="Password changed."
                 errorMessage={passwordError || 'Failed to change password.'}
               />
@@ -662,7 +1024,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
               </div>
             </div>
 
-            <UsageMeter label="Guava Credit usage this period" used={credits?.used ?? 0} total={creditTotal || 1} />
+            <UsageMeter label="Guava Credit usage this period" used={credits?.used ?? 0} total={creditTotal} />
             <div className="flex flex-wrap gap-2">
               {/* The plan offers several pack sizes at different rates; the UI
                   previously hard-coded the smallest, so larger, better-value
@@ -675,7 +1037,7 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                   key={pack.credits}
                   type="button"
                   variant="secondary"
-                  onClick={() => handleBuyCredits(pack.credits)}
+                  onClick={() => setPendingPurchase({ kind: 'credits', credits: pack.credits, price: pack.price })}
                   disabled={!isOwner || isBuyingCredits}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
@@ -755,16 +1117,91 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
                 <PlanCard
                   key={plan.id}
                   plan={plan}
-                  active={selectedPlan === plan.id}
+                  isCurrentPlan={selectedPlan === plan.id}
+                  isCurrentCycle={currentCycle === billingCycle}
                   cycle={billingCycle}
-                  onSelect={() => handlePlanCheckout(plan)}
-                  disabled={!isOwner || checkoutPlan === plan.id}
+                  onSelect={() => setPendingPurchase({ kind: 'plan', plan, cycle: billingCycle })}
+                  // Every card, not just the one in flight. Disabling only the
+                  // clicked card let a second click on a different plan mint a
+                  // fresh idempotency key and open a second live PaymentSession.
+                  disabled={!isOwner || checkoutPlan !== null}
                 />
               ))}
             </div>
             {!isOwner && <p className="text-muted text-xs">Only the account owner can change billing.</p>}
           </CardContent>
         </Card>}
+
+        <ConfirmDialog
+          open={pendingPurchase !== null}
+          title={pendingPurchase?.kind === 'credits' ? 'Confirm credit purchase' : 'Confirm plan change'}
+          confirmLabel={confirmPurchaseLabel}
+          busy={checkoutPlan !== null || isBuyingCredits}
+          onCancel={() => setPendingPurchase(null)}
+          onConfirm={() => {
+            const purchase = pendingPurchase
+            setPendingPurchase(null)
+            if (!purchase) return
+            if (purchase.kind === 'plan') void handlePlanCheckout(purchase.plan)
+            else void handleBuyCredits(purchase.credits)
+          }}
+        >
+          {pendingPurchase?.kind === 'plan' && (
+            <>
+              <p>
+                Move to <span className="font-medium text-text">{pendingPurchase.plan.name}</span>, billed{' '}
+                {pendingPurchase.cycle === 'annual' ? 'annually' : 'monthly'}.
+              </p>
+              <p>
+                You will be charged{' '}
+                <span className="font-medium text-text">
+                  {formatRand(
+                    pendingPurchase.cycle === 'annual'
+                      ? pendingPurchase.plan.priceAnnual
+                      : pendingPurchase.plan.priceMonthly
+                  )}
+                </span>{' '}
+                now, then every {pendingPurchase.cycle === 'annual' ? 'year' : 'month'} until you change plan.
+              </p>
+              {/* There is no proration anywhere in the backend: checkout charges
+                  the full plan price whatever point of the cycle you are at.
+                  Saying so is the difference between a considered downgrade and
+                  an owner discovering it after the money has gone. */}
+              <p>
+                Your current period is not refunded or credited — the change takes effect immediately and the
+                remainder of what you have already paid for is lost.
+              </p>
+              <p>
+                {pendingPurchase.plan.name} includes {pendingPurchase.plan.includedSeats} seats,{' '}
+                {pendingPurchase.plan.includedLocations} locations and{' '}
+                {pendingPurchase.plan.includedGuavaCredits ?? pendingPurchase.plan.includedAiCredits} Guava Credits.
+              </p>
+            </>
+          )}
+          {pendingPurchase?.kind === 'credits' && (
+            <>
+              <p>
+                Add{' '}
+                <span className="font-medium text-text">
+                  {pendingPurchase.credits.toLocaleString('en-ZA')} Guava Credits
+                </span>{' '}
+                to this billing period.
+              </p>
+              <p>
+                {pendingPurchase.price > 0 ? (
+                  <>
+                    You will be charged{' '}
+                    <span className="font-medium text-text">{formatRand(pendingPurchase.price)}</span> now. This is a
+                    one-off purchase, not a change to your plan.
+                  </>
+                ) : (
+                  <>This pack has no price configured. You will be charged the amount shown at checkout.</>
+                )}
+              </p>
+              <p>Purchased credits are non-refundable, and stay on the account until they are used.</p>
+            </>
+          )}
+        </ConfirmDialog>
 
         {showBillingSection && <Card>
           <CardHeader>

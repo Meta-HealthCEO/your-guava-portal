@@ -4,9 +4,11 @@ import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertCircle, ArrowRight } from 'lucide-react'
+import { AlertCircle, ArrowRight, CheckCircle } from 'lucide-react'
 import logo from '@/assets/logo.png'
 import api from '@/lib/api'
+
+const ERROR_ID = 'login-error'
 
 export default function Login() {
   const { login } = useAuth()
@@ -20,15 +22,19 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Success has its own channel. Confirming a resend through `error` rendered
+  // "your link has been sent" inside the red failure banner, which tells the
+  // user the thing they asked for went wrong.
+  const [notice, setNotice] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [needsVerification, setNeedsVerification] = useState(false)
-  const [resendStatus, setResendStatus] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const [resending, setResending] = useState(false)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
+    setNotice(null)
     setNeedsVerification(false)
-    setResendStatus('idle')
     setIsLoading(true)
 
     try {
@@ -67,15 +73,33 @@ export default function Login() {
     }
   }
 
+  // A signup whose verification email never arrived has no User document at
+  // all, so the API answers the owner's correct password with a plain 401
+  // "Invalid credentials" and no code to branch on. The resend therefore cannot
+  // wait to be offered -- it has to be reachable from the failure the owner
+  // actually sees, which is an ordinary wrong-password message.
   const resendVerification = async () => {
-    setResendStatus('sending')
+    const address = email.trim()
+    setNotice(null)
+    if (!address) {
+      setError('Enter your email address above, then ask for a new link.')
+      return
+    }
+    setError(null)
+    setResending(true)
     try {
-      await api.post('/auth/resend-verification', { email })
-      setResendStatus('sent')
-      setError('A fresh verification link has been sent if registration is still pending.')
+      await api.post('/auth/resend-verification', { email: address })
+      // Hedged deliberately: the endpoint answers the same 200 whether a pending
+      // registration exists or the mail provider refused the send.
+      setNotice(
+        `If a signup for ${address} is still waiting to be verified, a fresh verification link has been sent. It expires 24 hours after it is issued — check your spam folder if it does not arrive within a few minutes.`
+      )
     } catch {
-      setResendStatus('idle')
-      setError('Could not resend the verification email. Please try again.')
+      setError('Could not send the verification email just now. Please try again in a moment.')
+    } finally {
+      // Back to idle, not a permanent "sent" state: a second email failing to
+      // arrive is exactly the situation this control exists for.
+      setResending(false)
     }
   }
 
@@ -97,7 +121,7 @@ export default function Login() {
         {/* Left — branding */}
         <div className="hidden lg:block w-85 shrink-0">
           <img src={logo} alt="Your Guava" className="w-48 mx-auto mb-6" />
-          <p className="text-white/40 text-center leading-relaxed">
+          <p className="text-muted text-center leading-relaxed">
             Know what your customers want<br />before they walk in.
           </p>
           {/* Capability statements, not performance claims. The previous "94%
@@ -126,7 +150,7 @@ export default function Login() {
           {/* Mobile logo */}
           <div className="lg:hidden text-center mb-8">
             <img src={logo} alt="Your Guava" className="w-32 mx-auto mb-3" />
-            <p className="text-white/40 text-sm">Know what's brewing before they do.</p>
+            <p className="text-muted text-sm">Know what's brewing before they do.</p>
           </div>
 
           <div className="bg-[#111111]/60 backdrop-blur-xl border border-white/8 rounded-2xl p-8">
@@ -134,9 +158,21 @@ export default function Login() {
             <p className="text-muted text-sm mb-6">Sign in to your portal</p>
 
             {error && (
-              <div className="flex items-start gap-2.5 bg-red-900/20 border border-red-900/40 rounded-lg px-3.5 py-3 mb-5">
+              <div
+                role="alert"
+                className="flex items-start gap-2.5 bg-red-900/20 border border-red-900/40 rounded-lg px-3.5 py-3 mb-5"
+              >
                 <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <p className="text-red-400 text-sm">{error}</p>
+                <p id={ERROR_ID} className="text-red-400 text-sm">{error}</p>
+              </div>
+            )}
+            {notice && (
+              <div
+                role="status"
+                className="flex items-start gap-2.5 bg-guava-green/10 border border-guava-green/20 rounded-lg px-3.5 py-3 mb-5"
+              >
+                <CheckCircle className="w-4 h-4 text-guava-green shrink-0 mt-0.5" />
+                <p className="text-guava-green text-sm">{notice}</p>
               </div>
             )}
             {needsVerification && (
@@ -145,13 +181,9 @@ export default function Login() {
                 variant="outline"
                 className="mb-5 w-full"
                 onClick={resendVerification}
-                disabled={resendStatus !== 'idle'}
+                disabled={resending}
               >
-                {resendStatus === 'sending'
-                  ? 'Sending...'
-                  : resendStatus === 'sent'
-                    ? 'Verification email sent'
-                    : 'Resend verification email'}
+                {resending ? 'Sending...' : 'Resend verification email'}
               </Button>
             )}
 
@@ -160,12 +192,15 @@ export default function Login() {
                 <Label htmlFor="email">Email address</Label>
                 <Input
                   id="email"
+                  name="email"
                   type="email"
                   placeholder="owner@yourcafe.co.za"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="email"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? ERROR_ID : undefined}
                   autoFocus
                 />
               </div>
@@ -179,18 +214,21 @@ export default function Login() {
                 </div>
                 <Input
                   id="password"
+                  name="password"
                   type="password"
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   autoComplete="current-password"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? ERROR_ID : undefined}
                 />
               </div>
 
               <Button
                 type="submit"
-                className="w-full mt-2 bg-guava-green hover:bg-guava-green/90 text-white"
+                className="w-full mt-2 bg-guava-green-strong hover:bg-guava-green-strong/90 text-white"
                 disabled={isLoading}
               >
                 {isLoading ? (
@@ -207,7 +245,21 @@ export default function Login() {
               </Button>
             </form>
 
-            <p className="text-[#3A3A3A] text-xs text-center mt-6">
+            {!needsVerification && (
+              <p className="text-muted text-xs text-center mt-6">
+                Didn't get your verification email?{' '}
+                <button
+                  type="button"
+                  onClick={resendVerification}
+                  disabled={resending}
+                  className="text-guava-green hover:underline disabled:opacity-50"
+                >
+                  {resending ? 'Sending...' : 'Send it again'}
+                </button>
+              </p>
+            )}
+
+            <p className="text-muted text-xs text-center mt-3">
               Don't have an account?{' '}
               <Link to="/signup" className="text-guava-green hover:underline">Sign up</Link>
             </p>
@@ -218,7 +270,7 @@ export default function Login() {
 
       {/* Footer */}
       <div className="absolute bottom-6 left-0 right-0 text-center z-10">
-        <p className="text-white/15 text-xs">
+        <p className="text-muted text-xs">
           &copy; {new Date().getFullYear()} Your Guava &mdash; Cape Town, South Africa
         </p>
       </div>

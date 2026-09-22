@@ -101,3 +101,40 @@ describe('AcceptInvite', () => {
     expect(mockPost).not.toHaveBeenCalledWith('/team/invitations/accept', expect.anything())
   })
 })
+
+describe('AcceptInvite link recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockPost.mockResolvedValue({ data: {} })
+  })
+
+  // Reloading is what a user does when a page looks stuck. The fragment is
+  // already gone by then, and declaring the invitation expired pushes them to
+  // ask for a replacement — which revokes the invitation that still worked.
+  it('says the page consumed the link, not that the invitation expired', async () => {
+    window.history.replaceState(null, '', '/accept-invite')
+    renderPage()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/open the invitation link .*again|reopen the link/i)
+    expect(alert).not.toHaveTextContent(/expired/i)
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('still blames the invitation when the server rejects the token', async () => {
+    window.history.replaceState(null, '', `/accept-invite#token=${token}`)
+    mockPost.mockRejectedValue({ response: { status: 404, data: {} } })
+    renderPage()
+
+    expect(await screen.findByText(/invalid or has expired/i)).toBeInTheDocument()
+  })
+
+  it('keeps a malformed token separate from a missing one', async () => {
+    window.history.replaceState(null, '', '/accept-invite#token=short')
+    renderPage()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/invalid or has expired/i)
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+})

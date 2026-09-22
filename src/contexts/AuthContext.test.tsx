@@ -3,13 +3,21 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthProvider, AuthContext } from './AuthContext'
 import { useContext } from 'react'
-import { clearAccessToken, getAccessToken } from '@/lib/accessToken'
+import { clearAccessToken, getAccessToken, setAccessToken } from '@/lib/accessToken'
 
 // Mock the api module
 const mockGet = vi.fn()
 const mockPost = vi.fn()
+const mockRefresh = vi.fn()
 vi.mock('@/lib/api', () => {
   return {
+    refreshAccessToken: (...args: unknown[]) => mockRefresh(...args),
+    API_CONFIG_ERROR: null,
+    // Mirrors the real implementation: only a refused credential ends a session.
+    isSessionRejection: (error: unknown) => {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      return status === 401 || status === 403
+    },
     default: {
       get: (...args: unknown[]) => mockGet(...args),
       post: (...args: unknown[]) => mockPost(...args),
@@ -33,6 +41,7 @@ function TestConsumer() {
     <div>
       <div data-testid="user">{ctx.user ? ctx.user.name : 'null'}</div>
       <div data-testid="loading">{ctx.isLoading ? 'true' : 'false'}</div>
+      <div data-testid="bootstrapError">{ctx.bootstrapError ?? 'none'}</div>
       <div data-testid="isOwner">{ctx.isOwner ? 'true' : 'false'}</div>
       <button onClick={() => ctx.login('test@test.com', 'pass')}>Login</button>
       <button onClick={() => ctx.logout()}>Logout</button>
@@ -46,7 +55,81 @@ describe('AuthContext', () => {
     vi.clearAllMocks()
     localStorage.clear()
     clearAccessToken()
-    mockGet.mockRejectedValue(new Error('No refresh session'))
+    // What "no session" actually looks like on the wire: the server refuses the
+    // refresh cookie with a 401. It is deliberately not a bare Error — the app
+    // now distinguishes a refused credential from a failed connection, and only
+    // the former means signed out.
+    const noSession = { response: { status: 401 } }
+    mockGet.mockRejectedValue(noSession)
+    mockRefresh.mockRejectedValue(noSession)
+  })
+
+  describe('cold-load bootstrap', () => {
+    // The access token lives only in module memory, so a hard reload starts with
+    // none. Calling /auth/me first meant every cold load spent a round trip on a
+    // guaranteed 401 before the interceptor could refresh -- and logged a red
+    // error in the console every time. Refreshing first is the same number of
+    // requests when there IS a session and one fewer when the page is reloaded.
+    it('exchanges the refresh cookie before asking who the user is', async () => {
+      const order: string[] = []
+      mockRefresh.mockImplementation(async () => { order.push('refresh'); return 'new-token' })
+      mockGet.mockImplementation(async (url: string) => {
+        order.push(`get ${url}`)
+        return { data: { id: 'u1', name: 'Thandi', email: 't@x.co', role: 'owner' } }
+      })
+
+      render(<AuthProvider><TestConsumer /></AuthProvider>)
+
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+      expect(order).toEqual(['refresh', 'get /auth/me'])
+      expect(screen.getByTestId('user')).toHaveTextContent('Thandi')
+    })
+
+    it('does not call /auth/me at all when there is no session to restore', async () => {
+      mockRefresh.mockRejectedValue({ response: { status: 401 } })
+
+      render(<AuthProvider><TestConsumer /></AuthProvider>)
+
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+      expect(mockGet).not.toHaveBeenCalled()
+      expect(screen.getByTestId('user')).toHaveTextContent('null')
+    })
+
+    it('reports an unreachable API rather than treating it as a signed-out session', async () => {
+      // A dropped connection is not a signed-out session. Sending the owner to
+      // /login made them retype a password that was never wrong, and spend
+      // attempts against the login rate limit doing it. The flag is published
+      // here; ProtectedRoute turns it into the connectivity screen, because only
+      // it knows whether the page being asked for actually needs a session.
+      mockRefresh.mockRejectedValue(Object.assign(new Error('Network Error'), { code: 'ERR_NETWORK' }))
+
+      render(<AuthProvider><TestConsumer /></AuthProvider>)
+
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+      expect(screen.getByTestId('bootstrapError')).toHaveTextContent('unreachable')
+      expect(screen.getByTestId('user')).toHaveTextContent('null')
+    })
+
+    it('treats a rejected credential as signed out, not as an outage', async () => {
+      mockRefresh.mockRejectedValue({ response: { status: 401 } })
+
+      render(<AuthProvider><TestConsumer /></AuthProvider>)
+
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+      expect(screen.getByTestId('bootstrapError')).toHaveTextContent('none')
+      expect(screen.getByTestId('user')).toHaveTextContent('null')
+    })
+
+    it('skips the refresh when an access token is already in memory', async () => {
+      setAccessToken('still-valid')
+      mockGet.mockResolvedValue({ data: { id: 'u1', name: 'Thandi', email: 't@x.co', role: 'owner' } })
+
+      render(<AuthProvider><TestConsumer /></AuthProvider>)
+
+      await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+      expect(mockRefresh).not.toHaveBeenCalled()
+      expect(mockGet).toHaveBeenCalledWith('/auth/me')
+    })
   })
 
   it('provides user as null initially when no token', async () => {

@@ -30,7 +30,13 @@ vi.mock('@/lib/api', () => {
   }
 })
 
-function renderWithAuth(ui: ReactNode, { role = 'owner' }: { role?: 'owner' | 'manager' } = {}) {
+function renderWithAuth(
+  ui: ReactNode,
+  {
+    role = 'owner',
+    logout = vi.fn().mockResolvedValue(undefined),
+  }: { role?: 'owner' | 'manager'; logout?: () => Promise<void> } = {}
+) {
   const user = {
     id: 'user123',
     email: 'test@yourguava.com',
@@ -49,7 +55,7 @@ function renderWithAuth(ui: ReactNode, { role = 'owner' }: { role?: 'owner' | 'm
           isLoading: false,
           isOwner: role === 'owner',
           login: vi.fn(),
-          logout: vi.fn(),
+          logout,
           register: vi.fn(),
           switchCafe: vi.fn(),
         }}
@@ -387,5 +393,284 @@ describe('Team', () => {
     })
     expect(confirmSpy).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+
+  // ── Load failure ────────────────────────────────────────────────────────────
+
+  it('does not claim the organisation is empty when the fetch failed', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/team') || url.includes('/cafe/list')) return Promise.reject(new Error('network down'))
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    expect(await screen.findByText(/team data could not be loaded/i)).toBeInTheDocument()
+    // An owner with three managers must never be told they have none.
+    expect(screen.queryByText(/no team members yet/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/no locations yet/i)).not.toBeInTheDocument()
+  })
+
+  it('offers a persistent retry after a failed load', async () => {
+    let shouldFail = true
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/cafe/list')) {
+        return shouldFail
+          ? Promise.reject(new Error('network down'))
+          : Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Blouberg Coffee' }] } })
+      }
+      if (url.includes('/team')) {
+        return shouldFail
+          ? Promise.reject(new Error('network down'))
+          : Promise.resolve({
+              data: {
+                success: true,
+                members: [
+                  { _id: 'u1', name: 'Alice Owner', email: 'a@test.com', role: 'owner', cafeIds: [], createdAt: '2025-01-01' },
+                ],
+              },
+            })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    const retry = await screen.findByRole('button', { name: /try again/i })
+    shouldFail = false
+    await userEvent.click(retry)
+
+    expect(await screen.findByText('Alice Owner')).toBeInTheDocument()
+  })
+
+  // ── Location allowance ──────────────────────────────────────────────────────
+
+  function mockWithAccount(locations: { used: number; included: number }, cafes: { _id: string; name: string }[]) {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
+      if (url.includes('/cafe/list')) return Promise.resolve({ data: { success: true, cafes } })
+      if (url.includes('/account')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            account: {
+              organization: { plan: 'starter' },
+              usage: { locations, seats: { used: 1, included: 2 } },
+            },
+          },
+        })
+      }
+      if (url.includes('/team')) {
+        return Promise.resolve({
+          data: { success: true, members: [], seats: { plan: 'starter', used: 1, included: 2, remaining: 1 } },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+  }
+
+  it('shows the location allowance the way it shows seats', async () => {
+    mockWithAccount({ used: 1, included: 3 }, [{ _id: 'c1', name: 'Blouberg Coffee' }])
+
+    renderWithAuth(<Team />)
+
+    // Not a bare count: the tile has to say what is left, like the Seats tile.
+    expect(await screen.findByText('1/3')).toBeInTheDocument()
+    expect(screen.getByText(/2 available on starter/i)).toBeInTheDocument()
+  })
+
+  it('disables Add location when the plan allowance is exhausted', async () => {
+    mockWithAccount({ used: 2, included: 2 }, [
+      { _id: 'c1', name: 'Blouberg Coffee' },
+      { _id: 'c2', name: 'Sea Point Brew' },
+    ])
+
+    renderWithAuth(<Team />)
+
+    // Both entry points: the toolbar button and the "+" on the Locations card.
+    await waitFor(() => {
+      const addButtons = screen.getAllByRole('button', { name: /^add location$/i })
+      expect(addButtons.length).toBeGreaterThan(0)
+      addButtons.forEach((button) => expect(button).toBeDisabled())
+    })
+    expect(screen.getByText(/starter plan is full/i)).toBeInTheDocument()
+  })
+
+  it('warns that a new location is permanent and metered before it is created', async () => {
+    mockWithAccount({ used: 1, included: 2 }, [{ _id: 'c1', name: 'Blouberg Coffee' }])
+
+    renderWithAuth(<Team />)
+    await userEvent.click((await screen.findAllByRole('button', { name: /^add location$/i }))[0])
+
+    const dialog = await screen.findByRole('dialog', { name: /add location/i })
+    expect(within(dialog).getByText(/1 of your 2/i)).toBeInTheDocument()
+    // There is no cafe-delete route anywhere in the backend.
+    expect(within(dialog).getByText(/cannot be removed from the portal/i)).toBeInTheDocument()
+  })
+
+  // ── Dialog behaviour ────────────────────────────────────────────────────────
+
+  it('traps focus in a destructive dialog and restores it on Escape', async () => {
+    const user = userEvent.setup()
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            members: [
+              { _id: 'u2', name: 'Bob Manager', email: 'bob@test.com', role: 'manager', cafeIds: [], createdAt: '2025-02-01' },
+            ],
+          },
+        })
+      }
+      if (url.includes('/cafe/list')) return Promise.resolve({ data: { success: true, cafes: [] } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    const trigger = await screen.findByRole('button', { name: /remove bob manager/i })
+    trigger.focus()
+    await user.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', { name: /remove team member/i })
+    // Focus must be inside the dialog, not left on the obscured trigger.
+    await waitFor(() => {
+      expect(dialog.contains(document.activeElement)).toBe(true)
+    })
+
+    // Escape is the reflexive way out of a confirmation opened by mistake.
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /remove team member/i })).not.toBeInTheDocument()
+    })
+    expect(document.activeElement).toBe(trigger)
+    expect(mockDelete).not.toHaveBeenCalled()
+  })
+
+  it('groups the cafe checkboxes under their visible heading', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) return Promise.resolve({ data: { success: true, members: [] } })
+      if (url.includes('/cafe/list')) {
+        return Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Blouberg Coffee' }] } })
+      }
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+    await userEvent.click((await screen.findAllByRole('button', { name: /^add member$/i }))[0])
+
+    // Otherwise a screen reader reads bare cafe names with no hint that these
+    // are the access-control decision the dialog exists to make.
+    expect(screen.getByRole('group', { name: /assigned cafes/i })).toBeInTheDocument()
+  })
+
+  it('confirms before discarding a part-filled invite', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) return Promise.resolve({ data: { success: true, members: [] } })
+      if (url.includes('/cafe/list')) {
+        return Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Blouberg Coffee' }] } })
+      }
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+    await userEvent.click((await screen.findAllByRole('button', { name: /^add member$/i }))[0])
+    await userEvent.type(screen.getByPlaceholderText('Team member name'), 'Half typed')
+    await userEvent.click(screen.getByRole('button', { name: /close add team member/i }))
+
+    expect(confirmSpy).toHaveBeenCalled()
+    // Declined: the work must still be there.
+    expect(screen.getByDisplayValue('Half typed')).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  // ── Ownership transfer ──────────────────────────────────────────────────────
+
+  it('does not report a committed ownership transfer as failed when sign-out fails', async () => {
+    const logout = vi.fn().mockRejectedValue(new Error('revocation endpoint down'))
+    const assign = vi.fn()
+    const originalLocation = window.location
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, assign },
+    })
+
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            members: [
+              { _id: 'u2', name: 'Bob Manager', email: 'bob@test.com', role: 'manager', cafeIds: [], createdAt: '2025-02-01' },
+            ],
+          },
+        })
+      }
+      if (url.includes('/cafe/list')) return Promise.resolve({ data: { success: true, cafes: [] } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.resolve({ data: {} })
+    })
+    mockPost.mockResolvedValue({ data: { success: true } })
+
+    renderWithAuth(<Team />, { logout })
+
+    await userEvent.click(await screen.findByRole('button', { name: /transfer ownership to bob manager/i }))
+    await userEvent.type(screen.getByLabelText(/confirm your current password/i), 'password123')
+    await userEvent.click(screen.getByRole('button', { name: /^transfer ownership$/i }))
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/team/transfer-ownership', {
+        userId: 'u2',
+        currentPassword: 'password123',
+      })
+    })
+    // Ownership has already moved. Telling the former owner it failed invites a
+    // retry with a password that no longer belongs to an owner.
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('/login')
+    })
+    expect(screen.queryByText(/failed to transfer ownership/i)).not.toBeInTheDocument()
+
+    Object.defineProperty(window, 'location', { configurable: true, value: originalLocation })
+  })
+
+  // ── Invitations ─────────────────────────────────────────────────────────────
+
+  it('shows when a pending invitation expires', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({
+          data: {
+            success: true,
+            members: [],
+            invitations: [{
+              _id: 'invite1',
+              name: 'Pending Manager',
+              email: 'pending@example.com',
+              cafeIds: [],
+              expiresAt: '2026-08-01T12:00:00.000Z',
+              createdAt: '2026-07-30T12:00:00.000Z',
+              status: 'pending',
+            }],
+            seats: { plan: 'starter', used: 2, active: 1, pending: 1, included: 2, remaining: 0 },
+          },
+        })
+      }
+      if (url.includes('/cafe/list')) return Promise.resolve({ data: { success: true, cafes: [] } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    // With the last seat blocked, "expires when?" is the whole wait-or-revoke decision.
+    expect(await screen.findByText(/expires 0?1 aug/i)).toBeInTheDocument()
   })
 })

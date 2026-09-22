@@ -1,5 +1,6 @@
-import { lazy, Suspense, type ReactNode } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Routes, Route, Navigate, useLocation, useNavigationType } from 'react-router'
+import { RouteFocusContext } from '@/components/layout/AppLayout'
 import { useAuth } from '@/hooks/useAuth'
 import { WORKFORCE_ENABLED } from '@/lib/features'
 
@@ -44,7 +45,7 @@ function RouteFallback() {
 }
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { user, isLoading } = useAuth()
+  const { user, isLoading, bootstrapError } = useAuth()
   const location = useLocation()
 
   if (isLoading) {
@@ -53,6 +54,32 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-2 border-guava-red/30 border-t-guava-red rounded-full animate-spin" />
           <p className="text-muted text-sm">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // The session could not be checked because nothing answered — not because the
+  // visitor is signed out. Sending them to /login told a signed-in owner on bad
+  // mobile data that they were logged out, so they retyped a password that was
+  // never wrong and spent attempts against the login rate limit doing it. Their
+  // refresh cookie is good for another seven days.
+  if (!user && bootstrapError === 'unreachable') {
+    return (
+      <div className='min-h-screen bg-bg flex items-center justify-center px-6' role='alert'>
+        <div className='w-full max-w-md rounded-xl border border-border bg-surface p-6 text-center'>
+          <h1 className='text-lg font-semibold text-text'>Can't reach Your Guava</h1>
+          <p className='mt-2 text-sm text-muted'>
+            Your sign-in is still valid. The app just could not get an answer from the server.
+            Check your connection and try again.
+          </p>
+          <button
+            type='button'
+            onClick={() => window.location.reload()}
+            className='mt-5 inline-flex h-10 items-center justify-center rounded-lg bg-guava-green-strong px-4 text-sm font-medium text-white hover:bg-guava-green-strong/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-guava-green'
+          >
+            Try again
+          </button>
         </div>
       </div>
     )
@@ -69,8 +96,45 @@ function ProtectedPage({ children }: { children: ReactNode }) {
   return <ProtectedRoute>{children}</ProtectedRoute>
 }
 
+/**
+ * Owns the two things a route change owes a screen-reader or keyboard user:
+ * a focus move into the new page's main region, and a polite announcement of
+ * its title. It lives above <Routes> so it survives every navigation - the live
+ * region has to be in the DOM before its text changes to be announced at all.
+ */
+export function RouteFocusProvider({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  const navigationType = useNavigationType()
+  const previousPathname = useRef(location.pathname)
+  const [shouldFocusMain, setShouldFocusMain] = useState(false)
+  const [announcement, setAnnouncement] = useState('')
+
+  useEffect(() => {
+    if (previousPathname.current === location.pathname) return
+    previousPathname.current = location.pathname
+    // A `<Navigate replace>` off the entry URL ("/" -> "/today", or the catch-all
+    // route) is still the first paint: there was nothing on screen to move focus
+    // away from, so leave the landing position alone.
+    if (navigationType === 'REPLACE' && !shouldFocusMain) return
+    setShouldFocusMain(true)
+  }, [location.pathname, navigationType, shouldFocusMain])
+
+  const announcePage = useCallback((title: string) => setAnnouncement(title), [])
+  const value = useMemo(() => ({ shouldFocusMain, announcePage }), [shouldFocusMain, announcePage])
+
+  return (
+    <RouteFocusContext.Provider value={value}>
+      {children}
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </p>
+    </RouteFocusContext.Provider>
+  )
+}
+
 export default function App() {
   return (
+    <RouteFocusProvider>
     <Suspense fallback={<RouteFallback />}>
       <Routes>
       <Route path="/login" element={<Login />} />
@@ -123,5 +187,6 @@ export default function App() {
       <Route path="*" element={<Navigate to="/today" replace />} />
       </Routes>
     </Suspense>
+    </RouteFocusProvider>
   )
 }

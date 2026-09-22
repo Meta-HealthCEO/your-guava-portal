@@ -1,9 +1,9 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { AuthContext } from '@/contexts/AuthContext'
 import { Sidebar } from './Sidebar'
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 
 vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
@@ -13,7 +13,7 @@ vi.mock('@/lib/api', () => ({
   },
 }))
 
-function renderSidebar(path: string) {
+function renderSidebar(path: string, props: ComponentProps<typeof Sidebar> = {}) {
   const user = {
     id: 'user123',
     email: 'test@yourguava.com',
@@ -42,7 +42,21 @@ function renderSidebar(path: string) {
     </MemoryRouter>
   )
 
-  return render(<Sidebar />, { wrapper })
+  return render(<Sidebar {...props} />, { wrapper })
+}
+
+// jsdom has no matchMedia; pretend the viewport is, or is not, at the xl breakpoint.
+function stubMatchMedia(matches: boolean) {
+  vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })))
 }
 
 function expectActive(label: string) {
@@ -56,6 +70,10 @@ function expectInactive(label: string) {
 describe('Sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('does not highlight Planning when Forecast Factors is selected', () => {
@@ -100,5 +118,59 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('link', { name: 'Staff' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Roster' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Leave' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the closed drawer out of the tab order and accessibility tree below xl', () => {
+    stubMatchMedia(false)
+
+    const { container } = renderSidebar('/today', { isOpen: false })
+
+    const drawer = container.querySelector('nav')
+    expect(drawer).toHaveAttribute('inert')
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('exposes the drawer again once it is opened below xl', () => {
+    stubMatchMedia(false)
+
+    const { container } = renderSidebar('/today', { isOpen: true })
+
+    const drawer = container.querySelector('nav')
+    expect(drawer).not.toHaveAttribute('inert')
+    expect(drawer).not.toHaveAttribute('aria-hidden')
+    expect(screen.getByRole('link', { name: 'Today' })).toBeInTheDocument()
+  })
+
+  it('is a single navigation landmark with an accessible name', () => {
+    renderSidebar('/today')
+
+    expect(screen.getAllByRole('navigation')).toHaveLength(1)
+    expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument()
+  })
+
+  it('moves focus into the drawer when it opens below xl', () => {
+    stubMatchMedia(false)
+
+    renderSidebar('/today', { isOpen: true })
+
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveFocus()
+  })
+
+  it('does not grab focus for the always-visible sidebar at xl and above', () => {
+    stubMatchMedia(true)
+
+    renderSidebar('/today', { isOpen: true })
+
+    expect(document.body).toHaveFocus()
+  })
+
+  it('never hides the always-visible sidebar at xl and above', () => {
+    stubMatchMedia(true)
+
+    const { container } = renderSidebar('/today', { isOpen: false })
+
+    expect(container.querySelector('nav')).not.toHaveAttribute('inert')
+    expect(container.querySelector('nav')).not.toHaveAttribute('aria-hidden')
+    expect(screen.getByRole('link', { name: 'Today' })).toBeInTheDocument()
   })
 })

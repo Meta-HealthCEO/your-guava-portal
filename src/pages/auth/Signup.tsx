@@ -8,6 +8,17 @@ import { AlertCircle, ArrowRight, CheckCircle, Mail } from 'lucide-react'
 import api from '@/lib/api'
 import logo from '@/assets/logo.png'
 
+// bcrypt truncates at 72 bytes, so the backend rejects anything longer rather
+// than silently ignoring the tail. A generated passphrase can cross that line,
+// and the rule has to be visible while the password is being chosen.
+const MAX_PASSWORD_BYTES = 72
+const MIN_PASSWORD_LENGTH = 8
+const PASSWORD_HELP_ID = 'signup-password-help'
+const ERROR_ID = 'signup-error'
+const SUPPORT_EMAIL = 'support@yourguava.co.za'
+
+const passwordBytes = (value: string) => new TextEncoder().encode(value).length
+
 type RegistrationErrorPayload = {
   code?: string
   email?: string
@@ -55,6 +66,14 @@ export default function Signup() {
     setError(null)
     if (password !== confirmPassword) {
       setError('Passwords do not match.')
+      return
+    }
+    // Checked here rather than after a round trip: six filled-in fields is the
+    // wrong moment to learn about a limit that was never stated.
+    if (passwordBytes(password) > MAX_PASSWORD_BYTES) {
+      setError(
+        `Your password is longer than the ${MAX_PASSWORD_BYTES}-byte limit (roughly ${MAX_PASSWORD_BYTES} characters). Shorten it and try again.`
+      )
       return
     }
     setIsLoading(true)
@@ -113,16 +132,34 @@ export default function Signup() {
           <p className="mt-2 text-sm text-muted">
             Verification email: <span className="font-medium text-text">{pendingEmail}</span>
           </p>
+          {/* The 24-hour window and the spam folder are the two things an owner
+              needs when the link is slow, and neither was stated anywhere. */}
+          <p className="mt-4 text-xs leading-5 text-muted">
+            The link works for 24 hours. If it hasn't arrived in a few minutes, check your
+            spam or promotions folder before asking for another one.
+          </p>
           {resent && (
-            <div className="mt-5 flex items-center justify-center gap-2 text-sm text-guava-green" role="status">
-              <CheckCircle className="h-4 w-4" />
-              A fresh link has been sent.
+            <div className="mt-5 flex items-start justify-center gap-2 text-left text-sm text-guava-green" role="status">
+              <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              {/* Hedged on purpose: resendVerification answers the same 200 when
+                  the mail provider refused the send and the token was rolled back. */}
+              <span>If your registration is still pending, a fresh link is on its way.</span>
             </div>
           )}
           {error && <p className="mt-5 text-sm text-red-400" role="alert">{error}</p>}
           <Button className="mt-6 w-full" variant="outline" onClick={resendVerification} disabled={resending}>
             {resending ? 'Sending...' : 'Resend verification email'}
           </Button>
+          <p className="mt-5 text-xs text-muted">
+            Still nothing after two tries? Email{' '}
+            <a
+              className="text-guava-green hover:underline"
+              href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Verification email not arriving')}`}
+            >
+              {SUPPORT_EMAIL}
+            </a>{' '}
+            and we'll verify the account for you.
+          </p>
           <Link className="mt-5 inline-block text-sm text-guava-green hover:underline" to="/login">
             Back to sign in
           </Link>
@@ -149,7 +186,7 @@ export default function Signup() {
         {/* Left — branding */}
         <div className="hidden lg:block w-85 shrink-0">
           <img src={logo} alt="Your Guava" className="w-48 mx-auto mb-6" />
-          <p className="text-white/40 text-center leading-relaxed">
+          <p className="text-muted text-center leading-relaxed">
             Know what your customers want<br />before they walk in.
           </p>
           {/* Capability statements, not performance claims. The previous "94%
@@ -178,7 +215,7 @@ export default function Signup() {
           {/* Mobile logo */}
           <div className="lg:hidden text-center mb-8">
             <img src={logo} alt="Your Guava" className="w-32 mx-auto mb-3" />
-            <p className="text-white/40 text-sm">Know what's brewing before they do.</p>
+            <p className="text-muted text-sm">Know what's brewing before they do.</p>
           </div>
 
           <div className="bg-[#111111]/60 backdrop-blur-xl border border-white/8 rounded-2xl p-8">
@@ -186,9 +223,12 @@ export default function Signup() {
             <p className="text-muted text-sm mb-6">Create your portal account</p>
 
             {error && (
-              <div className="flex items-start gap-2.5 bg-red-900/20 border border-red-900/40 rounded-lg px-3.5 py-3 mb-5">
+              <div
+                role="alert"
+                className="flex items-start gap-2.5 bg-red-900/20 border border-red-900/40 rounded-lg px-3.5 py-3 mb-5"
+              >
                 <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <p className="text-red-400 text-sm">{error}</p>
+                <p id={ERROR_ID} className="text-red-400 text-sm">{error}</p>
               </div>
             )}
 
@@ -197,11 +237,14 @@ export default function Signup() {
                 <Label htmlFor="name">Full name</Label>
                 <Input
                   id="name"
+                  name="name"
                   type="text"
                   placeholder="Jane Smith"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
+                  minLength={2}
+                  maxLength={120}
                   autoComplete="name"
                   autoFocus
                 />
@@ -211,12 +254,15 @@ export default function Signup() {
                 <Label htmlFor="email">Email address</Label>
                 <Input
                   id="email"
+                  name="email"
                   type="email"
                   placeholder="owner@yourcafe.co.za"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoComplete="email"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? ERROR_ID : undefined}
                 />
               </div>
 
@@ -224,26 +270,36 @@ export default function Signup() {
                 <Label htmlFor="password">Password</Label>
                 <Input
                   id="password"
+                  name="password"
                   type="password"
-                  placeholder="At least 8 characters"
+                  placeholder="Choose a password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={8}
+                  minLength={MIN_PASSWORD_LENGTH}
                   autoComplete="new-password"
+                  aria-describedby={PASSWORD_HELP_ID}
                 />
+                {/* Persistent, not a placeholder: the rule has to survive the
+                    first keystroke, and the byte ceiling was previously only
+                    ever stated by a rejection. */}
+                <p id={PASSWORD_HELP_ID} className="text-muted text-xs">
+                  At least {MIN_PASSWORD_LENGTH} characters, up to {MAX_PASSWORD_BYTES} bytes
+                  (about {MAX_PASSWORD_BYTES} characters).
+                </p>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="confirm-password">Confirm password</Label>
                 <Input
                   id="confirm-password"
+                  name="confirm-password"
                   type="password"
                   placeholder="Repeat your password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
-                  minLength={8}
+                  minLength={MIN_PASSWORD_LENGTH}
                   autoComplete="new-password"
                 />
               </div>
@@ -252,30 +308,44 @@ export default function Signup() {
                 <Label htmlFor="cafeName">Cafe name</Label>
                 <Input
                   id="cafeName"
+                  name="cafeName"
                   type="text"
                   placeholder="The Daily Grind"
                   value={cafeName}
                   onChange={(e) => setCafeName(e.target.value)}
                   required
+                  minLength={2}
+                  maxLength={120}
                   autoComplete="organization"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="orgName">Organization name</Label>
+                {/* "Organization" is an internal tenancy concept (Organization →
+                    Cafe → User) that a single-cafe owner has no model for, and
+                    it sat as the last field before submit with a developer's
+                    placeholder. Named and explained for what it is actually for. */}
+                <Label htmlFor="orgName">Business or group name (optional)</Label>
                 <Input
                   id="orgName"
+                  name="orgName"
                   type="text"
-                  placeholder="Auto-generated if empty"
+                  placeholder="Only if you run more than one cafe"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
+                  minLength={2}
+                  maxLength={120}
                   autoComplete="off"
+                  aria-describedby="signup-org-help"
                 />
+                <p id="signup-org-help" className="text-muted text-xs">
+                  Leave this blank and we'll use your cafe name.
+                </p>
               </div>
 
               <Button
                 type="submit"
-                className="w-full mt-2 bg-guava-green hover:bg-guava-green/90 text-white"
+                className="w-full mt-2 bg-guava-green-strong hover:bg-guava-green-strong/90 text-white"
                 disabled={isLoading}
               >
                 {isLoading ? (
@@ -292,7 +362,7 @@ export default function Signup() {
               </Button>
             </form>
 
-            <p className="text-[#3A3A3A] text-xs text-center mt-6">
+            <p className="text-muted text-xs text-center mt-6">
               Already have an account?{' '}
               <Link to="/login" className="text-guava-green hover:underline">Sign in</Link>
             </p>
@@ -302,7 +372,7 @@ export default function Signup() {
 
       {/* Footer */}
       <div className="absolute bottom-6 left-0 right-0 text-center z-10">
-        <p className="text-white/15 text-xs">
+        <p className="text-muted text-xs">
           &copy; {new Date().getFullYear()} Your Guava &mdash; Cape Town, South Africa
         </p>
       </div>

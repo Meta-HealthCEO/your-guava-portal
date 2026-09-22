@@ -248,7 +248,8 @@ describe('UploadDetail', () => {
 
     await screen.findByText('export.csv')
     fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
-    fireEvent.click(screen.getByRole('button', { name: /confirm and import/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choose columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /re-import with these columns/i }))
 
     await waitFor(() => expect(confirmSpy).toHaveBeenCalledWith(
       expect.stringMatching(/7 of 10 rows could not be imported/i)
@@ -284,11 +285,184 @@ describe('UploadDetail', () => {
 
     await screen.findByText('export.csv')
     fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
-    fireEvent.click(screen.getByRole('button', { name: /confirm and import/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choose columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /re-import with these columns/i }))
 
     expect(await screen.findByText(/fix the mapping or explicitly allow a partial import/i)).toBeInTheDocument()
     expect(apiMock.patch).toHaveBeenCalledTimes(1)
 
     confirmSpy.mockRestore()
+  })
+
+  it('explains a missing original file instead of linking back to this page', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+      }
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'export.csv',
+            status: 'completed',
+            stats: { imported: 4, skipped: 0, errors: 0, totalRows: 4 },
+            posType: 'yoco',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+            itemsMode: 'packed',
+          },
+          downloadUrl: '',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    await screen.findByText('export.csv')
+    fireEvent.click(screen.getByRole('button', { name: /original file/i }))
+
+    expect(screen.getByText(/not available to download/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /download export\.csv/i })).not.toBeInTheDocument()
+  })
+
+  it('does not offer re-mapping for an upload that never finished its first mapping', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+      }
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'abandoned.csv',
+            status: 'pending_mapping',
+            stats: { imported: 0, skipped: 0, errors: 0, totalRows: 0 },
+            posType: 'wizard',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            columnMapping: {},
+            itemsMode: 'packed',
+          },
+          downloadUrl: 'https://test.r2.local/foo',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    await screen.findByText('abandoned.csv')
+    expect(screen.queryByRole('button', { name: /re-map columns/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/never finished/i)).toBeInTheDocument()
+  })
+
+  it('states what a re-map destroys before opening the mapping form', async () => {
+    mockUploadDetail()
+    renderUploadDetail()
+
+    await screen.findByText('export.csv')
+    fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
+
+    const dialog = screen.getByRole('dialog', { name: /re-import this file with different columns/i })
+    expect(dialog).toHaveTextContent(/deletes the 4 transactions/i)
+    expect(screen.queryByRole('button', { name: /re-import with these columns/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /choose columns/i }))
+    expect(screen.getByText(/replaces the 4 transactions/i)).toBeInTheDocument()
+    expect(screen.queryByText(/couldn't auto-detect/i)).not.toBeInTheDocument()
+  })
+
+  it('cannot re-submit the same wrong mapping when the file headers were never stored', async () => {
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+      }
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'legacy.csv',
+            status: 'completed',
+            stats: { imported: 9, skipped: 0, errors: 0, totalRows: 9 },
+            posType: 'wizard',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            // Mongoose materialises an unset `headers` array as [], which is
+            // truthy — the old `||` fallback therefore never ran.
+            headers: [],
+            columnMapping: { date: 'Date', items: 'Items', total: 'Tip' },
+            itemsMode: 'packed',
+          },
+          downloadUrl: 'https://test.r2.local/foo',
+        },
+      })
+    })
+
+    renderUploadDetail()
+
+    await screen.findByText('legacy.csv')
+    fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choose columns/i }))
+
+    expect(screen.getByText(/no longer stored/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /re-import with these columns/i })).toBeDisabled()
+  })
+
+  it('refreshes the upload in place after a successful re-map', async () => {
+    let detailCalls = 0
+    apiMock.get.mockImplementation((url: string) => {
+      if (url.endsWith('/rows')) {
+        return Promise.resolve({ data: { transactions: [], pagination: { total: 0, page: 1, limit: 50, pages: 1 } } })
+      }
+      detailCalls += 1
+      return Promise.resolve({
+        data: {
+          upload: {
+            _id: 'u1',
+            fileName: 'export.csv',
+            status: 'completed',
+            stats: detailCalls === 1
+              ? { imported: 4, skipped: 0, errors: 0, totalRows: 4 }
+              : { imported: 41, skipped: 0, errors: 0, totalRows: 41 },
+            posType: 'yoco',
+            createdAt: new Date().toISOString(),
+            uploadedBy: { name: 'Shaun', email: 's@x.za' },
+            headers: ['Date', 'Items', 'Total'],
+            columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
+            itemsMode: 'packed',
+          },
+          downloadUrl: 'https://test.r2.local/foo',
+        },
+      })
+    })
+    apiMock.patch.mockResolvedValue({ data: { success: true } })
+
+    renderUploadDetail()
+
+    await screen.findByText('export.csv')
+    fireEvent.click(screen.getByRole('button', { name: /re-map columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /choose columns/i }))
+    fireEvent.click(screen.getByRole('button', { name: /re-import with these columns/i }))
+
+    await waitFor(() => expect(screen.getAllByText('41').length).toBeGreaterThan(0))
+    expect(detailCalls).toBe(2)
+  })
+
+  it('closes the delete dialog on Escape and gives focus back to the trigger', async () => {
+    mockUploadDetail()
+    renderUploadDetail()
+
+    await screen.findByText('export.csv')
+    const trigger = screen.getByRole('button', { name: /delete this upload/i })
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = screen.getByRole('dialog', { name: /delete upload/i })
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(document.activeElement).toBe(trigger)
   })
 })

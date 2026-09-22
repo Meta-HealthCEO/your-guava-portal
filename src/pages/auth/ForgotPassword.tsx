@@ -7,6 +7,29 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import logo from '@/assets/logo.png'
 
+const SUPPORT_EMAIL = 'support@yourguava.co.za'
+// authLimiter is 30 requests per 15 minutes per IP, and it is shared with login,
+// register, verify and resend — so a locked-out owner who has already retried a
+// few sign-ins can arrive here already throttled.
+const THROTTLED_MESSAGE =
+  'Too many attempts from this connection. Wait 15 minutes before asking for another link — retrying now will keep failing.'
+const UNREACHABLE_MESSAGE =
+  'The request could not be sent. Check your connection and try again.'
+
+type RequestFailure = {
+  response?: { status?: number; data?: { message?: unknown } }
+}
+
+function forgotErrorMessage(error: unknown): string {
+  const failure = (error ?? {}) as RequestFailure
+  const response = failure.response
+  if (!response) return UNREACHABLE_MESSAGE
+  const message = response.data?.message
+  if (typeof message === 'string' && message.trim()) return message
+  if (response.status === 429) return THROTTLED_MESSAGE
+  return UNREACHABLE_MESSAGE
+}
+
 export default function ForgotPassword() {
   const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -20,8 +43,8 @@ export default function ForgotPassword() {
     try {
       await api.post('/auth/forgot-password', { email })
       setSent(true)
-    } catch {
-      setError('Could not submit the request. Please try again.')
+    } catch (requestError: unknown) {
+      setError(forgotErrorMessage(requestError))
     } finally {
       setSubmitting(false)
     }
@@ -38,13 +61,35 @@ export default function ForgotPassword() {
 
         {sent ? (
           <div className="mt-6">
-            <div className="flex items-start gap-3 rounded-lg border border-guava-green/20 bg-guava-green/10 p-4 text-sm text-guava-green" role="status">
-              <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              Check your inbox for a password reset link.
+            {/* The link's lifetime and single-use nature were never stated, so a
+                user whose email was slow had nothing to judge waiting against —
+                and asking again silently revokes the link that may still land. */}
+            <div className="rounded-lg border border-guava-green/20 bg-guava-green/10 p-4 text-sm text-guava-green" role="status">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="space-y-2">
+                  <p>Check your inbox for a password reset link.</p>
+                  <p className="text-muted">
+                    The link works once and expires after 1 hour. If it hasn’t arrived in a few
+                    minutes, check your spam or promotions folder — asking for a new link cancels
+                    the first one.
+                  </p>
+                </div>
+              </div>
             </div>
             <Button type="button" variant="outline" className="mt-4 w-full" onClick={() => setSent(false)}>
               Send another link
             </Button>
+            <p className="mt-4 text-xs text-muted">
+              Nothing after two tries? Email{' '}
+              <a
+                className="text-guava-green hover:underline"
+                href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Password reset email not arriving')}`}
+              >
+                {SUPPORT_EMAIL}
+              </a>
+              .
+            </p>
           </div>
         ) : (
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -52,15 +97,22 @@ export default function ForgotPassword() {
               <Label htmlFor="reset-email">Email address</Label>
               <Input
                 id="reset-email"
+                name="email"
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="email"
                 required
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'forgot-password-error' : undefined}
                 autoFocus
               />
             </div>
-            {error && <p className="text-sm text-red-400" role="alert">{error}</p>}
+            {error && (
+              <p id="forgot-password-error" className="text-sm text-red-400" role="alert">
+                {error}
+              </p>
+            )}
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? 'Sending...' : 'Send reset link'}
             </Button>

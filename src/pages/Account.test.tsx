@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { BrowserRouter } from 'react-router'
 import { AuthContext } from '@/contexts/AuthContext'
 import userEvent from '@testing-library/user-event'
@@ -281,10 +281,219 @@ describe('Account', () => {
     expect(mockGet).toHaveBeenCalledWith('/account/payments/pay-123')
   })
 
+  // ── Checkout-return statuses ────────────────────────────────────────────────
+  // PaymentSession.status is an enum of five values. Reporting anything other
+  // than 'failed'/'cancelled' as a failure invites a second card charge.
+
+  function mockPaymentStatus(status: string, reference = 'pay-1') {
+    window.history.pushState({}, '', `/account?payment=${status}&reference=${reference}`)
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes(`/account/payments/${reference}`)) {
+        return Promise.resolve({ data: { success: true, payment: { reference, status } } })
+      }
+      if (url.includes('/account')) {
+        return Promise.resolve({ data: { success: true, account: accountPayload() } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+  }
+
+  it('does not report a settling (processing) card payment as a failure', async () => {
+    mockPaymentStatus('processing')
+
+    renderWithAuth(<Account />)
+
+    const notice = await screen.findByText(/finalising your billing/i)
+    expect(notice).toBeInTheDocument()
+    // Not an error, and never the "no billing changes were made" claim.
+    expect(screen.queryByText(/was not completed/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/no billing changes were made/i)).not.toBeInTheDocument()
+    expect(notice.closest('[role="alert"]')).toBeNull()
+  })
+
+  it('keeps the reference in the URL while a payment is still settling', async () => {
+    mockPaymentStatus('processing', 'pay-settling')
+
+    renderWithAuth(<Account />)
+    await screen.findByText(/finalising your billing/i)
+
+    // Stripping the reference here leaves the owner with no way to re-check.
+    expect(window.location.search).toContain('reference=pay-settling')
+  })
+
+  it('reports a pending payment as awaiting confirmation, not as a failure', async () => {
+    mockPaymentStatus('pending')
+
+    renderWithAuth(<Account />)
+
+    expect(await screen.findByText(/has not been confirmed/i)).toBeInTheDocument()
+    expect(screen.queryByText(/no billing changes were made/i)).not.toBeInTheDocument()
+  })
+
+  it('reports a failed payment as failed and clears the payment params', async () => {
+    mockPaymentStatus('failed')
+
+    renderWithAuth(<Account />)
+
+    expect(await screen.findByText(/card payment failed/i)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(window.location.search).not.toContain('reference=')
+    })
+  })
+
+  it('reports a cancelled payment as cancelled', async () => {
+    mockPaymentStatus('cancelled')
+
+    renderWithAuth(<Account />)
+
+    expect(await screen.findByText(/card payment was cancelled/i)).toBeInTheDocument()
+  })
+
+  it('is honest about a status it does not recognise instead of claiming failure', async () => {
+    mockPaymentStatus('some_future_status')
+
+    renderWithAuth(<Account />)
+
+    expect(await screen.findByText(/still confirming this payment/i)).toBeInTheDocument()
+    expect(screen.queryByText(/no billing changes were made/i)).not.toBeInTheDocument()
+  })
+
+  it('clears the billing-required alert once a payment is confirmed', async () => {
+    window.history.pushState({}, '', '/account?billing=required&payment=paid&reference=pay-9')
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/account/payments/pay-9')) {
+        return Promise.resolve({ data: { success: true, payment: { reference: 'pay-9', status: 'paid' } } })
+      }
+      if (url.includes('/account')) {
+        return Promise.resolve({ data: { success: true, account: accountPayload() } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Account />)
+
+    await screen.findByText(/card payment confirmed/i)
+    // The page must not simultaneously report success and "billing period has ended".
+    await waitFor(() => {
+      expect(screen.queryByText(/your billing period has ended/i)).not.toBeInTheDocument()
+    })
+  })
+
+  // ── 202 PAYMENT_SESSION_INITIALIZING ────────────────────────────────────────
+
+  it('does not treat a 202 "still initializing" checkout as an activated plan', async () => {
+    mockPost.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        success: true,
+        code: 'PAYMENT_SESSION_INITIALIZING',
+        // The 202 body carries the *unchanged* account; it is not proof of success.
+        account: accountPayload(),
+        checkout: { provider: 'onegate', reference: 'ref-1', status: 'initializing' },
+      },
+    })
+
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /move to starter/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay/i }))
+
+    expect(await screen.findByText(/still being prepared/i)).toBeInTheDocument()
+    expect(screen.queryByText(/plan activated/i)).not.toBeInTheDocument()
+  })
+
+  it('does not claim credits were added on a 202 credit purchase', async () => {
+    mockPost.mockResolvedValueOnce({
+      status: 202,
+      data: {
+        success: true,
+        code: 'PAYMENT_SESSION_INITIALIZING',
+        account: accountPayload(),
+        purchase: { provider: 'onegate', credits: 500, reference: 'ref-2', status: 'initializing' },
+      },
+    })
+
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /500 credits/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay|confirm purchase/i }))
+
+    expect(await screen.findByText(/still being prepared/i)).toBeInTheDocument()
+    expect(screen.queryByText(/added 500/i)).not.toBeInTheDocument()
+  })
+
+  // ── Billing cycle ───────────────────────────────────────────────────────────
+
+  it('offers a cycle switch on the current plan instead of disabling it', async () => {
+    renderWithAuth(<Account />)
+    // Account is on growth/monthly.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /active plan/i })).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /^annual$/i }))
+
+    const switchButton = await screen.findByRole('button', { name: /switch to annual/i })
+    expect(switchButton).toBeEnabled()
+  })
+
+  // ── Confirmation before money moves ─────────────────────────────────────────
+
+  it('states the charge and the loss of the current period before a plan change', async () => {
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /move to starter/i }))
+
+    // Nothing posted on the first click.
+    expect(mockPost).not.toHaveBeenCalledWith('/account/checkout', expect.anything(), expect.anything())
+
+    const dialog = await screen.findByRole('dialog')
+    // The amount appears in the body and again on the confirm button.
+    expect(within(dialog).getAllByText(/R399/).length).toBeGreaterThan(0)
+    expect(within(dialog).getByText(/not refunded or credited/i)).toBeInTheDocument()
+  })
+
+  it('posts the plan checkout only after explicit confirmation', async () => {
+    mockPost.mockResolvedValueOnce({
+      status: 200,
+      data: { success: true, account: accountPayload(), checkout: { provider: 'mock', status: 'paid' } },
+    })
+
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /move to starter/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay/i }))
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        '/account/checkout',
+        { plan: 'starter', billingCycle: 'monthly' },
+        expect.objectContaining({ headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }) })
+      )
+    })
+  })
+
+  it('cancelling the plan confirmation charges nothing', async () => {
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /move to starter/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^cancel$/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect(mockPost).not.toHaveBeenCalledWith('/account/checkout', expect.anything(), expect.anything())
+  })
+
+  it('names the credit pack charge before buying', async () => {
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /500 credits/i }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/500/)).toBeInTheDocument()
+    expect(mockPost).not.toHaveBeenCalledWith('/account/ai-credits', expect.anything(), expect.anything())
+  })
+
   it('reuses the credit-checkout idempotency key after a network failure', async () => {
     mockPost
       .mockRejectedValueOnce(new Error('connection dropped'))
       .mockResolvedValueOnce({
+        status: 200,
         data: {
           success: true,
           account: accountPayload(),
@@ -295,9 +504,11 @@ describe('Account', () => {
     renderWithAuth(<Account />)
     const button = await screen.findByRole('button', { name: /500 credits/i })
     await userEvent.click(button)
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay|confirm purchase/i }))
     expect(await screen.findByText(/could not start card checkout/i)).toBeInTheDocument()
 
-    await userEvent.click(button)
+    await userEvent.click(await screen.findByRole('button', { name: /500 credits/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay|confirm purchase/i }))
     await waitFor(() => {
       const calls = mockPost.mock.calls.filter(([url]) => url === '/account/ai-credits')
       expect(calls).toHaveLength(2)
@@ -306,6 +517,74 @@ describe('Account', () => {
       expect(firstKey).toMatch(/^credits:/)
       expect(secondKey).toBe(firstKey)
     })
+  })
+
+  it('disables every plan card while a checkout is in flight', async () => {
+    let releaseCheckout: ((value: unknown) => void) | undefined
+    mockPost.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        releaseCheckout = resolve
+      })
+    )
+
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /move to starter/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay/i }))
+
+    // A second, different plan must not be able to mint a second PaymentSession.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /move to starter/i })).toBeDisabled()
+    })
+
+    releaseCheckout?.({ status: 200, data: { success: true, checkout: { provider: 'mock', status: 'paid' } } })
+  })
+
+  // ── Reporting and forms ─────────────────────────────────────────────────────
+
+  it('announces password validation errors to assistive technology', async () => {
+    renderWithAuth(<Account />)
+
+    await screen.findByText('Password')
+    await userEvent.type(screen.getByLabelText(/^Current Password$/i), 'password123')
+    await userEvent.type(screen.getByLabelText(/^New Password$/i), 'short')
+    await userEvent.type(screen.getByLabelText(/^Confirm Password$/i), 'short')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/at least 8 characters/i)
+    expect(screen.getByLabelText(/^New Password$/i)).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('surfaces the server message when a profile save is rejected', async () => {
+    mockPatch.mockRejectedValueOnce({
+      response: { status: 400, data: { message: 'Billing email must be a valid address.' } },
+    })
+
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /^edit$/i }))
+    await userEvent.click(screen.getByText('Save Account'))
+
+    expect(await screen.findByText(/billing email must be a valid address/i)).toBeInTheDocument()
+  })
+
+  it('does not invent a credit allowance denominator', async () => {
+    const noAllowance = accountPayload()
+    noAllowance.usage.guavaCredits = {
+      included: 0,
+      bonus: 0,
+      used: 0,
+      available: 0,
+      resetAt: '2026-06-01T00:00:00.000Z',
+    }
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/account')) return Promise.resolve({ data: { success: true, account: noAllowance } })
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Account />)
+
+    expect(await screen.findByText(/no credit allowance on this plan/i)).toBeInTheDocument()
+    expect(screen.queryByText('0 / 1')).not.toBeInTheDocument()
   })
 
   it('changes password and signs the user out', async () => {

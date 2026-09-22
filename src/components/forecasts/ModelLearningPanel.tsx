@@ -18,6 +18,16 @@ interface ModelLearningPanelProps {
   entitlements?: ForecastFactorEntitlements | null
   settings?: ForecastFactorSettings | null
   compact?: boolean
+  /**
+   * The source request failed rather than returning nothing.
+   *
+   * An empty `sources` array previously fell through to "Waiting for history —
+   * at least 3 matched item outcomes are needed", which is a factual claim
+   * about the cafe's model. When /forecasts/week 5xx'd, that claim was simply
+   * false, and it sat directly under the page's own banner saying empty values
+   * below do not mean the data is empty.
+   */
+  unavailable?: boolean
 }
 
 const formatPct = (value: number | null | undefined) => {
@@ -54,7 +64,13 @@ const topCorrections = <T extends { multiplier: number; sampleSize: number }>(
       sampleSize: entry.sampleSize,
     }))
 
-export function ModelLearningPanel({ sources, entitlements, settings, compact = false }: ModelLearningPanelProps) {
+export function ModelLearningPanel({
+  sources,
+  entitlements,
+  settings,
+  compact = false,
+  unavailable = false,
+}: ModelLearningPanelProps) {
   const learningEntitlement = entitlements?.factors.find((factor: ForecastFactorEntitlement) => factor.key === 'learning')
   const learningUnlocked = learningEntitlement?.unlocked ?? true
   const learningEnabled = settings?.learning.enabled ?? true
@@ -68,7 +84,9 @@ export function ModelLearningPanel({ sources, entitlements, settings, compact = 
   const itemCorrections = topCorrections(calibration?.itemMultipliers, (entry) => entry.itemName || 'Item')
   const factorCorrections = topCorrections(calibration?.factorMultipliers, (entry) => entry.label || entry.key || 'Factor')
 
-  const status = !learningUnlocked
+  const status = unavailable
+    ? { label: 'Status unavailable', variant: 'secondary' as const }
+    : !learningUnlocked
     ? { label: 'Pro plan required', variant: 'pro' as const }
     : !learningEnabled
       ? { label: 'Off', variant: 'secondary' as const }
@@ -78,7 +96,9 @@ export function ModelLearningPanel({ sources, entitlements, settings, compact = 
           ? { label: 'Ready', variant: 'success' as const }
           : { label: 'Waiting for history', variant: 'warning' as const }
 
-  const description = !learningUnlocked
+  const description = unavailable
+    ? 'The forecast service could not be reached, so this is not a reading on your model.'
+    : !learningUnlocked
     ? 'Learning is visible here, but future forecasts only apply it on Pro.'
     : !learningEnabled
       ? 'Learning is disabled in factor rules.'
@@ -104,21 +124,31 @@ export function ModelLearningPanel({ sources, entitlements, settings, compact = 
         <div className="grid grid-cols-2 gap-3 sm:min-w-72">
           <div>
             <p className="text-xs uppercase tracking-wide text-[#9E9E9E]">Overall correction</p>
-            <p className={cn('mt-1 text-xl font-semibold', (overallCorrection || 0) >= 0 ? 'text-guava-green' : 'text-guava-red-text')}>
-              {formatPct(overallCorrection)}
+            <p className={cn('mt-1 text-xl font-semibold', unavailable ? 'text-muted' : (overallCorrection || 0) >= 0 ? 'text-guava-green' : 'text-guava-red-text')}>
+              {unavailable ? '-' : formatPct(overallCorrection)}
             </p>
           </div>
           <div>
             <p className="text-xs uppercase tracking-wide text-[#9E9E9E]">Learning samples</p>
-            <p className="mt-1 text-xl font-semibold text-text">{sampleSize}</p>
+            <p className={cn('mt-1 text-xl font-semibold', unavailable ? 'text-muted' : 'text-text')}>
+              {unavailable ? '-' : sampleSize}
+            </p>
           </div>
         </div>
       </div>
 
       {!compact && (
         <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <CorrectionList title="Item corrections" corrections={itemCorrections} empty="No item-specific corrections yet." />
-          <CorrectionList title="Factor corrections" corrections={factorCorrections} empty="No factor-specific corrections yet." />
+          <CorrectionList
+            title="Item corrections"
+            corrections={unavailable ? [] : itemCorrections}
+            empty={unavailable ? 'Could not be loaded.' : 'No item-specific corrections yet.'}
+          />
+          <CorrectionList
+            title="Factor corrections"
+            corrections={unavailable ? [] : factorCorrections}
+            empty={unavailable ? 'Could not be loaded.' : 'No factor-specific corrections yet.'}
+          />
         </div>
       )}
     </div>

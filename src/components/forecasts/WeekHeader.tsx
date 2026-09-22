@@ -2,6 +2,7 @@ import { TrendingUp, Star, Target } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Forecast } from '@/types'
 import { forecastDateKey, parseDateOnly } from '@/lib/date'
+import { ACCURACY_BAND_LABEL, ACCURACY_MIN_SAMPLE, accuracyBand, accuracyTextClass } from './accuracyBand'
 
 function getDayName(dateStr: string): string {
   const date = parseDateOnly(dateStr)
@@ -12,29 +13,33 @@ interface Props {
   weekTotal: number
   peakDay: Forecast | null
   accuracy: number | null
+  /**
+   * How many matched days the average was computed over. The API returns them
+   * and the page used to throw them away, so one lucky day rendered "88% ·
+   * Strong" with exactly the authority of thirty days of evidence — under a
+   * heading that also asserted a 30-day window.
+   */
+  matchedDays?: number | null
 }
 
-export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
-  const accuracyColor =
-    accuracy === null
-      ? 'text-muted'
-      : accuracy >= 80
-      ? 'text-guava-green'
-      : accuracy >= 60
-      ? 'text-guava-yellow'
-      : 'text-guava-red-text'
+export function WeekHeader({ weekTotal, peakDay, accuracy, matchedDays = null }: Props) {
+  const accuracyColor = accuracyTextClass(accuracy)
 
   const accuracyLabel =
     accuracy === null ? 'Awaiting matched sales data' : `${Math.round(accuracy)}%`
 
+  const hasEnoughSample = matchedDays == null || matchedDays >= ACCURACY_MIN_SAMPLE
   const accuracyStatus =
-    accuracy === null
+    accuracy === null ? '' : hasEnoughSample ? ACCURACY_BAND_LABEL[accuracyBand(accuracy)] : ''
+
+  const sampleNote =
+    matchedDays == null
       ? ''
-      : accuracy >= 80
-      ? 'Strong'
-      : accuracy >= 60
-      ? 'Fair'
-      : 'Weak'
+      : matchedDays === 0
+        ? 'No matched days yet'
+        : `From ${matchedDays} matched ${matchedDays === 1 ? 'day' : 'days'}${
+            hasEnoughSample ? '' : ' — too few for a verdict yet'
+          }`
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -96,6 +101,7 @@ export function WeekHeader({ weekTotal, peakDay, accuracy }: Props) {
                   </span>
                 )}
               </p>
+              {sampleNote && <p className="text-muted text-xs mt-1">{sampleNote}</p>}
             </div>
           </div>
         </CardContent>

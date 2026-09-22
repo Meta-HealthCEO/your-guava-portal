@@ -9,6 +9,10 @@ vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 
 const mockPost = vi.fn()
 vi.mock('@/lib/api', () => ({
+  refreshAccessToken: vi.fn().mockRejectedValue(new Error('No refresh session')),
+  isSessionRejection: vi.fn(() => true),
+  API_CONFIG_ERROR: null,
+  API_BASE_URL: 'http://localhost:5000/api',
   default: {
     get: vi.fn(),
     post: (...args: unknown[]) => mockPost(...args),

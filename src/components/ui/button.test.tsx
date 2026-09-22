@@ -33,7 +33,7 @@ describe('Button', () => {
   it('renders with success variant', () => {
     render(<Button variant="success">Save</Button>)
     const button = screen.getByRole('button', { name: /save/i })
-    expect(button.className).toContain('bg-guava-green')
+    expect(button.className).toContain('bg-guava-green-strong')
   })
 
   it('renders with sm size', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@/test/test-utils'
+import { fireEvent, render, screen, waitFor, within } from '@/test/test-utils'
 import Dashboard from './Dashboard'
 import { mockForecast, mockStats } from '@/test/mocks/api'
 
@@ -7,10 +7,19 @@ import { mockForecast, mockStats } from '@/test/mocks/api'
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/guava-icon.png', () => ({ default: 'icon.png' }))
 
-// Mock the api module
+// Partial mock: only the axios instance and the session plumbing are faked.
+// AuthProvider reads the module's other named exports during render, and a
+// factory that omits one makes vitest throw the moment it is touched. The two
+// overrides keep an unauthenticated render quiet — without them the provider
+// treats the test's rejected /auth/me as an unreachable server and replaces
+// the page under test with a startup notice.
 const mockGet = vi.fn()
-vi.mock('@/lib/api', () => {
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
+    ...actual,
+    refreshAccessToken: () => Promise.resolve(null),
+    isSessionRejection: () => true,
     default: {
       get: (...args: unknown[]) => mockGet(...args),
       post: vi.fn(),
@@ -24,6 +33,30 @@ vi.mock('@/lib/api', () => {
     },
   }
 })
+
+// A week where Sunday is a scheduled closure: no items, no revenue, a reason.
+const CLOSED_REASON = 'Scheduled weekly closure'
+const closedWeekForecasts = [
+  { ...mockForecast, _id: 'f1', date: '2026-03-28' },
+  {
+    ...mockForecast,
+    _id: 'f2',
+    date: '2026-03-29',
+    availability: { status: 'closed', reason: CLOSED_REASON },
+    items: [],
+    totalPredictedRevenue: 0,
+  },
+  { ...mockForecast, _id: 'f3', date: '2026-03-30', totalPredictedRevenue: 18000 },
+]
+
+function mockClosedWeek() {
+  mockGet.mockImplementation((url: string) => {
+    if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts: closedWeekForecasts } })
+    if (url.includes('/transactions/stats')) return Promise.resolve({ data: { stats: mockStats } })
+    if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+    return Promise.reject(new Error('Unknown URL'))
+  })
+}
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -330,5 +363,240 @@ describe('Dashboard', () => {
     expect(await screen.findByText('Dashboard data unavailable')).toBeInTheDocument()
     expect(screen.queryByText('No data yet')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('renders a closed day as closed instead of blaming missing item history', async () => {
+    mockClosedWeek()
+
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Forecast Revenue')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /29 Mar/ }))
+
+    expect(screen.getByText('Closed')).toBeInTheDocument()
+    expect(screen.getByText('No trading forecast')).toBeInTheDocument()
+    expect(screen.getByText(CLOSED_REASON)).toBeInTheDocument()
+    expect(screen.queryByText('No item predictions for this day')).not.toBeInTheDocument()
+    expect(screen.queryByText(/uploading more pos data/i)).not.toBeInTheDocument()
+  })
+
+  it('averages forecast revenue over trading days, not over closed days', async () => {
+    mockClosedWeek()
+
+    render(<Dashboard />)
+
+    // (20 100 + 18 000) over the two trading days is R19 050; spreading it over
+    // all three calendar days would read R12 700.
+    expect(await screen.findByText(/Avg: R19\s?050\/day/)).toBeInTheDocument()
+    expect(screen.queryByText(/Avg: R12\s?700\/day/)).not.toBeInTheDocument()
+  })
+
+  /** Mocks the four Today requests with a single week forecast. */
+  function mockWeek(forecast: Record<string, unknown>) {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/today')) return Promise.resolve({ data: { forecast } })
+      if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts: [forecast] } })
+      if (url.includes('/transactions/stats')) return Promise.resolve({ data: { stats: mockStats } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Unknown URL'))
+    })
+  }
+
+  it('counts every forecast line in Total Items, not only the 25 the API stores', async () => {
+    // Revenue is accumulated over all 41 lines; summing the stored 25 put a
+    // short Total Items directly beside a complete Forecast Revenue.
+    mockWeek({
+      ...mockForecast,
+      _id: 'f-coverage',
+      forecastCoverage: {
+        itemCount: 41,
+        storedItemCount: 25,
+        totalPredictedQty: 812,
+        includesAllRevenue: true,
+      },
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('812')).toBeInTheDocument()
+    expect(screen.getByText('across 41 forecast lines')).toBeInTheDocument()
+    expect(screen.getByText(/Showing the 25 largest of 41 forecast lines/i)).toBeInTheDocument()
+    // 30 + 31 + 3 is what summing the stored array gives.
+    expect(screen.queryByText('64')).not.toBeInTheDocument()
+  })
+
+  it('marks a low-confidence line instead of printing it at the same weight as a proven one', async () => {
+    mockWeek({
+      ...mockForecast,
+      _id: 'f-confidence',
+      items: [
+        { itemName: 'Flat White (Blend)', predictedQty: 30, baseQty: 30, confidence: 'high' },
+        { itemName: 'Long White (Blend)', predictedQty: 20, baseQty: 20, confidence: 'low' },
+      ],
+    })
+
+    render(<Dashboard />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Revenue')).toBeInTheDocument())
+    expect(screen.getByText('low confidence')).toBeInTheDocument()
+  })
+
+  it('says once, at the top, when a whole week of history caps every line to low', async () => {
+    mockWeek({
+      ...mockForecast,
+      _id: 'f-all-low',
+      items: [
+        { itemName: 'Flat White (Blend)', predictedQty: 30, baseQty: 30, confidence: 'low' },
+        { itemName: 'Long White (Blend)', predictedQty: 20, baseQty: 20, confidence: 'low' },
+      ],
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText(/Every line below is low confidence/i)).toBeInTheDocument()
+    // One statement, not one annotation per card.
+    expect(screen.queryByText('low confidence')).not.toBeInTheDocument()
+  })
+
+  it('grades the accuracy badge instead of dressing a bad score as a good one', async () => {
+    mockWeek({ ...mockForecast, _id: 'f-weak-accuracy', accuracy: 41 })
+
+    render(<Dashboard />)
+
+    const badge = await screen.findByText('41% accuracy')
+    expect(badge.className).not.toContain('guava-green')
+  })
+
+  it('does not emit a stray zero beside the revenue target', async () => {
+    mockWeek({ ...mockForecast, _id: 'f-zero-accuracy', accuracy: 0 })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('0% accuracy')).toBeInTheDocument()
+  })
+
+  it('tells assistive tech which day is selected', async () => {
+    mockClosedWeek()
+
+    render(<Dashboard />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Revenue')).toBeInTheDocument())
+
+    const group = screen.getByRole('group', { name: /forecast day/i })
+    const days = within(group).getAllByRole('button')
+    expect(days[0]).toHaveAttribute('aria-pressed', 'true')
+    expect(days[1]).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(days[1])
+    expect(days[0]).toHaveAttribute('aria-pressed', 'false')
+    expect(days[1]).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('states what the forecast is built from when no factor moved it', async () => {
+    // Six grey gauges and three upsell badges is the entire answer an entry
+    // plan used to get on the screen it orders from.
+    mockWeek({
+      ...mockForecast,
+      _id: 'f-basis',
+      factors: [{ key: 'weather', label: 'Weather', active: false, effect: 'no effect' }],
+      trainingData: { transactionCount: 778, weeksWithSales: 8, lastTransactionDate: '2026-03-20' },
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText(/Nothing adjusted this forecast today/i)).toBeInTheDocument()
+    expect(screen.getByText(/weighted average of your last 8 matching/i)).toBeInTheDocument()
+  })
+
+  it('does not print R0 as the headline forecast for a day it cannot answer', async () => {
+    // Planning refuses to sum or print a day still building history; Today is
+    // the screen people actually order from, so it must not print one either.
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/week')) {
+        return Promise.resolve({
+          data: {
+            forecasts: [
+              {
+                ...mockForecast,
+                _id: 'f-awaiting',
+                date: '2026-03-28',
+                items: [],
+                totalPredictedRevenue: 0,
+                availability: {
+                  status: 'insufficient_data',
+                  reason: 'At least 2 observed matching trading days are required; 1 available',
+                },
+              },
+              { ...mockForecast, _id: 'f-ready', date: '2026-03-30', totalPredictedRevenue: 18000 },
+            ],
+          },
+        })
+      }
+      if (url.includes('/transactions/stats')) return Promise.resolve({ data: { stats: mockStats } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Not enough history for this day yet')).toBeInTheDocument()
+    expect(screen.queryByText('R0')).not.toBeInTheDocument()
+    // The engine's own words, not a hardcoded "three comparable weeks".
+    expect(screen.getByText(/At least 2 observed matching trading days are required/)).toBeInTheDocument()
+    expect(screen.queryByText(/three comparable weeks/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps a day with no forecast out of the weekly average', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/week')) {
+        return Promise.resolve({
+          data: {
+            forecasts: [
+              { ...mockForecast, _id: 'f-ready', date: '2026-03-30', totalPredictedRevenue: 18000 },
+              {
+                ...mockForecast,
+                _id: 'f-awaiting',
+                date: '2026-03-31',
+                items: [],
+                totalPredictedRevenue: 0,
+                availability: { status: 'insufficient_data', reason: 'not enough history' },
+              },
+            ],
+          },
+        })
+      }
+      if (url.includes('/transactions/stats')) return Promise.resolve({ data: { stats: mockStats } })
+      if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<Dashboard />)
+
+    // R18 000 over the one day that has a forecast, not R9 000 over two.
+    expect(await screen.findByText(/Avg: R18\s?000\/day/)).toBeInTheDocument()
+    expect(screen.queryByText(/Avg: R9\s?000\/day/)).not.toBeInTheDocument()
+  })
+
+  it('shows a locked factor reason without needing a mouse hover', async () => {
+    mockWeek({
+      ...mockForecast,
+      _id: 'f-locked',
+      factors: [{ key: 'payday', label: 'Payday', active: false, effect: 'no effect' }],
+      factorEntitlements: {
+        plan: 'starter',
+        factors: [
+          { key: 'payday', label: 'Payday', section: 'payday', requiredPlan: 'growth', summary: '', unlocked: false },
+        ],
+        unlockedKeys: [],
+        lockedKeys: ['payday'],
+      },
+    })
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Unlock on Growth')).toBeInTheDocument()
   })
 })

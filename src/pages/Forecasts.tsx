@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react'
-import { TrendingUp } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router'
+import { CalendarClock, TrendingUp, Upload } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
+import { forecastDateKey, parseDateOnly } from '@/lib/date'
 import type { Forecast } from '@/types'
 import { WeekHeader } from '@/components/forecasts/WeekHeader'
 import { WeekTrajectoryChart } from '@/components/forecasts/WeekTrajectoryChart'
@@ -38,6 +42,116 @@ function formatTrainingDate(dateStr: string): string {
     month: 'short',
     year: 'numeric',
   })
+}
+
+/**
+ * How much of an answer the engine has for a day.
+ *
+ * A `closed` day and a day still building history both come back as R0, but
+ * they mean opposite things: the first is a real prediction (nobody is
+ * trading), the second is the absence of one. Only the first may be summed,
+ * charted or shown as a rand figure.
+ */
+type DayAvailability = 'ready' | 'closed' | 'awaiting_history'
+
+function dayAvailability(forecast: Forecast): DayAvailability {
+  const status = forecast.availability?.status
+  if (status === 'closed') return 'closed'
+  if (status === 'insufficient_data') return 'awaiting_history'
+  // Forecasts stored before availability existed carry no status; they were
+  // only ever written for days the engine could answer.
+  return 'ready'
+}
+
+function dayName(forecast: Forecast): string {
+  return parseDateOnly(forecastDateKey(forecast)).toLocaleDateString('en-ZA', { weekday: 'long' })
+}
+
+function dayDate(forecast: Forecast): string {
+  return parseDateOnly(forecastDateKey(forecast)).toLocaleDateString('en-ZA', {
+    day: 'numeric',
+    month: 'short',
+  })
+}
+
+const AWAITING_HISTORY_FALLBACK =
+  'There are not yet enough matching trading days on record to forecast this day.'
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`) {
+  return count === 1 ? singular : pluralForm
+}
+
+/**
+ * Stands in for a day the engine cannot answer, in its normal place in the
+ * week. Deliberately carries no rand figure: R0 here would read as "you will
+ * take nothing", which is not what the engine said.
+ */
+function AwaitingHistoryDayCard({ forecast }: { forecast: Forecast }) {
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-text font-semibold text-sm">{dayName(forecast)}</p>
+            <p className="text-muted text-xs">{dayDate(forecast)}</p>
+          </div>
+          <Badge variant="outline">Building history</Badge>
+        </div>
+        <div className="rounded-lg border border-border bg-surface-2 px-3 py-3">
+          <p className="text-sm font-medium text-text">No forecast for this day yet</p>
+          <p className="mt-1 text-xs text-muted">
+            {forecast.availability?.reason || AWAITING_HISTORY_FALLBACK}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * The whole-week state for a cafe that has not traded long enough yet. This is
+ * an expected stage of onboarding, not a failure, so it reads as a status and
+ * ends on the one action that moves it forward.
+ */
+function AwaitingHistoryPanel({
+  reason,
+  hasImportedSales,
+}: {
+  reason: string
+  hasImportedSales: boolean
+}) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-center py-12 text-center">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-surface-2">
+          <CalendarClock className="h-6 w-6 text-muted" />
+        </div>
+        <h2 className="text-text text-base font-semibold">Not enough trading history yet</h2>
+        <p className="mt-2 max-w-lg text-sm text-muted">
+          Planning builds each day from the same weekday in earlier weeks — a Tuesday from
+          previous Tuesdays.{' '}
+          {hasImportedSales
+            ? 'Your sales are on record, but not enough matching weekdays have accumulated yet.'
+            : 'No sales have been imported for this cafe yet, so there is nothing to build from.'}
+        </p>
+        {reason && (
+          <p className="mt-4 max-w-lg rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
+            What each day needs: {reason}
+          </p>
+        )}
+        <Button asChild className="mt-5">
+          <Link to="/data-health">
+            <Upload className="h-4 w-4" />
+            Import sales data
+          </Link>
+        </Button>
+        <p className="mt-4 max-w-lg text-xs text-muted">
+          This is the normal starting point for a new cafe. Days fill in here on their own as
+          matching history builds up.
+        </p>
+      </CardContent>
+    </Card>
+  )
 }
 
 export default function Forecasts() {
@@ -80,14 +194,22 @@ export default function Forecasts() {
     return () => controller.abort()
   }, [reloadKey])
 
+  // Days the engine actually answered. A closed day belongs here: its R0 is a
+  // real prediction. A day still building history does not.
   const usableForecasts = futureForecasts.filter(
-    (forecast) => forecast.availability?.status !== 'insufficient_data'
+    (forecast) => dayAvailability(forecast) !== 'awaiting_history'
   )
   const tradingForecasts = usableForecasts.filter(
-    (forecast) => forecast.availability?.status !== 'closed'
+    (forecast) => dayAvailability(forecast) !== 'closed'
   )
+  const awaitingForecasts = futureForecasts.filter(
+    (forecast) => dayAvailability(forecast) === 'awaiting_history'
+  )
+  // A week whose only "usable" days are closed ones carries no forecast at all:
+  // summing it produces R0 for a cafe that has never traded. A genuinely
+  // all-closed week (no pending days) is still a real answer and stays.
   const allForecastsInsufficient =
-    futureForecasts.length > 0 && usableForecasts.length === 0
+    futureForecasts.length > 0 && tradingForecasts.length === 0 && awaitingForecasts.length > 0
   const allForecastGenerationFailed =
     futureForecasts.length === 0 &&
     weekMeta?.isPartial === true &&
@@ -97,7 +219,21 @@ export default function Forecasts() {
     (best, f) => (!best || f.totalPredictedRevenue > best.totalPredictedRevenue ? f : best),
     null as Forecast | null
   )
-  const weekAvg = tradingForecasts.length > 0 ? weekTotal / tradingForecasts.length : 0
+  const tradingTotal = tradingForecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
+  const weekAvg = tradingForecasts.length > 0 ? tradingTotal / tradingForecasts.length : 0
+  // The engine's own words for why a day is missing, so this copy cannot drift
+  // from the backend rule that produced it.
+  const awaitingReason =
+    awaitingForecasts.map((forecast) => forecast.availability?.reason).find(Boolean) || ''
+  const hasImportedSales = futureForecasts.some(
+    (forecast) => (forecast.trainingData?.transactionCount ?? 0) > 0
+  )
+  const coverageNote =
+    `Weekly total and peak day cover the ${usableForecasts.length} ` +
+    `${plural(usableForecasts.length, 'day')} with a forecast. ` +
+    `${awaitingForecasts.length} ${plural(awaitingForecasts.length, 'day')} ` +
+    `${plural(awaitingForecasts.length, 'is', 'are')} still building history and ` +
+    `${plural(awaitingForecasts.length, 'is', 'are')} not counted.`
   const oldestTrainingDate = futureForecasts
     .map((forecast) => forecast.trainingData?.lastTransactionDate)
     .filter((date): date is string => Boolean(date))
@@ -107,6 +243,16 @@ export default function Forecasts() {
     .filter((days): days is number => typeof days === 'number')
     .sort((a, b) => b - a)[0]
   const showStaleDataNotice = oldestTrainingDate != null && worstStaleDays != null && worstStaleDays > 30
+
+  // Stable across renders: the drawer saves the element to return focus to when
+  // this effect mounts, so a fresh closure on every parent render tore the
+  // effect down mid-interaction and threw a keyboard user back to the top of
+  // the dialog.
+  const closeDrawer = useCallback(() => setSelectedForecastId(null), [])
+
+  // The week payload starts at the cafe's own calendar today, which is the only
+  // trustworthy source for "today" — the device clock is not the cafe's.
+  const cafeTodayKey = futureForecasts[0] ? forecastDateKey(futureForecasts[0]) : undefined
 
   // Look up selected forecast from either array
   const selectedForecast =
@@ -123,7 +269,8 @@ export default function Forecasts() {
         </div>
 
         {loading && (
-          <div className="space-y-6">
+          <div className="space-y-6" role="status" aria-live="polite" aria-busy="true">
+            <span className="sr-only">Loading this week&apos;s forecast</span>
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-72 w-full" />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -155,26 +302,15 @@ export default function Forecasts() {
         )}
 
         {!loading && !loadError && !allForecastGenerationFailed && (futureForecasts.length === 0 || allForecastsInsufficient) && (
-          <div className="text-center py-12">
-            <p className="text-text font-medium">No forecast data yet</p>
-            <p className="text-muted text-sm mt-1">
-              Not enough matching sales history is available. Upload at least three comparable trading weeks
-              before using forecasts for ordering or staffing.
-            </p>
-          </div>
+          <AwaitingHistoryPanel reason={awaitingReason} hasImportedSales={hasImportedSales} />
         )}
 
-        {!loading && !loadError && usableForecasts.length > 0 && (
+        {!loading && !loadError && !allForecastsInsufficient && usableForecasts.length > 0 && (
           <>
             {weekMeta?.isPartial && (
               <div className="rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 text-sm text-red-300" role="alert">
                 Only {weekMeta.generatedDays} of {weekMeta.expectedDays} forecast days are available.
                 Do not treat this as a complete weekly plan. Try again before ordering or staffing.
-              </div>
-            )}
-            {weekMeta?.insufficientData && (
-              <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="status">
-                Some days are hidden because they do not yet have three comparable weeks of sales history.
               </div>
             )}
             {supportingDataError && (
@@ -186,7 +322,16 @@ export default function Forecasts() {
               weekTotal={weekTotal}
               peakDay={peakDay}
               accuracy={accuracy?.avgAccuracy ?? null}
+              matchedDays={accuracy ? accuracy.forecasts?.length ?? 0 : null}
             />
+            {/* Say what the headline figures are drawn from. Without this the
+                total reads as a whole week even when part of it is still
+                building history. */}
+            {awaitingForecasts.length > 0 && (
+              <p className="text-muted text-xs" role="status">
+                {coverageNote}
+              </p>
+            )}
             {showStaleDataNotice && oldestTrainingDate && (
               <div className="rounded-lg border border-guava-yellow/30 bg-guava-yellow/10 px-4 py-3">
                 <p className="text-guava-yellow text-sm font-medium">Forecast data is getting stale</p>
@@ -196,7 +341,11 @@ export default function Forecasts() {
                 </p>
               </div>
             )}
-            <WeekTrajectoryChart futureForecasts={usableForecasts} pastForecasts={pastForecasts} />
+            <WeekTrajectoryChart
+              futureForecasts={usableForecasts}
+              pastForecasts={pastForecasts}
+              todayDateKey={cafeTodayKey}
+            />
 
             {/* This week's plan */}
             <div className="space-y-3">
@@ -206,16 +355,23 @@ export default function Forecasts() {
                   Predicted output for the next 7 days. Stock suggestions appear only when returned by the forecast service.
                 </p>
               </div>
+              {/* Every day keeps its slot in the week. A day the engine cannot
+                  answer is marked as such rather than dropped, so the plan is
+                  never quietly shorter than seven days. */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {usableForecasts.map((f) => (
-                  <DayCard
-                    key={f._id}
-                    forecast={f}
-                    weekAvg={weekAvg}
-                    mode="plan"
-                    onClick={() => setSelectedForecastId(f._id)}
-                  />
-                ))}
+                {futureForecasts.map((f) =>
+                  dayAvailability(f) === 'awaiting_history' ? (
+                    <AwaitingHistoryDayCard key={f._id} forecast={f} />
+                  ) : (
+                    <DayCard
+                      key={f._id}
+                      forecast={f}
+                      weekAvg={weekAvg}
+                      mode="plan"
+                      onClick={() => setSelectedForecastId(f._id)}
+                    />
+                  )
+                )}
               </div>
             </div>
 
@@ -255,7 +411,7 @@ export default function Forecasts() {
           <DayDetailDrawer
             forecast={selectedForecast}
             weekAvg={weekAvg}
-            onClose={() => setSelectedForecastId(null)}
+            onClose={closeDrawer}
           />
         )}
       </div>

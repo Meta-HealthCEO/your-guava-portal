@@ -2,8 +2,10 @@ import { useEffect, useRef } from 'react'
 import { X, Coffee, Droplets, UtensilsCrossed, Waves, Sparkles } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import { ModifierBreakdown } from './ModifierBreakdown'
-import type { Forecast } from '@/types'
+import { forecastBasisSentence } from './forecastBasis'
+import type { Forecast, ForecastItem } from '@/types'
 import { forecastDateKey, parseDateOnly } from '@/lib/date'
+import { isOccasionalSeller, OCCASIONAL_SELLER_MAX_QTY } from '@/lib/forecastItems'
 
 function getDayLabel(dateStr: string): string {
   const today = new Date()
@@ -31,6 +33,8 @@ const COLD_KEYWORDS = ['iced', 'cold brew']
 const FOOD_KEYWORDS = ['muffin', 'brownie', 'cookie', 'sandwich', 'cake', 'croissant']
 const WATER_KEYWORDS = ['water', 'still', 'sparkling']
 const SHOW_INVENTORY_ROLLUP = false
+
+const CONFIDENCE_LABEL: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low' }
 
 function matchesAny(name: string, keywords: string[]): boolean {
   const lower = name.toLowerCase()
@@ -65,6 +69,41 @@ function computeInventory(items: Forecast['items']): InventoryRollup {
   return rollup
 }
 
+interface ReviewRow extends ForecastItem {
+  actual: number | null
+  /** Units sold against a prediction of zero — a miss with no percentage. */
+  missedUnits: number
+  pct: number | null
+}
+
+/**
+ * Ranks the day's items by how badly the forecast was wrong.
+ *
+ * Predicting 0 and selling 40 is the largest miss the model can make, and it
+ * is the one the review screen used to be unable to show: the percentage
+ * divides by the prediction, so it was forced to 0 and the row sorted to the
+ * bottom. An owner reading "What we missed" was told the day went fine while a
+ * whole line ran out.
+ */
+function buildReviewRows(items: ForecastItem[], hasActuals: boolean): ReviewRow[] {
+  return items
+    .map((item) => {
+      const actual = hasActuals && item.actualQty != null ? item.actualQty : null
+      const missedUnits = actual != null && item.predictedQty === 0 ? actual : 0
+      const pct =
+        actual != null && item.predictedQty > 0
+          ? ((actual - item.predictedQty) / item.predictedQty) * 100
+          : null
+      return { ...item, actual, missedUnits, pct }
+    })
+    .sort((a, b) => {
+      if (a.missedUnits !== b.missedUnits) return b.missedUnits - a.missedUnits
+      const aPct = a.pct == null ? -1 : Math.abs(a.pct)
+      const bPct = b.pct == null ? -1 : Math.abs(b.pct)
+      return bPct - aPct
+    })
+}
+
 interface Props {
   forecast: Forecast
   weekAvg: number
@@ -73,6 +112,8 @@ interface Props {
 
 export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   const { items, totalPredictedRevenue } = forecast
   const calendarDate = forecastDateKey(forecast)
   const isClosed = forecast.availability?.status === 'closed'
@@ -84,13 +125,22 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
   forecastDate.setHours(0, 0, 0, 0)
   const isPast = forecastDate < today
 
+  // Save and restore focus exactly once per open. Tying this to `onClose` meant
+  // every re-render of the page behind the drawer tore the effect down, threw
+  // focus back to the top of the dialog, and overwrote the element we have to
+  // return focus to on close.
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
     dialogRef.current?.focus()
+    return () => {
+      previousFocus?.focus()
+    }
+  }, [])
 
+  useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (e.key === 'Escape') {
-        onClose()
+        closeRef.current()
         return
       }
       if (e.key !== 'Tab' || !dialogRef.current) return
@@ -112,11 +162,8 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
       }
     }
     window.addEventListener('keydown', handler)
-    return () => {
-      window.removeEventListener('keydown', handler)
-      previousFocus?.focus()
-    }
-  }, [onClose])
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   // Prevent background scroll
   useEffect(() => {
@@ -138,25 +185,29 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
       ? ((actualRevenue - totalPredictedRevenue) / totalPredictedRevenue) * 100
       : null
 
-  // Items sorted by absolute delta desc for review mode
-  const sortedForReview = [...items]
-    .map((it) => {
-      const pct =
-        hasActuals && it.actualQty != null && it.predictedQty > 0
-          ? Math.abs((it.actualQty - it.predictedQty) / it.predictedQty)
-          : 0
-      return { ...it, absDeltaPct: pct }
-    })
-    .sort((a, b) => b.absDeltaPct - a.absDeltaPct)
+  const reviewRows = buildReviewRows(items, hasActuals)
 
-  // Worst-miss items: >15% off
-  const worstMiss = sortedForReview.filter(
-    (it) => hasActuals && it.actualQty != null && it.absDeltaPct > 0.15
-  ).slice(0, 3)
+  // Worst misses: an unforecast line first, then anything more than 15% out.
+  const worstMiss = reviewRows
+    .filter((row) => row.actual != null && (row.missedUnits > 0 || Math.abs(row.pct ?? 0) > 15))
+    .slice(0, 3)
 
   // ── Plan mode helpers ──────────────────────────────────────────────────────
   const sortedItems = [...items].sort((a, b) => b.predictedQty - a.predictedQty)
+  // The drawer is where an owner builds an order, so it must not be the one
+  // surface that prints a stock instruction against a line selling under two a
+  // day. Today and the day cards already split these out.
+  const plannedItems = sortedItems.filter((item) => !isOccasionalSeller(item))
+  const occasionalItems = sortedItems.filter((item) => isOccasionalSeller(item))
+  const showConfidence = items.some((item) => item.confidence != null)
+  const coverage = forecast.forecastCoverage
+  const itemsTruncated =
+    coverage != null &&
+    typeof coverage.itemCount === 'number' &&
+    typeof coverage.storedItemCount === 'number' &&
+    coverage.storedItemCount < coverage.itemCount
   const inventory = computeInventory(items)
+  const basis = isPast ? null : forecastBasisSentence(forecast)
 
   return (
     <>
@@ -187,7 +238,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
           </div>
           <button
             onClick={onClose}
-            className="text-muted hover:text-text p-1 -mr-1 shrink-0"
+            className="text-muted hover:text-text p-1 -mr-1 shrink-0 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-guava-red"
             aria-label="Close forecast details"
           >
             <X className="w-4 h-4" />
@@ -278,15 +329,17 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               </p>
               <div className="space-y-2">
                 {worstMiss.map((item) => {
-                  const diff = (item.actualQty ?? 0) - item.predictedQty
-                  const direction = diff > 0 ? 'over by' : 'under by'
+                  const actual = item.actual ?? 0
+                  const diff = actual - item.predictedQty
                   const absDiff = Math.abs(diff)
                   return (
                     <div key={item.itemName} className="text-xs text-muted">
                       <span className="text-text">{item.itemName}</span>
-                      {' — '}predicted {item.predictedQty}, actual {item.actualQty},{' '}
+                      {' — '}predicted {item.predictedQty}, actual {actual},{' '}
                       <span className={diff > 0 ? 'text-guava-green' : 'text-guava-red-text'}>
-                        {direction} {absDiff} units
+                        {item.missedUnits > 0
+                          ? `${item.missedUnits} units the forecast did not see at all`
+                          : `${diff > 0 ? 'over by' : 'under by'} ${absDiff} units`}
                       </span>
                     </div>
                   )
@@ -301,7 +354,7 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
               <p className="text-text text-xs font-semibold uppercase tracking-wider mb-3">
                 Why this prediction?
               </p>
-              <ModifierBreakdown factors={forecast.factors} />
+              <ModifierBreakdown forecast={forecast} basis={basis} />
             </div>
           )}
 
@@ -315,63 +368,132 @@ export function DayDetailDrawer({ forecast, weekAvg, onClose }: Props) {
 
             {isPast ? (
               // Review mode: Item · Predicted · Actual · Δ%
-              <div className="space-y-0">
-                <div className="grid grid-cols-4 pb-2 border-b border-border">
-                  <span className="text-muted text-[10px] uppercase tracking-wider">Item</span>
-                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Predicted</span>
-                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Actual</span>
-                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Δ %</span>
-                </div>
-                {(hasActuals ? sortedForReview : sortedItems).map((item) => {
-                  const pct =
-                    hasActuals && item.actualQty != null && item.predictedQty > 0
-                      ? ((item.actualQty - item.predictedQty) / item.predictedQty) * 100
-                      : null
-                  const pctColor =
-                    pct == null
-                      ? 'text-muted'
-                      : Math.abs(pct) <= 5
-                      ? 'text-guava-green'
-                      : Math.abs(pct) <= 15
-                      ? 'text-guava-yellow'
-                      : 'text-guava-red-text'
-                  return (
-                    <div
-                      key={item.itemName}
-                      className="grid grid-cols-4 py-2 border-b border-[#1F1F1F] last:border-0"
-                    >
-                      <span className="text-text text-xs truncate pr-1">{item.itemName}</span>
-                      <span className="text-muted text-xs text-right">{item.predictedQty}</span>
-                      <span className="text-muted text-xs text-right">
-                        {hasActuals && item.actualQty != null ? item.actualQty : '---'}
-                      </span>
-                      <span className={`text-xs text-right ${pctColor}`}>
-                        {pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%` : '---'}
-                      </span>
-                    </div>
-                  )
-                })}
+              <div className="overflow-x-auto" role="region" aria-label="Predicted versus actual by item, scrollable" tabIndex={0}>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-left font-medium pb-2">Item</th>
+                      <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-right font-medium pb-2">Predicted</th>
+                      <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-right font-medium pb-2">Actual</th>
+                      <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-right font-medium pb-2">Δ %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(hasActuals ? reviewRows : buildReviewRows(sortedItems, false)).map((item) => {
+                      const pct = item.pct
+                      const pctColor =
+                        item.missedUnits > 0
+                          ? 'text-guava-red-text'
+                          : pct == null
+                          ? 'text-muted'
+                          : Math.abs(pct) <= 5
+                          ? 'text-guava-green'
+                          : Math.abs(pct) <= 15
+                          ? 'text-guava-yellow'
+                          : 'text-guava-red-text'
+                      return (
+                        <tr key={item.itemName} className="border-b border-[#1F1F1F] last:border-0">
+                          <th scope="row" className="text-text text-xs font-normal text-left truncate pr-1 py-2 max-w-40">
+                            {item.itemName}
+                          </th>
+                          <td className="text-muted text-xs text-right py-2">{item.predictedQty}</td>
+                          <td className="text-muted text-xs text-right py-2">
+                            {item.actual != null ? item.actual : '---'}
+                          </td>
+                          <td className={`text-xs text-right py-2 ${pctColor}`}>
+                            {item.missedUnits > 0
+                              ? `+${item.missedUnits} units`
+                              : pct != null
+                              ? `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`
+                              : '---'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             ) : (
-              // Plan mode: Item · Predicted · Suggested stock · Revenue est.
-              <div className="space-y-0">
-                <div className="grid grid-cols-3 pb-2 border-b border-border">
-                  <span className="text-muted text-[10px] uppercase tracking-wider">Item</span>
-                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Predicted</span>
-                  <span className="text-muted text-[10px] uppercase tracking-wider text-right">Suggested stock</span>
+              // Plan mode: Item · Predicted · Suggested stock (+ confidence)
+              <div className="space-y-4">
+                <div className="overflow-x-auto" role="region" aria-label="Predicted quantity and suggested stock by item, scrollable" tabIndex={0}>
+                  <table className="w-full text-xs">
+                    <caption className="sr-only">
+                      Predicted demand and suggested stock for each item you plan to sell
+                    </caption>
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-left font-medium pb-2">Item</th>
+                        <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-right font-medium pb-2">Predicted demand</th>
+                        <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-right font-medium pb-2">Suggested stock</th>
+                        {showConfidence && (
+                          <th scope="col" className="text-muted text-[10px] uppercase tracking-wider text-right font-medium pb-2">Confidence</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {plannedItems.length === 0 && (
+                        <tr>
+                          <td colSpan={showConfidence ? 4 : 3} className="text-muted text-xs py-3">
+                            Every line on this day sells under {OCCASIONAL_SELLER_MAX_QTY} a day. Keep a few of each
+                            on hand rather than ordering to a number.
+                          </td>
+                        </tr>
+                      )}
+                      {plannedItems.map((item) => (
+                        <tr key={item.itemName} className="border-b border-[#1F1F1F] last:border-0">
+                          <th scope="row" className="text-text text-xs font-normal text-left truncate pr-1 py-2 max-w-40">
+                            {item.itemName}
+                          </th>
+                          <td className="text-muted text-xs text-right py-2">{item.predictedQty}</td>
+                          <td className="text-muted text-xs text-right py-2">{item.suggestedStock ?? '—'}</td>
+                          {showConfidence && (
+                            <td
+                              className={`text-xs text-right py-2 ${
+                                item.confidence === 'low' ? 'text-guava-yellow' : 'text-muted'
+                              }`}
+                            >
+                              {item.confidence ? CONFIDENCE_LABEL[item.confidence] ?? item.confidence : '—'}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                {sortedItems.map((item) => {
-                  return (
-                    <div
-                      key={item.itemName}
-                      className="grid grid-cols-3 py-2 border-b border-[#1F1F1F] last:border-0"
-                    >
-                      <span className="text-text text-xs truncate pr-1">{item.itemName}</span>
-                      <span className="text-muted text-xs text-right">{item.predictedQty}</span>
-                      <span className="text-muted text-xs text-right">{item.suggestedStock ?? '—'}</span>
+
+                {occasionalItems.length > 0 && (
+                  <div>
+                    <div className="flex items-baseline gap-2 mb-2">
+                      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                        Occasional sellers
+                      </h4>
+                      <span className="text-[10px] text-muted">
+                        under {OCCASIONAL_SELLER_MAX_QTY} a day — keep a few on hand rather than ordering to a number
+                      </span>
                     </div>
-                  )
-                })}
+                    <div className="flex flex-wrap gap-1.5">
+                      {occasionalItems.map((item) => (
+                        <span
+                          key={item.itemName}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-[#161616] px-2.5 py-1 text-[11px] text-muted"
+                        >
+                          <span className="truncate max-w-45">{item.itemName}</span>
+                          <span className="tabular-nums text-muted">
+                            {item.predictedQty > 0 ? `~${item.predictedQty}` : 'rare'}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {itemsTruncated && coverage && (
+                  <p className="text-[11px] text-muted">
+                    Showing the {coverage.storedItemCount} largest of {coverage.itemCount} forecast lines.
+                    Predicted revenue covers all {coverage.itemCount}.
+                  </p>
+                )}
               </div>
             )}
           </div>}

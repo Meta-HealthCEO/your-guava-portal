@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ComponentType, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import {
   AlertCircle,
@@ -32,6 +32,11 @@ import type { TeamMember, CafeBasic } from '@/types'
 
 type ToastState = { type: 'success' | 'error'; message: string } | null
 type SeatSummary = { plan: string; used: number; active?: number; pending?: number; included: number; remaining: number }
+type LocationUsage = { used: number; included: number; plan?: string }
+type AccountUsageResponse = {
+  organization?: { plan?: string }
+  usage?: { locations?: { used: number; included: number } }
+}
 type PendingInvitation = {
   _id: string
   name: string
@@ -41,6 +46,12 @@ type PendingInvitation = {
   createdAt: string
   status: 'pending' | 'expired'
   permissions?: { canSpendCredits: boolean }
+}
+
+const formatExpiry = (value: string) => {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })
 }
 
 function Toast({ toast }: { toast: ToastState }) {
@@ -99,6 +110,17 @@ function StatTile({
   )
 }
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * This component claimed `aria-modal="true"` while implementing none of the
+ * behaviour that claim entails, and it backs every destructive flow on the page
+ * — remove member, revoke invitation, transfer ownership. A keyboard user could
+ * tab straight out of the ownership confirmation into the page behind the
+ * overlay, and Escape did nothing. The pattern below mirrors DayDetailDrawer,
+ * which already does this correctly elsewhere in the codebase.
+ */
 function Dialog({
   open,
   title,
@@ -114,15 +136,63 @@ function Dialog({
   footer: React.ReactNode
   onClose: () => void
 }) {
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // Callers pass a fresh arrow function on every render. Depending on it
+  // directly would re-run the effect on each keystroke, pulling focus back to
+  // the first field mid-typing and restoring it to the trigger in between.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  useEffect(() => {
+    if (!open) return
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const panel = panelRef.current
+    // Focus the first real control if there is one, otherwise the panel, so the
+    // user is never left on a trigger hidden behind the overlay.
+    const initial = panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+    ;(initial ?? panel)?.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || !panel) return
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+      previouslyFocused?.focus?.()
+    }
+  }, [open])
+
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-4 py-6">
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="flex max-h-[calc(100vh-3rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        tabIndex={-1}
+        className="flex max-h-[calc(100vh-3rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl focus-visible:outline-none"
       >
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="min-w-0">
@@ -213,7 +283,9 @@ export default function Team() {
   const [invitations, setInvitations] = useState<PendingInvitation[]>([])
   const [cafes, setCafes] = useState<CafeBasic[]>([])
   const [seats, setSeats] = useState<SeatSummary | null>(null)
+  const [locationUsage, setLocationUsage] = useState<LocationUsage | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [toast, setToast] = useState<ToastState>(null)
 
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -243,12 +315,12 @@ export default function Team() {
   const [newCafeCity, setNewCafeCity] = useState('')
   const [addingCafe, setAddingCafe] = useState(false)
 
-  const showToast = (type: 'success' | 'error', message: string) => {
+  const showToast = useCallback((type: 'success' | 'error', message: string) => {
     setToast({ type, message })
     window.setTimeout(() => setToast(null), 4000)
-  }
+  }, [])
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [teamRes, cafeRes] = await Promise.all([
         api.get<{ success: boolean; members: TeamMember[]; invitations?: PendingInvitation[]; seats?: SeatSummary }>('/team'),
@@ -258,17 +330,41 @@ export default function Team() {
       setInvitations(teamRes.data.invitations || [])
       setSeats(teamRes.data.seats || null)
       setCafes(cafeRes.data.cafes || [])
+      setLoadError(false)
     } catch {
+      // Leaving the empty state up after a failed fetch told the owner their
+      // organisation had no members, no locations and no seats — and the toast
+      // that said otherwise disappeared four seconds later.
+      setLoadError(true)
       showToast('error', 'Failed to load team data.')
     } finally {
       setLoading(false)
     }
-  }
+
+    // Location capacity lives on /account, which this page never asked for —
+    // so Add location had no idea whether the plan had room. Best-effort: the
+    // page still works without it.
+    try {
+      const { data } = await api.get<{ success: boolean; account: AccountUsageResponse }>('/account')
+      const locations = data.account?.usage?.locations
+      setLocationUsage(
+        locations
+          ? {
+              used: locations.used,
+              included: locations.included,
+              plan: data.account?.organization?.plan,
+            }
+          : null
+      )
+    } catch {
+      setLocationUsage(null)
+    }
+  }, [showToast])
 
   useEffect(() => {
-    if (isOwner) fetchData()
+    if (isOwner) void fetchData()
     else setLoading(false)
-  }, [isOwner])
+  }, [isOwner, fetchData])
 
   const sortedMembers = [...members].sort((a, b) => {
     if (a.role !== b.role) return a.role === 'owner' ? -1 : 1
@@ -282,6 +378,23 @@ export default function Team() {
       ? `${seats.plan} plan is full`
       : `${seats.remaining} available on ${seats.plan}`
     : 'Seat usage'
+
+  // Locations are a metered, plan-capped resource with no delete route anywhere
+  // in the backend, so the allowance has to be visible before the owner spends
+  // one — not discovered as a 402 after they have typed the whole form.
+  const locationPlan = locationUsage?.plan || seats?.plan
+  const locationRemaining = locationUsage ? Math.max(0, locationUsage.included - locationUsage.used) : null
+  const locationLimitReached = locationRemaining !== null && locationRemaining <= 0
+  const locationValue = locationUsage
+    ? `${locationUsage.used}/${locationUsage.included}`
+    : String(cafes.length)
+  const locationSub = locationUsage
+    ? locationLimitReached
+      ? `${locationPlan ?? 'Current'} plan is full`
+      : `${locationRemaining} available on ${locationPlan ?? 'your plan'}`
+    : cafes.length === 1
+      ? cafes[0].name
+      : 'Cafe branches'
 
   const openInviteDialog = () => {
     setInvName('')
@@ -443,6 +556,32 @@ export default function Team() {
     }
   }
 
+  // Closing a dialog with the X or Cancel discarded typed work silently. These
+  // guards only fire when something has actually been entered.
+  const confirmDiscard = (isDirty: boolean) =>
+    !isDirty || window.confirm('Discard the details you have entered?')
+
+  const closeInviteDialog = () => {
+    const dirty = Boolean(invName.trim() || invEmail.trim() || invCanSpendCredits)
+    if (confirmDiscard(dirty)) setInviteOpen(false)
+  }
+
+  const closeEditDialog = () => {
+    const dirty = Boolean(
+      editingMember &&
+        (editName !== editingMember.name ||
+          editCanSpendCredits !== Boolean(editingMember.permissions?.canSpendCredits) ||
+          editCafeIds.length !== editingMember.cafeIds.length ||
+          editCafeIds.some((id) => !editingMember.cafeIds.some((cafe) => cafe._id === id)))
+    )
+    if (confirmDiscard(dirty)) setEditingMember(null)
+  }
+
+  const closeLocationDialog = () => {
+    const dirty = Boolean(newCafeName.trim() || newCafeAddress.trim() || newCafeCity.trim())
+    if (confirmDiscard(dirty)) setLocationOpen(false)
+  }
+
   const beginOwnershipTransfer = (member: TeamMember) => {
     setOwnershipTarget(member)
     setOwnershipPassword('')
@@ -456,11 +595,21 @@ export default function Team() {
         userId: ownershipTarget._id,
         currentPassword: ownershipPassword,
       })
-      await logout()
-      navigate('/login', { replace: true })
     } catch (err: any) {
       showToast('error', err?.response?.data?.message || 'Failed to transfer ownership.')
       setTransferringOwnership(false)
+      return
+    }
+
+    // Past this line the transfer is committed and cannot be undone from the
+    // portal — only the new owner can transfer it back. A failure in sign-out
+    // must never be reported as "Failed to transfer ownership": the former owner
+    // would retry with a password that no longer belongs to an owner.
+    try {
+      await logout()
+      navigate('/login', { replace: true })
+    } catch {
+      window.location.assign('/login')
     }
   }
 
@@ -495,8 +644,31 @@ export default function Team() {
       <div className="space-y-6">
         <Toast toast={toast} />
 
+        {loadError && (
+          <div
+            role="alert"
+            className="flex flex-col gap-3 rounded-lg border border-red-900/30 bg-red-900/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div>
+              <p className="text-sm font-medium text-red-300">Team data could not be loaded</p>
+              <p className="mt-1 text-xs text-muted">
+                This is a loading failure, not a change to your organisation. Nothing has been removed.
+              </p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => void fetchData()}>
+              Try again
+            </Button>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={openLocationDialog}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={openLocationDialog}
+            disabled={locationLimitReached}
+            title={locationLimitReached ? `Location limit reached on the ${locationPlan ?? 'current'} plan` : undefined}
+          >
             <Store className="h-3.5 w-3.5" />
             Add location
           </Button>
@@ -522,9 +694,10 @@ export default function Team() {
           />
           <StatTile
             label="Locations"
-            value={String(cafes.length)}
-            sub={cafes.length === 1 ? cafes[0].name : 'Cafe branches'}
+            value={locationValue}
+            sub={locationSub}
             icon={Store}
+            tone={locationUsage ? (locationLimitReached ? 'warn' : 'good') : 'neutral'}
           />
         </div>
 
@@ -547,7 +720,11 @@ export default function Team() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {sortedMembers.length === 0 ? (
+              {loadError && sortedMembers.length === 0 ? (
+                <div className="px-6 py-14 text-center">
+                  <p className="text-sm text-muted">Team members could not be loaded.</p>
+                </div>
+              ) : sortedMembers.length === 0 ? (
                 <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
                   <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-[#111111]">
                     <Users className="h-5 w-5 text-muted" />
@@ -660,13 +837,24 @@ export default function Team() {
                   </CardTitle>
                   <CardDescription>{cafes.length} cafe{cafes.length === 1 ? '' : 's'}</CardDescription>
                 </div>
-                <Button type="button" variant="ghost" size="icon" onClick={openLocationDialog} aria-label="Add location">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={openLocationDialog}
+                  disabled={locationLimitReached}
+                  aria-label="Add location"
+                >
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              {cafes.length === 0 ? (
+              {loadError && cafes.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border bg-[#111111] px-4 py-8 text-center">
+                  <p className="text-sm text-muted">Locations could not be loaded.</p>
+                </div>
+              ) : cafes.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-[#111111] px-4 py-8 text-center">
                   <Building2 className="mx-auto mb-3 h-5 w-5 text-muted" />
                   <p className="text-sm text-[#949494]">No locations yet</p>
@@ -721,10 +909,18 @@ export default function Team() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-text">{invitation.name}</p>
                       <p className="mt-1 truncate text-xs text-muted">{invitation.email}</p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         <Badge variant={invitation.status === 'expired' ? 'destructive' : 'warning'}>
                           {invitation.status}
                         </Badge>
+                        {/* The card says expiry matters and that pending
+                            invitations hold seats — without a date the owner
+                            cannot decide between waiting and revoking. */}
+                        {invitation.expiresAt && (
+                          <span className="text-xs text-muted">
+                            {`${invitation.status === 'expired' ? 'Expired' : 'Expires'} ${formatExpiry(invitation.expiresAt)}`}
+                          </span>
+                        )}
                         {invitation.permissions?.canSpendCredits && (
                           <Badge variant="secondary">Can spend credits</Badge>
                         )}
@@ -756,10 +952,10 @@ export default function Team() {
         open={inviteOpen}
         title="Add team member"
         description="Managers sign in with their own account and see assigned cafe data."
-        onClose={() => setInviteOpen(false)}
+        onClose={closeInviteDialog}
         footer={
           <>
-            <Button type="button" variant="ghost" onClick={() => setInviteOpen(false)}>
+            <Button type="button" variant="ghost" onClick={closeInviteDialog}>
               Cancel
             </Button>
             <Button type="submit" form="invite-member-form" disabled={inviting || seatLimitReached || cafes.length === 0}>
@@ -795,8 +991,11 @@ export default function Team() {
           <p className="text-xs text-[#9E9E9E]">
             We email a single-use link. The manager chooses their password before an account is created.
           </p>
-          <div className="space-y-2">
-            <Label>Assigned cafes</Label>
+          {/* A bare <Label> above a grid of checkboxes is not a group name — a
+              screen reader announced the cafe names with no hint that these are
+              the access decision the dialog exists to make. */}
+          <div className="space-y-2" role="group" aria-labelledby="invite-cafes-label">
+            <Label id="invite-cafes-label">Assigned cafes</Label>
             <CafeAccessPicker cafes={cafes} selectedIds={invCafeIds} onToggle={toggleInviteCafe} />
           </div>
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-[#111111] p-3">
@@ -820,10 +1019,10 @@ export default function Team() {
         open={Boolean(editingMember)}
         title="Edit member"
         description={editingMember?.email}
-        onClose={() => setEditingMember(null)}
+        onClose={closeEditDialog}
         footer={
           <>
-            <Button type="button" variant="ghost" onClick={() => setEditingMember(null)}>
+            <Button type="button" variant="ghost" onClick={closeEditDialog}>
               Cancel
             </Button>
             <Button type="button" onClick={handleSaveMember} disabled={savingMember}>
@@ -837,8 +1036,8 @@ export default function Team() {
             <Label htmlFor="edit-name">Name</Label>
             <Input id="edit-name" value={editName} onChange={(e) => setEditName(e.target.value)} />
           </div>
-          <div className="space-y-2">
-            <Label>Assigned cafes</Label>
+          <div className="space-y-2" role="group" aria-labelledby="edit-cafes-label">
+            <Label id="edit-cafes-label">Assigned cafes</Label>
             <CafeAccessPicker cafes={cafes} selectedIds={editCafeIds} onToggle={toggleEditCafe} />
           </div>
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-[#111111] p-3">
@@ -972,19 +1171,35 @@ export default function Team() {
         open={locationOpen}
         title="Add location"
         description="New locations count toward your plan allowance."
-        onClose={() => setLocationOpen(false)}
+        onClose={closeLocationDialog}
         footer={
           <>
-            <Button type="button" variant="ghost" onClick={() => setLocationOpen(false)}>
+            <Button type="button" variant="ghost" onClick={closeLocationDialog}>
               Cancel
             </Button>
-            <Button type="submit" form="add-location-form" disabled={addingCafe}>
+            <Button type="submit" form="add-location-form" disabled={addingCafe || locationLimitReached}>
               <Store className="h-4 w-4" />
               {addingCafe ? 'Adding...' : 'Add location'}
             </Button>
           </>
         }
       >
+        {/* There is no cafe-delete route in the backend and no remove control on
+            the Locations card, so a typo here permanently consumes one of two
+            slots on the entry plan. Say the price before it is paid. */}
+        <div className="mb-4 rounded-lg border border-border bg-[#111111] px-3 py-3">
+          <p className="text-sm text-text">
+            {locationUsage
+              ? `This uses 1 of your ${locationUsage.included} ${locationPlan ?? ''} locations — ${locationUsage.used} of ${locationUsage.included} are in use now.`.replace(
+                  /\s+/g,
+                  ' '
+                )
+              : 'This uses one of the locations your plan allows.'}
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            Locations cannot be removed from the portal. Contact support if you add one by mistake.
+          </p>
+        </div>
         <form id="add-location-form" onSubmit={handleAddCafe} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="cafe-name">Cafe name</Label>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { ColumnMapping, ItemsMode } from '@/types/upload'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,13 @@ const CANONICAL_FIELDS: { key: keyof ColumnMapping; label: string; required: boo
   { key: 'quantity', label: 'Quantity (line-per-row mode)', required: false },
 ]
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+const DEFAULT_TITLE = 'Map your CSV columns'
+const DEFAULT_DESCRIPTION =
+  "We couldn't auto-detect your file format. Match each canonical field on the left to the column from your CSV on the right. Required fields are marked with *."
+
 interface Props {
   open: boolean
   headers: string[]
@@ -24,6 +31,9 @@ interface Props {
   initialItemsMode: ItemsMode
   errorMessage?: string | null
   assistiveNotice?: string | null
+  title?: string
+  description?: string
+  confirmLabel?: string
   onConfirm: (mapping: ColumnMapping, itemsMode: ItemsMode) => void | Promise<void>
   onCancel: () => void
 }
@@ -36,6 +46,9 @@ export function ColumnMappingWizard({
   initialItemsMode,
   errorMessage,
   assistiveNotice,
+  title = DEFAULT_TITLE,
+  description = DEFAULT_DESCRIPTION,
+  confirmLabel = 'Confirm and import',
   onConfirm,
   onCancel,
 }: Props) {
@@ -44,7 +57,9 @@ export function ColumnMappingWizard({
   const [isConfirming, setIsConfirming] = useState(false)
   const mountedRef = useRef(true)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
   const receiptRequired = itemsMode === 'line-per-row'
+  const headersMissing = headers.length === 0
 
   useEffect(() => {
     mountedRef.current = true
@@ -55,33 +70,107 @@ export function ColumnMappingWizard({
 
   useEffect(() => {
     if (!open) return
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    // Captured once. The effect used to re-run on every parent render (onCancel
+    // is a fresh arrow each time), and each re-run re-recorded the *dialog* as
+    // the element to restore to, losing the real trigger and yanking focus back
+    // out of whichever select the user was operating.
+    if (!restoreFocusRef.current && document.activeElement instanceof HTMLElement) {
+      restoreFocusRef.current = document.activeElement
+    }
     dialogRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !isConfirming) onCancel()
+    return () => {
+      restoreFocusRef.current?.focus()
+      restoreFocusRef.current = null
+    }
+  }, [open])
+
+  const cancelRef = useRef(onCancel)
+  cancelRef.current = onCancel
+  const confirmingRef = useRef(isConfirming)
+  confirmingRef.current = isConfirming
+
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !confirmingRef.current) cancelRef.current()
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      previousFocus?.focus()
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open])
+
+  // Tab used to walk straight out of the modal onto the Data Health drop zone
+  // behind the overlay -- which could stage a second file while this dialog
+  // still held the first file's mapping.
+  const trapTab = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return
+    const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE)
+    if (!focusables || focusables.length === 0) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    const active = document.activeElement
+    if (event.shiftKey && active === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault()
+      first.focus()
     }
-  }, [isConfirming, onCancel, open])
+  }, [])
+
+  const knownHeaders = useMemo(() => new Set(headers), [headers])
+
+  // A column name that is not in this file's headers is not a mapping, it is a
+  // leftover from a different file. Treating it as set let Confirm stay enabled
+  // over a form whose every select rendered blank.
+  const effectiveMapping = useMemo(() => {
+    const next: ColumnMapping = {}
+    for (const [key, value] of Object.entries(mapping)) {
+      if (typeof value === 'string' && knownHeaders.has(value)) {
+        next[key as keyof ColumnMapping] = value
+      }
+    }
+    return next
+  }, [mapping, knownHeaders])
 
   const duplicateColumns = useMemo(() => {
-    const selected = Object.values(mapping).filter((value): value is string => Boolean(value))
-    return [...new Set(selected.filter((value, index) => selected.indexOf(value) !== index))]
-  }, [mapping])
+    const fieldsByColumn = new Map<string, (keyof ColumnMapping)[]>()
+    for (const [key, value] of Object.entries(effectiveMapping)) {
+      if (!value) continue
+      fieldsByColumn.set(value, [...(fieldsByColumn.get(value) || []), key as keyof ColumnMapping])
+    }
+    const reused: string[] = []
+    for (const [column, fields] of fieldsByColumn) {
+      if (fields.length < 2) continue
+      // A single combined "Date/Time" column legitimately serves both fields,
+      // and a large share of POS exports have no other shape. Blocking it read
+      // as "your file is unsupported".
+      const combinedTimestamp = fields.length === 2 && fields.includes('date') && fields.includes('time')
+      if (combinedTimestamp) continue
+      reused.push(column)
+    }
+    return reused
+  }, [effectiveMapping])
+
+  const duplicateFields = useMemo(() => {
+    const flagged = new Set<keyof ColumnMapping>()
+    for (const [key, value] of Object.entries(effectiveMapping)) {
+      if (value && duplicateColumns.includes(value)) flagged.add(key as keyof ColumnMapping)
+    }
+    return flagged
+  }, [duplicateColumns, effectiveMapping])
+
   const requiredOk = useMemo(
     () => Boolean(
-      mapping.date &&
-      mapping.items &&
-      mapping.total &&
-      (!receiptRequired || mapping.receiptId) &&
+      !headersMissing &&
+      effectiveMapping.date &&
+      effectiveMapping.items &&
+      effectiveMapping.total &&
+      (!receiptRequired || effectiveMapping.receiptId) &&
       duplicateColumns.length === 0
     ),
-    [duplicateColumns.length, mapping, receiptRequired]
+    [duplicateColumns.length, effectiveMapping, headersMissing, receiptRequired]
   )
-  const receiptRequirementMessage = receiptRequired && !mapping.receiptId
+  const receiptRequirementMessage = receiptRequired && !effectiveMapping.receiptId
     ? 'Receipt ID is required for line-per-row imports.'
     : null
   const duplicateMappingMessage = duplicateColumns.length > 0
@@ -97,10 +186,17 @@ export function ColumnMappingWizard({
     if (!requiredOk || isConfirming) return
     setIsConfirming(true)
     try {
-      await onConfirm(mapping, itemsMode)
+      await onConfirm(effectiveMapping, itemsMode)
     } finally {
       if (mountedRef.current) setIsConfirming(false)
     }
+  }
+
+  const describedBy = (key: keyof ColumnMapping) => {
+    const ids: string[] = []
+    if (key === 'receiptId' && receiptRequirementMessage) ids.push('mapping-receipt-required')
+    if (duplicateFields.has(key)) ids.push('mapping-duplicate-columns')
+    return ids.length > 0 ? ids.join(' ') : undefined
   }
 
   return (
@@ -112,13 +208,11 @@ export function ColumnMappingWizard({
         aria-modal="true"
         aria-labelledby="column-mapping-title"
         tabIndex={-1}
+        onKeyDown={trapTab}
       >
         <CardHeader>
-          <CardTitle id="column-mapping-title">Map your CSV columns</CardTitle>
-          <p className="text-sm text-muted">
-            We couldn't auto-detect your file format. Match each canonical field on the left to the
-            column from your CSV on the right. Required fields are marked with *.
-          </p>
+          <CardTitle id="column-mapping-title">{title}</CardTitle>
+          <p className="text-sm text-muted">{description}</p>
         </CardHeader>
         <CardContent className="space-y-4">
           {assistiveNotice && (
@@ -126,9 +220,16 @@ export function ColumnMappingWizard({
               {assistiveNotice}
             </div>
           )}
+          {headersMissing && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" role="alert">
+              The original column headers for this file are no longer stored, so there is nothing to
+              map. Upload the file again to change how its columns are read.
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             {CANONICAL_FIELDS.map(({ key, label, required }) => {
               const fieldRequired = required || (key === 'receiptId' && receiptRequired)
+              const invalid = duplicateFields.has(key) || (key === 'receiptId' && Boolean(receiptRequirementMessage))
               return (
                 <div key={key} className="contents">
                   <label htmlFor={`mapping-${key}`} className="text-sm text-text self-center">
@@ -137,12 +238,15 @@ export function ColumnMappingWizard({
                   <select
                     id={`mapping-${key}`}
                     className="bg-[#111111] border border-border rounded-lg px-2 py-1 text-sm"
-                    value={mapping[key] || ''}
+                    value={effectiveMapping[key] || ''}
+                    aria-required={fieldRequired || undefined}
+                    aria-invalid={invalid || undefined}
+                    aria-describedby={describedBy(key)}
                     onChange={(e) => setField(key, e.target.value)}
                   >
                   <option value="">— none —</option>
-                    {headers.map((h) => (
-                      <option key={h} value={h}>{h}</option>
+                    {headers.map((h, index) => (
+                      <option key={`${h}-${index}`} value={h}>{h}</option>
                     ))}
                   </select>
                 </div>
@@ -169,12 +273,12 @@ export function ColumnMappingWizard({
               <div className="overflow-auto max-h-48 border border-border rounded-lg">
                 <table className="text-xs w-full">
                   <thead className="bg-[#111111]">
-                    <tr>{headers.map((h) => <th key={h} className="px-2 py-1 text-left">{h}</th>)}</tr>
+                    <tr>{headers.map((h, index) => <th key={`${h}-${index}`} className="px-2 py-1 text-left">{h}</th>)}</tr>
                   </thead>
                   <tbody>
                     {preview.map((row, i) => (
                       <tr key={i} className="border-t border-border">
-                        {headers.map((h) => <td key={h} className="px-2 py-1">{row[h]}</td>)}
+                        {headers.map((h, index) => <td key={`${h}-${index}`} className="px-2 py-1">{row[h]}</td>)}
                       </tr>
                     ))}
                   </tbody>
@@ -184,13 +288,21 @@ export function ColumnMappingWizard({
           )}
 
           {receiptRequirementMessage && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" role="alert">
+            <div
+              id="mapping-receipt-required"
+              className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+              role="alert"
+            >
               {receiptRequirementMessage}
             </div>
           )}
 
           {duplicateMappingMessage && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" role="alert">
+            <div
+              id="mapping-duplicate-columns"
+              className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+              role="alert"
+            >
               {duplicateMappingMessage}
             </div>
           )}
@@ -208,7 +320,7 @@ export function ColumnMappingWizard({
               disabled={!requiredOk || isConfirming}
               onClick={handleConfirm}
             >
-              {isConfirming ? 'Importing...' : 'Confirm and import'}
+              {isConfirming ? 'Importing...' : confirmLabel}
             </Button>
           </div>
         </CardContent>

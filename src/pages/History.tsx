@@ -15,7 +15,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { ModelLearningPanel } from '@/components/forecasts/ModelLearningPanel'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import api from '@/lib/api'
+import api, { isSessionRejection } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { ForecastHistoryResponse, ForecastHistoryRow } from '@/types'
 import { parseDateOnly } from '@/lib/date'
@@ -34,6 +34,10 @@ const PERIODS = [
 
 const HISTORY_PAGE_SIZE = 30
 const HISTORY_BACKFILL_BATCH_SIZE = 14
+// `backfill=sync` runs up to a full batch of forecast generations inside one
+// request. The shared axios client times out at 20s, which aborted legitimate
+// batches; the upload confirm sets 120s for the same reason.
+const HISTORY_BACKFILL_TIMEOUT_MS = 180_000
 
 const currency = new Intl.NumberFormat('en-ZA', {
   style: 'currency',
@@ -142,6 +146,11 @@ export default function History() {
   const [error, setError] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [buildingHistory, setBuildingHistory] = useState(false)
+  // Kept apart from `error`, which belongs to the page load. Putting a backfill
+  // failure there unmounted the table, the accuracy panels and the learning
+  // panel, so a failed extra batch read as if the history had been lost.
+  const [backfillError, setBackfillError] = useState<string | null>(null)
+  const [backfillNote, setBackfillNote] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -177,7 +186,8 @@ export default function History() {
   const buildNextHistoryBatch = async () => {
     if (buildingHistory) return
     setBuildingHistory(true)
-    setError(null)
+    setBackfillError(null)
+    setBackfillNote(null)
     try {
       const { data } = await api.get<ForecastHistoryResponse>('/forecasts/history', {
         params: {
@@ -187,12 +197,27 @@ export default function History() {
           backfill: 'sync',
           backfillLimit: meta?.backfill?.batchSize || HISTORY_BACKFILL_BATCH_SIZE,
         },
+        timeout: HISTORY_BACKFILL_TIMEOUT_MS,
       })
       setHistory(data.history || data.rows || [])
       setMeta(data.meta)
       setPagination(data.pagination || null)
-    } catch {
-      setError('The next history batch could not be built. Existing history is unchanged.')
+      const generated = data.meta?.generated ?? 0
+      setBackfillNote(
+        generated > 0
+          ? `Built ${generated} retrospective day${generated === 1 ? '' : 's'}.`
+          : 'No further days could be built from the sales data available.'
+      )
+    } catch (err) {
+      // The server writes each day as it goes, with no transaction and no
+      // rollback, so "existing history is unchanged" was a claim the client
+      // could not make and was most likely false.
+      setBackfillError(
+        isSessionRejection(err)
+          ? 'Your sign-in has expired. Sign in again to carry on building history.'
+          : 'We lost contact before this batch finished. Days built before that point were kept — this page has been reloaded to show exactly what landed.'
+      )
+      setRefreshNonce((value) => value + 1)
     } finally {
       setBuildingHistory(false)
     }
@@ -418,16 +443,40 @@ export default function History() {
           </>
         )}
 
+        {!loading && backfillError && (
+          <div className="rounded-lg border border-guava-red/30 bg-guava-red/10 p-4 text-sm text-guava-red-text" role="alert">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{backfillError}</p>
+            </div>
+          </div>
+        )}
+
+        {!loading && !backfillError && backfillNote && (
+          <div className="rounded-lg border border-guava-green/25 bg-guava-green/10 p-4 text-sm text-guava-green" role="status">
+            {backfillNote}
+          </div>
+        )}
+
         {!loading && !error && meta?.pendingDays ? (
           <div className="rounded-lg border border-guava-yellow/30 bg-guava-yellow/10 p-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="font-medium text-guava-yellow">
-                  {history.length === 0 ? 'Preparing history' : 'More historical estimates are available'}
+                  {history.length === 0
+                    ? `Check the model against your last ${meta.totalTradingDays} trading days`
+                    : 'More historical estimates are available'}
                 </p>
                 <p className="mt-1 text-sm text-muted">
                   Showing {meta.totalRows} of {meta.totalTradingDays} completed trading days.
                   Building a batch creates retrospective estimates marked as backtests; they are not original live predictions.
+                </p>
+                {/* Every other compute-ish action in the portal states its
+                    credit cost, so silence here read as a bill of unknown size.
+                    The backfill path does no metering at all. */}
+                <p className="mt-1 text-sm text-muted">
+                  Free — building history uses no Guava Credits. A batch of{' '}
+                  {meta.backfill?.batchSize || HISTORY_BACKFILL_BATCH_SIZE} days can take up to a minute.
                 </p>
               </div>
               <Button variant="outline" size="sm" disabled={buildingHistory} onClick={buildNextHistoryBatch}>
