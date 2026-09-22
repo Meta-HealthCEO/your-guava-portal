@@ -736,4 +736,51 @@ describe('Dashboard', () => {
     expect(screen.getAllByText('low confidence')).toHaveLength(1)
     expect(screen.getAllByText('high confidence')).toHaveLength(1)
   })
+  describe('first-run setup checklist', () => {
+    beforeEach(() => localStorage.clear())
+
+    const noCoords = {
+      ...mockForecast.signals,
+      weather: {
+        available: false,
+        condition: '',
+        unavailableReason: 'Cafe coordinates are not configured',
+      },
+    }
+
+    it('lists the settings that are holding the forecasts back', async () => {
+      // Both of these are already stated where they bite. What was missing is
+      // one place, on the screen a new owner opens, saying the work is
+      // outstanding at all.
+      mockClosedWeek([
+        { ...mockForecast, _id: 'f1', date: '2026-03-28', signals: noCoords },
+        {
+          ...mockForecast,
+          _id: 'f2',
+          date: '2026-03-29',
+          signals: noCoords,
+          items: [],
+          totalPredictedRevenue: 0,
+          availability: { status: 'closed', reason: CONTRADICTED_REASON, contradictsHistory: true },
+        },
+      ])
+
+      render(<Dashboard />)
+
+      await waitFor(() => expect(screen.getByText('Finish setting up')).toBeInTheDocument())
+      expect(screen.getByText(/2 settings are holding your forecasts back/i)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: /set your cafe's location/i })).toBeInTheDocument()
+      // Named, not "a day": the owner has to know which switch to look at.
+      expect(screen.getByRole('link', { name: /sunday is set to closed/i })).toBeInTheDocument()
+    })
+
+    it('says nothing when there is nothing outstanding', async () => {
+      mockClosedWeek([{ ...mockForecast, _id: 'f1', date: '2026-03-28' }])
+
+      render(<Dashboard />)
+
+      await waitFor(() => expect(screen.getByText('Forecast Revenue')).toBeInTheDocument())
+      expect(screen.queryByText('Finish setting up')).toBeNull()
+    })
+  })
 })

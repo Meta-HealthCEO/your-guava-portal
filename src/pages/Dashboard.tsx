@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { ClosedDayNotice } from '@/components/forecasts/ClosedDayNotice'
+import { SetupChecklistCard, type SetupItem } from '@/components/SetupChecklistCard'
 import { Link } from 'react-router'
 import {
   TrendingUp,
@@ -635,6 +636,40 @@ export default function Dashboard() {
     typeof coverage?.totalPredictedQty === 'number'
       ? coverage.totalPredictedQty
       : activeForecast?.items.reduce((sum, i) => sum + i.predictedQty, 0) ?? 0
+  // The two settings a cafe can finish its first upload without, both of which
+  // quietly cost it forecast quality. Derived from the week already loaded, so
+  // there is no extra request and no second source of truth: the weather
+  // signal is what knows the coordinates are missing, and the engine is what
+  // knows a closed day contradicts the sales record.
+  const setupItems = useMemo<SetupItem[]>(() => {
+    const items: SetupItem[] = []
+    const anyDay = weekForecasts[0] || fallbackForecast
+    const weatherFix = anyDay && !isWeatherAvailable(anyDay.signals.weather)
+      ? signalFix(weatherUnavailableReason(anyDay.signals.weather))
+      : null
+    if (weatherFix) {
+      items.push({
+        id: 'location',
+        label: "Set your cafe's location so weather can adjust forecasts",
+        href: weatherFix.to,
+      })
+    }
+    const contradicted = weekForecasts.find((f) => f.availability?.contradictsHistory)
+    if (contradicted) {
+      // Name the weekday. "A day is set to closed" makes the owner hunt for
+      // which switch, on a screen with seven of them.
+      const dayName = parseDateOnly(forecastDateKey(contradicted)).toLocaleDateString('en-ZA', {
+        weekday: 'long',
+      })
+      items.push({
+        id: 'hours',
+        label: `${dayName} is set to closed but you had sales — check trading hours`,
+        href: '/settings?section=general',
+      })
+    }
+    return items
+  }, [weekForecasts, fallbackForecast])
+
   const isClosedDay = activeForecast?.availability?.status === 'closed'
   const isAwaitingHistory = activeForecast?.availability?.status === 'insufficient_data'
   // Average the week over trading days only, as Planning does. A closed day is
@@ -808,6 +843,11 @@ export default function Dashboard() {
           The forecast loaded, but the historical transaction summary is temporarily unavailable.
         </div>
       )}
+
+      {/* Above the numbers: what the numbers are missing comes before the
+          numbers themselves. Dismissible, and per item, so it does not become
+          a permanent fixture for someone who has read it. */}
+      {!isLoading && <SetupChecklistCard items={setupItems} />}
 
       {/* The engine flags a day it cannot yet stand behind. Planning already
           says so; Today is the screen people actually order from, so it has to
