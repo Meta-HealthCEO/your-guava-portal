@@ -401,6 +401,10 @@ export default function Connect() {
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>('uploading')
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<ImportResult | null>(null)
+  // Menu items an import created that do not match anything yet. The import is
+  // what caused that work, so this is where the owner should hear about it - not
+  // by noticing a separate nav entry later.
+  const [itemsNeedingMatch, setItemsNeedingMatch] = useState(0)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [extraFilesNotice, setExtraFilesNotice] = useState<string | null>(null)
   const [lastUpload, setLastUpload] = useState<string | null>(null)
@@ -439,6 +443,11 @@ export default function Connect() {
     })
 
   const finishConfirmation = (confirmed: ConfirmUploadResponse) => {
+    // Best-effort: a failure here must not spoil a successful import, so the
+    // count simply stays at zero and the line is not shown.
+    api.get<{ meta?: { counts?: { needs_review?: number } } }>('/items')
+      .then(({ data }) => setItemsNeedingMatch(data.meta?.counts?.needs_review ?? 0))
+      .catch(() => setItemsNeedingMatch(0))
     setResult({
       imported: confirmed.stats.imported,
       skipped: confirmed.stats.skipped,
@@ -835,6 +844,22 @@ export default function Connect() {
                               : 'Queued a durable forecast and actuals refresh'}
                           </span>
                         </li>
+                        {itemsNeedingMatch > 0 && (
+                          <li className="flex items-start gap-2 text-muted text-sm">
+                            <span className="text-guava-yellow mt-0.5">•</span>
+                            <span>
+                              {itemsNeedingMatch.toLocaleString('en-ZA')} menu item
+                              {itemsNeedingMatch === 1 ? '' : 's'} still need matching to your
+                              menu —{' '}
+                              <Link
+                                to="/data-health/menu-items"
+                                className="text-guava-red-text hover:underline"
+                              >
+                                review them
+                              </Link>
+                            </span>
+                          </li>
+                        )}
                       </ul>
                     </div>
                   </div>
