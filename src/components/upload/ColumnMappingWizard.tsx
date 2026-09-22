@@ -27,7 +27,8 @@ interface Props {
   open: boolean
   headers: string[]
   preview: Record<string, string>[]
-  initialMapping: ColumnMapping
+  /** May be absent: an upload staged from an unknown format has no mapping yet. */
+  initialMapping?: ColumnMapping
   initialItemsMode: ItemsMode
   errorMessage?: string | null
   assistiveNotice?: string | null
@@ -52,7 +53,10 @@ export function ColumnMappingWizard({
   onConfirm,
   onCancel,
 }: Props) {
-  const [mapping, setMapping] = useState<ColumnMapping>(initialMapping)
+  // Default at the boundary rather than trusting the caller. This component is
+  // handed data straight off the API, and Object.entries(undefined) threw the
+  // whole wizard into the error boundary when an unmapped upload was resumed.
+  const [mapping, setMapping] = useState<ColumnMapping>(initialMapping ?? {})
   const [itemsMode, setItemsMode] = useState<ItemsMode>(initialItemsMode)
   const [isConfirming, setIsConfirming] = useState(false)
   const mountedRef = useRef(true)

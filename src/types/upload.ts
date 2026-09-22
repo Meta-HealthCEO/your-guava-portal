@@ -51,7 +51,10 @@ export interface Upload {
   fileSize: number;
   r2Key: string;
   posType: 'yoco' | 'wizard';
-  columnMapping: ColumnMapping;
+  /** Absent until a mapping is resolved. An upload staged from an unknown format
+   *  carries none, and declaring this required is why a crash in the wizard got
+   *  past the compiler. */
+  columnMapping?: ColumnMapping;
   itemsMode: ItemsMode;
   status: UploadStatus;
   /** How the column mapping was arrived at. Absent on uploads staged before this was recorded. */

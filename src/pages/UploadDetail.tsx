@@ -630,7 +630,7 @@ export default function UploadDetail() {
           open
           headers={upload.headers ?? []}
           preview={upload.sampleRows || []}
-          initialMapping={upload.columnMapping}
+          initialMapping={upload.columnMapping ?? {}}
           initialItemsMode={upload.itemsMode}
           title="Finish importing this file"
           description="Match your columns and import. Required fields are marked with *."
@@ -664,7 +664,7 @@ export default function UploadDetail() {
           // `headers` array from Mongoose is truthy, so it never even ran.
           headers={upload.headers ?? []}
           preview={upload.sampleRows || []}
-          initialMapping={upload.columnMapping}
+          initialMapping={upload.columnMapping ?? {}}
           initialItemsMode={upload.itemsMode}
           title="Change how this file's columns are read"
           description={`Re-importing replaces the ${upload.stats.imported.toLocaleString('en-ZA')} transaction${upload.stats.imported === 1 ? '' : 's'} currently linked to this upload. Required fields are marked with *.`}
