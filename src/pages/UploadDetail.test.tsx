@@ -162,7 +162,10 @@ describe('UploadDetail', () => {
 
     expect(confirmSpy).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: /delete upload/i })).toBeInTheDocument()
-    expect(screen.getByText(/linked transactions from export\.csv/i)).toBeInTheDocument()
+    // The consequence is stated in the owner's terms and matches what the backend
+    // actually does: this upload imported rows, so they and their forecasts go.
+    expect(screen.getByText(/transactions imported from export\.csv/i)).toBeInTheDocument()
+    expect(screen.getByText(/refreshes the forecasts built on them/i)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /^delete upload$/i }))
 

@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
-import { useAuth } from '@/hooks/useAuth'
 import { deleteUploadConsequence } from '@/lib/uploadMessages'
 import type { Upload, UploadStatus } from '@/types/upload'
 
@@ -76,17 +75,24 @@ const viewLinkLabel = (upload: Upload) =>
 
 interface UploadHistoryCardProps {
   refreshKey?: number
+  /**
+   * Whether the viewer may remove an upload. Passed in rather than read from
+   * auth context: this card is rendered standalone in its own tests, and
+   * reaching for a provider here made seven of them fail for a reason that had
+   * nothing to do with what they were asserting. DELETE /uploads/:id is
+   * ownerOnly, so the control is absent for anyone else rather than present
+   * and then refused.
+   */
+  canRemove?: boolean
 }
 
-export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
+export function UploadHistoryCard({ refreshKey = 0, canRemove = false }: UploadHistoryCardProps) {
   const [uploads, setUploads] = useState<Upload[]>([])
   const [pagination, setPagination] = useState<UploadsPagination | null>(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
-  const { user } = useAuth()
-  const isOwner = user?.role === 'owner'
   // Only an upload that imported nothing is offered here. A completed import is
   // deleted from its detail page, where the row count and date range are in view -
   // the consequence is bigger and the owner should see what they are removing.
@@ -239,7 +245,7 @@ export function UploadHistoryCard({ refreshKey = 0 }: UploadHistoryCardProps) {
                         >
                           View <ExternalLink className="w-3 h-3" />
                         </Link>
-                        {isOwner && u.stats.imported === 0 && u.status !== 'deleted' && (
+                        {canRemove && u.stats.imported === 0 && u.status !== 'deleted' && (
                           <button
                             type="button"
                             onClick={() => { setDeleteError(null); setPendingDelete(u) }}

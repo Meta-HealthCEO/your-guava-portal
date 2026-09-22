@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import api, { isSessionRejection } from '@/lib/api'
 import { XLS_GUIDANCE, INVALID_TYPE } from '@/lib/uploadMessages'
 import { confirmUpload as confirmUploadRequest, type ConfirmUploadResponse } from '@/lib/uploads'
+import { useAuth } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
 import { addLocalDays, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
@@ -353,6 +354,7 @@ function DataStatusCard({
 }
 
 export default function Connect() {
+  const { isOwner } = useAuth()
   // ── Data status state ────────────────────────────────────────────
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
   const [dataStatusLoading, setDataStatusLoading] = useState(true)
@@ -884,7 +886,7 @@ export default function Connect() {
           </CardContent>
         </Card>
 
-        <UploadHistoryCard refreshKey={historyRefreshKey} />
+        <UploadHistoryCard refreshKey={historyRefreshKey} canRemove={isOwner} />
       </div>
 
       {stageResponse && (
