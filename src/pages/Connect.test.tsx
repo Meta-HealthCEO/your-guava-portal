@@ -97,6 +97,22 @@ describe('Connect', () => {
     })
   })
 
+  it('tells a .xls owner to save as CSV UTF-8, not .xlsx', async () => {
+    render(<Connect />)
+    await waitFor(() => {
+      expect(screen.getByText(/drop your sales csv/i)).toBeInTheDocument()
+    })
+
+    const file = new File(['ÐÏà'], 'Melkies Sale DEC 25.xls', { type: 'application/vnd.ms-excel' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/CSV UTF-8/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/\.xlsx, then upload/i)).toBeNull()
+  })
+
   it('accepts uppercase CSV and XLSX extensions', async () => {
     mockPost.mockImplementation((url: string) => {
       if (url.includes('/transactions/upload')) {

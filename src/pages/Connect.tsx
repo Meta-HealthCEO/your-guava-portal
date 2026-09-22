@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import api, { isSessionRejection } from '@/lib/api'
+import { XLS_GUIDANCE, INVALID_TYPE } from '@/lib/uploadMessages'
 import { cn } from '@/lib/utils'
 import { addLocalDays, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
@@ -568,9 +569,7 @@ export default function Connect() {
 
     if (!validTypes.includes(file.type) && !validExt) {
       setErrorMsg(
-        lowerName.endsWith('.xls')
-          ? '.xls files are not supported. Open the file in Excel and use Save As to save it as .xlsx, then upload that.'
-          : 'Invalid file type. Please upload a .csv or .xlsx file.'
+        lowerName.endsWith('.xls') ? XLS_GUIDANCE : INVALID_TYPE
       )
       setUploadState('error')
       return
