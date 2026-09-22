@@ -10,7 +10,7 @@ import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import { statusLabel, uploadSourceLabel } from '@/components/upload/UploadHistoryCard'
 import { deleteUploadConsequence } from '@/lib/uploadMessages'
 import api from '@/lib/api'
-import { confirmUpload } from '@/lib/uploads'
+import { confirmUpload, confirmationKeyFor } from '@/lib/uploads'
 import type { Upload, ColumnMapping, ItemsMode, UploadRowError } from '@/types/upload'
 
 interface Row {
@@ -180,6 +180,10 @@ export default function UploadDetail() {
         columnMapping: mapping,
         itemsMode,
         allowPartialImport,
+      }, {
+        // One key per re-import intent, held across the partial-import retry below,
+        // so the second call is recognised as the same request rather than a new one.
+        headers: { 'Idempotency-Key': confirmationKeyFor(`remap:${id}`) },
       })
     } catch (err: unknown) {
       const details = severePartialDetails(err)
