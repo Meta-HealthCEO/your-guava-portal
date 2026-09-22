@@ -20,9 +20,22 @@ interface Props {
    * heading that also asserted a 30-day window.
    */
   matchedDays?: number | null
+  /**
+   * Where the figure comes from. A backfilled day was scored against sales the
+   * model had not seen, so it measures something real — but retrospectively,
+   * and the owner is entitled to know which they are looking at before they
+   * trust it. See DECISIONS D-004.
+   */
+  basis?: 'live' | 'backtest' | 'none' | null
 }
 
-export function WeekHeader({ weekTotal, peakDay, accuracy, matchedDays = null }: Props) {
+export function WeekHeader({
+  weekTotal,
+  peakDay,
+  accuracy,
+  matchedDays = null,
+  basis = null,
+}: Props) {
   const accuracyColor = accuracyTextClass(accuracy)
 
   const accuracyLabel =
@@ -32,14 +45,17 @@ export function WeekHeader({ weekTotal, peakDay, accuracy, matchedDays = null }:
   const accuracyStatus =
     accuracy === null ? '' : hasEnoughSample ? ACCURACY_BAND_LABEL[accuracyBand(accuracy)] : ''
 
+  const dayWord = matchedDays === 1 ? 'day' : 'days'
   const sampleNote =
     matchedDays == null
       ? ''
       : matchedDays === 0
         ? 'No matched days yet'
-        : `From ${matchedDays} matched ${matchedDays === 1 ? 'day' : 'days'}${
-            hasEnoughSample ? '' : ' — too few for a verdict yet'
-          }`
+        : basis === 'backtest'
+          ? `Estimated from ${matchedDays} backtested ${dayWord} — not yet measured live`
+          : `From ${matchedDays} matched ${dayWord}${
+              hasEnoughSample ? '' : ' — too few for a verdict yet'
+            }`
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

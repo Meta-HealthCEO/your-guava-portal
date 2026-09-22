@@ -17,6 +17,11 @@ import { ItemsHeatmap } from '@/components/forecasts/ItemsHeatmap'
 
 interface AccuracyPayload {
   avgAccuracy: number | null
+  /** Which set `avgAccuracy` was computed over. See DECISIONS D-004. */
+  basis?: 'live' | 'backtest' | 'none'
+  liveCount?: number
+  backtestCount?: number
+  liveFrom?: string | null
   forecasts: {
     date: string
     accuracy: number
@@ -323,6 +328,7 @@ export default function Forecasts() {
               peakDay={peakDay}
               accuracy={accuracy?.avgAccuracy ?? null}
               matchedDays={accuracy ? accuracy.forecasts?.length ?? 0 : null}
+              basis={accuracy?.basis ?? null}
             />
             {/* Say what the headline figures are drawn from. Without this the
                 total reads as a whole week even when part of it is still

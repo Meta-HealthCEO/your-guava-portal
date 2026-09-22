@@ -33,4 +33,46 @@ describe('WeekHeader', () => {
     expect(screen.getByText('Strong')).toBeInTheDocument()
     expect(screen.queryByText(/matched day/i)).not.toBeInTheDocument()
   })
+  it('labels a backtest estimate rather than showing a blank screen', () => {
+    // A new cafe that ran a backfill has real scored days. "Awaiting matched
+    // sales data" for weeks afterwards is not honesty, it is a blank screen.
+    render(
+      <WeekHeader
+        weekTotal={100000}
+        peakDay={null}
+        accuracy={78}
+        matchedDays={10}
+        basis="backtest"
+      />
+    )
+
+    expect(screen.getByText('78%')).toBeInTheDocument()
+    expect(screen.getByText(/estimated from 10 backtested days/i)).toBeInTheDocument()
+    expect(screen.getByText(/not yet measured live/i)).toBeInTheDocument()
+  })
+
+  it('drops the label once the figure is measured live', () => {
+    render(
+      <WeekHeader
+        weekTotal={100000}
+        peakDay={null}
+        accuracy={78}
+        matchedDays={12}
+        basis="live"
+      />
+    )
+
+    expect(screen.getByText('78%')).toBeInTheDocument()
+    expect(screen.getByText(/from 12 matched days/i)).toBeInTheDocument()
+    expect(screen.queryByText(/backtest/i)).toBeNull()
+  })
+
+  it('still says nothing is matched when nothing is', () => {
+    render(
+      <WeekHeader weekTotal={100000} peakDay={null} accuracy={null} matchedDays={0} basis="none" />
+    )
+
+    expect(screen.getByText('Awaiting matched sales data')).toBeInTheDocument()
+    expect(screen.queryByText(/backtest/i)).toBeNull()
+  })
 })
