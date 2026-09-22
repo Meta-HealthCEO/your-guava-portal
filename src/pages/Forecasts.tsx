@@ -120,9 +120,12 @@ function AwaitingHistoryDayCard({ forecast }: { forecast: Forecast }) {
  */
 function AwaitingHistoryPanel({
   reason,
+  perDay,
   hasImportedSales,
 }: {
   reason: string
+  /** One entry per distinct reason, naming the weekdays it covers. */
+  perDay: { days: string[]; reason: string }[]
   hasImportedSales: boolean
 }) {
   return (
@@ -139,11 +142,24 @@ function AwaitingHistoryPanel({
             ? 'Your sales are on record, but not enough matching weekdays have accumulated yet.'
             : 'No sales have been imported for this cafe yet, so there is nothing to build from.'}
         </p>
-        {reason && (
+        {perDay.length > 0 ? (
+          <div className="mt-4 w-full max-w-lg rounded-lg border border-border bg-surface-2 px-3 py-2 text-left">
+            <p className="text-xs font-medium text-text">What each day is still waiting for</p>
+            <ul className="mt-1.5 space-y-1">
+              {perDay.map((entry) => (
+                <li key={entry.reason} className="text-xs text-muted">
+                  <span className="font-medium text-text">{entry.days.join(', ')}</span>
+                  {' — '}
+                  {entry.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : reason ? (
           <p className="mt-4 max-w-lg rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
             What each day needs: {reason}
           </p>
-        )}
+        ) : null}
         <Button asChild className="mt-5">
           <Link to="/data-health">
             <Upload className="h-4 w-4" />
@@ -227,9 +243,29 @@ export default function Forecasts() {
   const tradingTotal = tradingForecasts.reduce((s, f) => s + (f.totalPredictedRevenue || 0), 0)
   const weekAvg = tradingForecasts.length > 0 ? tradingTotal / tradingForecasts.length : 0
   // The engine's own words for why a day is missing, so this copy cannot drift
-  // from the backend rule that produced it.
-  const awaitingReason =
-    awaitingForecasts.map((forecast) => forecast.availability?.reason).find(Boolean) || ''
+  // from the backend rule that produced it — but per weekday, not one day's
+  // reason shown for all seven. Planning builds a Tuesday from Tuesdays, so
+  // each weekday is a different distance from being forecastable, and showing
+  // the first day's count against every day understates some and overstates
+  // others.
+  // Grouped by reason, because most weeks every day is the same distance and
+  // seven identical sentences is noise rather than detail. When they differ,
+  // the difference is the whole point.
+  const awaitingByDay = (() => {
+    const byReason = new Map<string, string[]>()
+    for (const forecast of awaitingForecasts) {
+      const reason = forecast.availability?.reason
+      if (!reason) continue
+      const day = parseDateOnly(forecastDateKey(forecast)).toLocaleDateString('en-ZA', {
+        weekday: 'long',
+      })
+      const days = byReason.get(reason) || []
+      if (!days.includes(day)) days.push(day)
+      byReason.set(reason, days)
+    }
+    return [...byReason.entries()].map(([reason, days]) => ({ days, reason }))
+  })()
+  const awaitingReason = awaitingByDay[0]?.reason || ''
   const hasImportedSales = futureForecasts.some(
     (forecast) => (forecast.trainingData?.transactionCount ?? 0) > 0
   )
@@ -307,7 +343,11 @@ export default function Forecasts() {
         )}
 
         {!loading && !loadError && !allForecastGenerationFailed && (futureForecasts.length === 0 || allForecastsInsufficient) && (
-          <AwaitingHistoryPanel reason={awaitingReason} hasImportedSales={hasImportedSales} />
+          <AwaitingHistoryPanel
+            reason={awaitingReason}
+            perDay={awaitingByDay}
+            hasImportedSales={hasImportedSales}
+          />
         )}
 
         {!loading && !loadError && !allForecastsInsufficient && usableForecasts.length > 0 && (

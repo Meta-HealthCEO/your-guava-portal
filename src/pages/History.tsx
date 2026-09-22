@@ -464,11 +464,12 @@ export default function History() {
               <div>
                 <p className="font-medium text-guava-yellow">
                   {history.length === 0
-                    ? `Check the model against your last ${meta.totalTradingDays} trading days`
+                    ? `Check the model against your last ${meta.totalTradingDays} trading ${meta.totalTradingDays === 1 ? 'day' : 'days'}`
                     : 'More historical estimates are available'}
                 </p>
                 <p className="mt-1 text-sm text-muted">
-                  Showing {meta.totalRows} of {meta.totalTradingDays} completed trading days.
+                  Showing {meta.totalRows} of {meta.totalTradingDays} completed trading
+                  {' '}{meta.totalTradingDays === 1 ? 'day' : 'days'}.
                   Building a batch creates retrospective estimates marked as backtests; they are not original live predictions.
                 </p>
                 {/* Every other compute-ish action in the portal states its

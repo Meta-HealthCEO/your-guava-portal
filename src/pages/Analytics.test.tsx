@@ -328,6 +328,35 @@ describe('Analytics', () => {
     expect(screen.queryByText('+-1.0%')).not.toBeInTheDocument()
   })
 
+  it('says how far short the volume is, not just that it is short', async () => {
+    // "Not enough volume to rank movers yet" named the problem without the
+    // threshold, so nobody could tell whether they were one busy week away or
+    // six months. A small cafe reads this and learns nothing.
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/analytics/items')) {
+        return Promise.resolve({
+          data: {
+            items: [
+              { name: 'Flat White', totalQty: 22, totalRevenue: 880, avgPerDay: 0.7, trend: 4 },
+              { name: 'Croissant', totalQty: 9, totalRevenue: 270, avgPerDay: 0.3, trend: -2 },
+            ],
+            meta: { startDate: null, endDate: null, risingItems: [], decliningItems: [] },
+          },
+        })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Analytics />)
+    await userEvent.click(screen.getByRole('tab', { name: /items/i }))
+
+    await waitFor(() => expect(screen.getByText('Movers')).toBeInTheDocument())
+    const note = screen.getAllByText(/so ranking movers would be noise/i)[0]
+    // The bar, the window it is measured over, and where they actually are.
+    expect(note).toHaveTextContent(/60\+ over these 30 days/)
+    expect(note).toHaveTextContent(/busiest line sold 22/)
+  })
+
   it('marks the Movers window as fixed and independent of the range selector', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/analytics/items')) {

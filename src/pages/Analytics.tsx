@@ -449,6 +449,15 @@ function ItemsTab({ period }: { period: PeriodId }) {
   const rising = risingItems.filter((item) => isSubstantial(item.name)).slice(0, 5)
   const declining = decliningItems.filter((item) => isSubstantial(item.name)).slice(0, 5)
   const hasMovers = items.length > 0
+  // "Not enough volume" named the problem without the threshold, so nobody
+  // could tell whether they were one busy week away or six months. The bar is
+  // an average of 2 a day over the selected range, which is a number the owner
+  // can hold their own menu against.
+  const bestSeller = items.reduce((best, item) => (item.totalQty > best ? item.totalQty : best), 0)
+  const MOVERS_THRESHOLD_NOTE =
+    `No line sold ${moverMinQty.toLocaleString('en-ZA')}+ over these ` +
+    `${daysForPeriod(period)} days (2 a day), so ranking movers would be noise. ` +
+    `Your busiest line sold ${bestSeller.toLocaleString('en-ZA')}.`
 
   const risingNames = new Set(rising.map((i) => i.name))
   const decliningNames = new Set(declining.map((i) => i.name))
@@ -477,9 +486,7 @@ function ItemsTab({ period }: { period: PeriodId }) {
                 <p className="text-guava-green text-xs font-semibold uppercase tracking-wider mb-2">Rising</p>
                 {rising.length === 0 ? (
                   <p className="text-muted text-xs">
-                    {substantialNames.size === 0
-                      ? 'Not enough volume to rank movers yet'
-                      : 'No rising items'}
+                    {substantialNames.size === 0 ? MOVERS_THRESHOLD_NOTE : 'No rising items'}
                   </p>
                 ) : (
                   <ul className="space-y-1.5">
@@ -498,9 +505,7 @@ function ItemsTab({ period }: { period: PeriodId }) {
                 <p className="text-guava-red-text text-xs font-semibold uppercase tracking-wider mb-2">Declining</p>
                 {declining.length === 0 ? (
                   <p className="text-muted text-xs">
-                    {substantialNames.size === 0
-                      ? 'Not enough volume to rank movers yet'
-                      : 'No declining items'}
+                    {substantialNames.size === 0 ? MOVERS_THRESHOLD_NOTE : 'No declining items'}
                   </p>
                 ) : (
                   <ul className="space-y-1.5">

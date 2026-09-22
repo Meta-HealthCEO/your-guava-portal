@@ -439,4 +439,69 @@ describe('Forecasts', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(document.activeElement).toBe(trigger)
   })
+  it('groups the weekdays that are the same distance away', async () => {
+    // Most weeks every day is the same distance, and seven identical sentences
+    // is noise rather than detail.
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/week')) {
+        return Promise.resolve({
+          data: { forecasts: [awaitingDay('a1', '2026-03-30'), awaitingDay('a2', '2026-03-31')] },
+        })
+      }
+      if (url.includes('/forecasts/recent')) return Promise.resolve({ data: { forecasts: [] } })
+      if (url.includes('/forecasts/accuracy')) {
+        return Promise.resolve({ data: { avgAccuracy: null, forecasts: [] } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Forecasts />)
+
+    expect(await screen.findByText('Monday, Tuesday')).toBeInTheDocument()
+    // One sentence, not two.
+    expect(screen.getAllByText(new RegExp(AWAITING_REASON.slice(0, 40)))).toHaveLength(1)
+  })
+
+  it('states each weekday’s own distance, not one day’s count for all seven', async () => {
+    // Planning builds a Tuesday from Tuesdays, so each weekday is a different
+    // distance from being forecastable. Showing the first day's reason against
+    // all of them understates some and overstates others.
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/forecasts/week')) {
+        return Promise.resolve({
+          data: {
+            forecasts: [
+              {
+                ...awaitingDay('a1', '2026-03-30'),
+                availability: {
+                  status: 'insufficient_data' as const,
+                  reason: 'At least 3 observed matching trading days are required; 2 available',
+                },
+              },
+              {
+                ...awaitingDay('a2', '2026-03-31'),
+                availability: {
+                  status: 'insufficient_data' as const,
+                  reason: 'At least 3 observed matching trading days are required; 0 available',
+                },
+              },
+            ],
+          },
+        })
+      }
+      if (url.includes('/forecasts/recent')) return Promise.resolve({ data: { forecasts: [] } })
+      if (url.includes('/forecasts/accuracy')) {
+        return Promise.resolve({ data: { avgAccuracy: null, forecasts: [] } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    render(<Forecasts />)
+
+    expect(await screen.findByText(/What each day is still waiting for/i)).toBeInTheDocument()
+    expect(screen.getByText('Monday')).toBeInTheDocument()
+    expect(screen.getByText('Tuesday')).toBeInTheDocument()
+    expect(screen.getByText(/2 available/)).toBeInTheDocument()
+    expect(screen.getByText(/0 available/)).toBeInTheDocument()
+  })
 })
