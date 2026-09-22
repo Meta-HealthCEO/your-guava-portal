@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
 import api from '@/lib/api'
+import { confirmUpload } from '@/lib/uploads'
 import type { Upload, ColumnMapping, ItemsMode, UploadRowError } from '@/types/upload'
 
 interface Row {
@@ -161,6 +162,8 @@ export default function UploadDetail() {
   const [remapping, setRemapping] = useState(false)
   const [showRemapConfirm, setShowRemapConfirm] = useState(false)
   const [remapError, setRemapError] = useState<string | null>(null)
+  const [completing, setCompleting] = useState(false)
+  const [completeError, setCompleteError] = useState<string | null>(null)
 
   const deleteDialogRef = useDialogKeyboard(showDeleteConfirm, () => {
     if (!deleting) setShowDeleteConfirm(false)
@@ -530,10 +533,22 @@ export default function UploadDetail() {
               committed. Offering it for a pending_mapping upload produced a
               guaranteed "Cannot remap while pending_mapping" from the API. */}
           {upload.status === 'pending_mapping' ? (
-            <p className="mb-3 text-sm text-muted">
-              This upload was never finished, so there is no mapping to change. Upload the file again
-              from Data Health to import it.
-            </p>
+            <>
+              <p className="mb-3 text-sm text-muted">
+                This upload was staged but its columns were never confirmed, so nothing was
+                imported. The file is still here — finish the mapping to import it.
+              </p>
+              {completeError && (
+                <p role="alert" className="mb-3 text-sm text-guava-red-text">{completeError}</p>
+              )}
+              <Button
+                size="sm"
+                className="mr-2"
+                onClick={() => { setCompleteError(null); setCompleting(true) }}
+              >
+                Complete mapping
+              </Button>
+            </>
           ) : (
             <Button variant="outline" size="sm" className="mr-2" onClick={() => { setRemapError(null); setShowRemapConfirm(true) }}>
               Re-map columns
@@ -583,6 +598,42 @@ export default function UploadDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Resuming a staged upload. The backend already holds the file, its headers
+          and its sample rows, and POST /uploads/:id/confirm is the same call Data
+          Health makes - the only thing that was missing was a way back to it once
+          the wizard had been closed. The uploadId lived in Connect's React state,
+          so a reload stranded the upload permanently. */}
+      {completing && upload && (
+        <ColumnMappingWizard
+          open
+          headers={upload.headers ?? []}
+          preview={upload.sampleRows || []}
+          initialMapping={upload.columnMapping}
+          initialItemsMode={upload.itemsMode}
+          title="Finish importing this file"
+          description="Match your columns and import. Required fields are marked with *."
+          confirmLabel="Import with these columns"
+          onCancel={() => { setCompleteError(null); setCompleting(false) }}
+          onConfirm={async (mapping: ColumnMapping, itemsMode: ItemsMode) => {
+            try {
+              setCompleteError(null)
+              await confirmUpload(upload._id, mapping, itemsMode, {
+                onPartialImport: (failed, total) =>
+                  window.confirm(
+                    `${failed ?? 'Many'} of ${total ?? 'the'} rows could not be imported. ` +
+                    'Import only the valid rows anyway? You can review the rejected-row report afterward.'
+                  ),
+              })
+              setCompleting(false)
+              setDetailReloadToken((current) => current + 1)
+            } catch (err: unknown) {
+              setCompleteError(extractApiError(err, 'Import failed. Check the column choices and try again.'))
+              setCompleting(false)
+            }
+          }}
+        />
       )}
 
       {remapping && upload && (

@@ -7,7 +7,7 @@ import type {
   ColumnMapping,
   ItemsMode,
   StageUploadResponse,
-  Upload as UploadRecord,
+
   UploadRowError,
 } from '@/types/upload'
 
@@ -17,16 +17,12 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import api, { isSessionRejection } from '@/lib/api'
 import { XLS_GUIDANCE, INVALID_TYPE } from '@/lib/uploadMessages'
+import { confirmUpload as confirmUploadRequest, type ConfirmUploadResponse } from '@/lib/uploads'
 import { cn } from '@/lib/utils'
 import { addLocalDays, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 const MAX_UPLOAD_ROWS = 10_000
-
-// The confirm POST has already run for two minutes by the time recovery starts,
-// so an import slow enough to reach here will not finish in five more seconds.
-// Back off up to about a minute before giving up, and never call it a failure.
-const RECOVERY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000]
 
 function extractErrorMsg(err: unknown, fallback: string): string {
   if (err && typeof err === 'object' && 'response' in err) {
@@ -62,21 +58,6 @@ interface ImportResult {
   lastDate: string
   rowErrors: UploadRowError[]
   maintenanceStatus?: 'not_started' | 'queued' | 'running' | 'completed' | 'partial_failure'
-  replayed?: boolean
-}
-
-interface ConfirmUploadResponse {
-  success: true
-  uploadId: string
-  stats: { imported: number; skipped: number; errors: number; totalRows: number }
-  dateRange?: {
-    firstDate?: string
-    lastDate?: string
-    firstDateKey?: string
-    lastDateKey?: string
-  }
-  rowErrors?: UploadRowError[]
-  maintenance?: UploadRecord['maintenance']
   replayed?: boolean
 }
 
@@ -390,7 +371,6 @@ export default function Connect() {
   const [stageResponse, setStageResponse] = useState<StageUploadResponse | null>(null)
   const [stageErrorMsg, setStageErrorMsg] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const confirmationKeysRef = useRef(new Map<string, string>())
   const uploadAbortRef = useRef<AbortController | null>(null)
   const cancelledRef = useRef(false)
   const phaseTimerRef = useRef<number | null>(null)
@@ -409,99 +389,18 @@ export default function Connect() {
     uploadAbortRef.current?.abort()
   }, [])
 
-  const confirmationKeyFor = (uploadId: string) => {
-    const existing = confirmationKeysRef.current.get(uploadId)
-    if (existing) return existing
-    const generated = typeof globalThis.crypto?.randomUUID === 'function'
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    confirmationKeysRef.current.set(uploadId, generated)
-    return generated
-  }
-
-  const recoverCompletedConfirmation = async (
-    uploadId: string,
-    originalError: unknown
-  ): Promise<ConfirmUploadResponse> => {
-    const status = originalError && typeof originalError === 'object' && 'response' in originalError
-      ? (originalError as { response?: { status?: number } }).response?.status
-      : undefined
-    if (status != null && ![408, 504].includes(status)) throw originalError
-
-    let lastKnownStatus: UploadRecord['status'] | undefined
-    for (let attempt = 0; attempt < RECOVERY_BACKOFF_MS.length; attempt++) {
-      try {
-        const { data } = await api.get<{ upload: UploadRecord }>(`/uploads/${uploadId}`, {
-          timeout: 10_000,
-        })
-        lastKnownStatus = data.upload.status
-        if (lastKnownStatus === 'completed') {
-          return {
-            success: true,
-            uploadId,
-            stats: data.upload.stats,
-            dateRange: data.upload.dateRange,
-            rowErrors: data.upload.rowErrors,
-            maintenance: data.upload.maintenance,
-            replayed: true,
-          }
-        }
-        if (lastKnownStatus !== 'parsing') break
-      } catch {
-        // A transient status-read failure should not hide a commit that may
-        // already have succeeded. Retry within this bounded window.
-      }
-      if (attempt < RECOVERY_BACKOFF_MS.length - 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, RECOVERY_BACKOFF_MS[attempt]))
-      }
-    }
-
-    // Still parsing after the whole window is not a failure, and calling it one
-    // is what made owners re-upload the same file into a running import.
-    if (lastKnownStatus === 'parsing') {
-      throw Object.assign(new Error('Import is still running'), { uploadStillRunning: true })
-    }
-    throw originalError
-  }
-
-  const confirmUpload = async (
+  const confirmUpload = (
     uploadId: string,
     columnMapping: ColumnMapping,
-    itemsMode: ItemsMode,
-    allowPartialImport = false
-  ): Promise<ConfirmUploadResponse> => {
-    try {
-      const { data } = await api.post<ConfirmUploadResponse>(
-        `/uploads/${uploadId}/confirm`,
-        { columnMapping, itemsMode, allowPartialImport },
-        {
-          timeout: 120_000,
-          headers: { 'Idempotency-Key': confirmationKeyFor(uploadId) },
-        }
-      )
-      return data
-    } catch (error) {
-      const response = error && typeof error === 'object' && 'response' in error
-        ? (error as {
-            response?: {
-              status?: number
-              data?: { details?: { errors?: number; totalRows?: number } }
-            }
-          }).response
-        : undefined
-      if (response?.status === 422 && !allowPartialImport) {
-        const failed = response.data?.details?.errors
-        const total = response.data?.details?.totalRows
-        const proceed = window.confirm(
+    itemsMode: ItemsMode
+  ): Promise<ConfirmUploadResponse> =>
+    confirmUploadRequest(uploadId, columnMapping, itemsMode, {
+      onPartialImport: (failed, total) =>
+        window.confirm(
           `${failed ?? 'Many'} of ${total ?? 'the'} rows could not be imported. ` +
           'Import only the valid rows anyway? You can review the rejected-row report afterward.'
-        )
-        if (proceed) return confirmUpload(uploadId, columnMapping, itemsMode, true)
-        throw error
-      }
-      return recoverCompletedConfirmation(uploadId, error)
-    }
-  }
+        ),
+    })
 
   const finishConfirmation = (confirmed: ConfirmUploadResponse) => {
     setResult({
