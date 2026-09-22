@@ -262,12 +262,20 @@ describe('UploadDetail', () => {
       columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
       itemsMode: 'packed',
       allowPartialImport: false,
-    })
+    }, expect.objectContaining({
+      headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+    }))
     expect(apiMock.patch).toHaveBeenNthCalledWith(2, '/uploads/u1/mapping', {
       columnMapping: { date: 'Date', items: 'Items', total: 'Total' },
       itemsMode: 'packed',
       allowPartialImport: true,
-    })
+    }, expect.anything())
+
+    // The retry is the same re-import intent, so it must carry the same key -
+    // a fresh one would make the backend treat it as a second request.
+    const firstKey = apiMock.patch.mock.calls[0][2].headers['Idempotency-Key']
+    const retryKey = apiMock.patch.mock.calls[1][2].headers['Idempotency-Key']
+    expect(retryKey).toBe(firstKey)
 
     confirmSpy.mockRestore()
   })
