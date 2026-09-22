@@ -189,9 +189,17 @@ function ProcessingOverlay({
 }
 
 // Build an array of 30 dates: [today-29, ..., today] as YYYY-MM-DD strings
+/**
+ * The last 30 *completed* trading days, ending yesterday.
+ *
+ * Today used to be in this window, so a cafe that had not yet made a sale was
+ * told "1 of the last 30 days have no data" at nine in the morning - a gap it
+ * could do nothing about and had not actually left. Today is rendered
+ * separately, labelled, and never counted as missing.
+ */
 function buildLast30Days(): string[] {
   const days: string[] = []
-  for (let i = 29; i >= 0; i--) {
+  for (let i = 30; i >= 1; i--) {
     days.push(toLocalDateOnly(addLocalDays(new Date(), -i)))
   }
   return days
@@ -228,9 +236,11 @@ function DataStatusCard({
   onUploadClick: () => void
 }) {
   const days30 = buildLast30Days()
+  const today = toLocalDateOnly(new Date())
   const coverageMap = new Map<string, number>()
   status?.coverage30d.forEach((c) => coverageMap.set(c.date, c.count))
   const emptyDayCount = days30.filter((day) => !(coverageMap.get(day) ?? 0)).length
+  const todayCount = coverageMap.get(today) ?? 0
 
   const daysSince = status?.daysSinceLatest ?? null
   let pillColor = 'bg-red-500/20 text-red-400 border-red-500/30'
@@ -298,7 +308,7 @@ function DataStatusCard({
             {/* Middle: 30-day coverage strip */}
             <div className="shrink-0">
               <p className="text-muted text-xs mb-1.5">Last 30 days</p>
-              <div className="flex gap-0.5" role="list" aria-label="30-day data coverage">
+              <div className="flex gap-0.5" role="list" aria-label="Data coverage for the last 30 completed days, plus today">
                 {days30.map((day) => {
                   const count = coverageMap.get(day)
                   const hasData = count !== undefined && count > 0
@@ -316,14 +326,25 @@ function DataStatusCard({
                     />
                   )
                 })}
+                {/* Today, set apart. It is in progress, not missing: a cafe that
+                    has not sold anything yet this morning has left no gap. */}
+                <div
+                  role="listitem"
+                  aria-label={`Today: ${todayCount} transactions so far`}
+                  title={`Today: ${todayCount} transactions so far`}
+                  className={cn(
+                    'w-3 h-6 rounded-sm cursor-default ml-1 border border-dashed border-border',
+                    todayCount > 0 ? 'bg-guava-red' : 'bg-transparent'
+                  )}
+                />
               </div>
               {/* The strip carries has-data/no-data in colour alone, which is
                   neither readable by a screen reader nor safe for a colour
                   vision deficiency. This is the text equivalent. */}
               <p className="text-muted text-xs mt-1.5">
                 {emptyDayCount === 0
-                  ? 'All 30 of the last 30 days have data.'
-                  : `${emptyDayCount} of the last 30 days have no data.`}
+                  ? 'All 30 completed days have data. Today is still in progress.'
+                  : `${emptyDayCount} of the last 30 completed days have no data. Today is still in progress.`}
               </p>
             </div>
 
