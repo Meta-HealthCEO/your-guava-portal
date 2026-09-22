@@ -257,7 +257,10 @@ function DataStatusCard({
 
   if (!loading && status && status.latestDataDate) {
     if (daysSince !== null && daysSince < 2) {
-      pillColor = 'bg-guava-green/20 text-guava-green border-guava-green/30'
+      // Opaque ground, not a /20 alpha fill: composited over the card this measured
+      // 4.2:1 (#4da63b on #243621) at 12px, under the 4.5 AA needs. The palette
+      // already carries the fixed token for exactly this.
+      pillColor = 'bg-guava-green-surface text-guava-green border-guava-green/30'
       statusLabel = 'Data is up to date'
     } else if (daysSince !== null && daysSince <= 7) {
       pillColor = 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'

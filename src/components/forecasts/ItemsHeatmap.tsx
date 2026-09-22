@@ -62,8 +62,14 @@ export function ItemsHeatmap({ forecasts }: Props) {
 
   const hasClosedDay = closedDays.some(Boolean)
 
+  // The card carries contain:paint alongside overflow-hidden. The inner div scrolls
+  // the table correctly, but an auto-layout table whose min-content width (539px at
+  // the top-12 item list) exceeds its container still propagates that width into the
+  // document scroll extent in Chromium — the page itself scrolled sideways by 79px at
+  // 390px wide. Containing paint stops that without changing column sizing the way
+  // table-layout:fixed would.
   return (
-    <div className="rounded-xl border border-border bg-surface overflow-hidden">
+    <div className="rounded-xl border border-border bg-surface overflow-hidden [contain:paint]">
       <div className="px-5 py-4 border-b border-border">
         <p className="text-text text-sm font-semibold">Items × days heatmap</p>
         <p className="text-muted text-xs mt-0.5">Top 12 items by weekly predicted quantity</p>
