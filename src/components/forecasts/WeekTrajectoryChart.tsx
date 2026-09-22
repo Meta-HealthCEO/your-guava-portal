@@ -68,10 +68,20 @@ function calendarSpan(dateKeys: string[]): string[] {
 
 export interface ChartDatum {
   date: string
-  /** null where the backend produced no forecast for that calendar day. */
+  /**
+   * null where the backend produced no forecast for that calendar day, and
+   * where the cafe is closed: a shut door is not a prediction of zero takings,
+   * and drawn as one it has the shape of a catastrophic trading day. On the
+   * seeded cafe that is every Sunday, dominating the vertical scale of the
+   * whole week.
+   */
   predicted: number | null
   actual?: number
   isPast: boolean
+  /** The cafe is not trading. The line breaks and the column is labelled. */
+  closed?: boolean
+  /** A closure the sales record contradicts — worth naming differently. */
+  closedContradicted?: boolean
 }
 
 interface TooltipPayloadItem {
@@ -131,13 +141,14 @@ export function buildTrajectorySeries(
   todayKey: string
 ): ChartDatum[] {
   // Build map from past forecasts: date string to predicted and matched actual revenue.
-  const pastMap = new Map<string, { predicted: number; actual?: number }>()
+  const pastMap = new Map<string, { predicted: number; actual?: number; forecast: Forecast }>()
   pastForecasts.forEach((f) => {
     const actualRevenue =
       hasMatchedActuals(f) && f.actualRevenue != null ? f.actualRevenue : undefined
     pastMap.set(forecastDateKey(f).slice(0, 10), {
       predicted: f.totalPredictedRevenue,
       actual: actualRevenue,
+      forecast: f,
     })
   })
 
@@ -150,13 +161,20 @@ export function buildTrajectorySeries(
   return calendarSpan(Array.from(allDates)).map((dateStr) => {
     const past = pastMap.get(dateStr)
     const future = futureForecasts.find((f) => forecastDateKey(f).slice(0, 10) === dateStr)
-    const predicted = past?.predicted ?? future?.totalPredictedRevenue ?? null
+    const availability = (past?.forecast ?? future)?.availability
+    const closed = availability?.status === 'closed'
+    // A past closure keeps its actual: a contradicted one exists precisely
+    // because the cafe traded, and the grey line is the evidence.
+    const predicted = closed ? null : past?.predicted ?? future?.totalPredictedRevenue ?? null
 
     return {
       date: shortDayLabel(dateStr),
       predicted,
       actual: past?.actual,
       isPast: parseDateOnly(dateStr).getTime() < todayStart,
+      ...(closed
+        ? { closed: true, closedContradicted: Boolean(availability?.contradictsHistory) }
+        : {}),
     }
   })
 }
@@ -167,6 +185,10 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts, todayDateK
 
   const todayStr = shortDayLabel(todayKey)
   const hasActual = data.some((d) => d.actual !== undefined)
+  const LABEL_HANGS_LEFT_FROM = 2 / 3
+  const closedDays = data
+    .map((d, index) => ({ ...d, tailEnd: index >= data.length * LABEL_HANGS_LEFT_FROM }))
+    .filter((d) => d.closed)
 
   return (
     <div className="rounded-xl border border-border bg-surface p-5">
@@ -199,6 +221,28 @@ export function WeekTrajectoryChart({ futureForecasts, pastForecasts, todayDateK
             wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
             formatter={(value: string) => <span style={{ color: '#C9C1BB' }}>{value}</span>}
           />
+          {/* A break in the line is only legible if it is named. Without this
+              a closed Sunday and a Sunday the backend failed to generate are
+              the same hole. Drawn before the Today marker so that marker wins
+              the overlap on a day that is both. */}
+          {closedDays.map((day) => (
+            <ReferenceLine
+              key={day.date}
+              x={day.date}
+              stroke={day.closedContradicted ? '#FFD166' : '#555555'}
+              strokeDasharray="2 4"
+              label={{
+                value: day.closedContradicted ? 'Closed · sales recorded' : 'Closed',
+                // Hangs left of the marker once the marker is in the last
+                // third, or the longer label runs off the plot area and the
+                // owner reads "Closed · sales rec". Next Sunday is always in
+                // that third on a chart that spans last week and this one.
+                position: day.tailEnd ? 'insideTopRight' : 'insideTopLeft',
+                fill: day.closedContradicted ? '#FFD166' : '#888888',
+                fontSize: 10,
+              }}
+            />
+          ))}
           <ReferenceLine
             x={todayStr}
             stroke="#4DA63B"

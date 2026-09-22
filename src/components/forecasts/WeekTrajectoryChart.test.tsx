@@ -103,4 +103,63 @@ describe('WeekTrajectoryChart', () => {
       expect(fmtAxisRevenue(20000)).toBe('R 20k')
     })
   })
+  describe('closed days', () => {
+    // A closed day forecasts R0, which is true, and the line plunged to the
+    // axis and back - the shape of a catastrophic trading day rather than of a
+    // shut door. On the seeded cafe that is every Sunday, and it dominated the
+    // vertical scale of the whole week.
+    const closed = (id: string, date: string, extra = {}) => ({
+      ...mockForecast,
+      _id: id,
+      date,
+      totalPredictedRevenue: 0,
+      items: [],
+      availability: { status: 'closed' as const, reason: 'Cafe is closed in its trading hours', ...extra },
+    })
+
+    it('breaks the line rather than drawing a day off as a collapse to zero', () => {
+      const series = buildTrajectorySeries(
+        [closed('c1', '2026-05-03'), { ...mockForecast, _id: 'f1', date: '2026-05-04' }],
+        [],
+        '2026-05-03'
+      )
+
+      expect(series[0].predicted).toBeNull()
+      expect(series[0].closed).toBe(true)
+      expect(series[1].predicted).not.toBeNull()
+      expect(series[1].closed).toBeFalsy()
+    })
+
+    it('distinguishes a closure the sales record contradicts', () => {
+      const series = buildTrajectorySeries(
+        [closed('c1', '2026-05-03', { contradictsHistory: true })],
+        [],
+        '2026-05-03'
+      )
+
+      expect(series[0].closed).toBe(true)
+      expect(series[0].closedContradicted).toBe(true)
+    })
+
+    it('keeps what actually happened on a past closed day', () => {
+      // The whole point of a contradicted closure is that the cafe traded. The
+      // actual line has to keep drawing across it, or the evidence disappears
+      // at the exact moment it matters.
+      const past = {
+        ...closed('p1', '2026-04-27', { contradictsHistory: true }),
+        actualRevenue: 8400,
+        actualTransactionCount: 96,
+        actualsUpdatedAt: '2026-04-28T00:00:00.000Z',
+      }
+      const series = buildTrajectorySeries([], [past], '2026-05-03')
+
+      expect(series[0].predicted).toBeNull()
+      expect(series[0].actual).toBe(8400)
+    })
+
+    it('leaves an ordinary day alone', () => {
+      const series = buildTrajectorySeries(futureSample, pastSample, '2026-05-03')
+      expect(series.every((d) => !d.closed)).toBe(true)
+    })
+  })
 })
