@@ -3,9 +3,6 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
-import 'dotenv/config';
-
-
 
 export default defineConfig(({ command, mode }) => {
   if (command === 'build') {
@@ -33,7 +30,8 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     server: {
-      port: 5173,
+      port: 5175,
+      strictPort: true,
     },
     test: {
       globals: true,
