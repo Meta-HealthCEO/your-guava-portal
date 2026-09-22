@@ -445,7 +445,12 @@ function PredictedOutput({
               key={item.itemName}
               itemName={item.itemName}
               predictedQty={item.predictedQty}
+              // When every line is low the grid says so once at the top, so
+              // the tiles say nothing at all — repeating it twenty times in
+              // text only a screen reader hears is the same flattening the
+              // banner exists to avoid.
               confidence={allLowConfidence ? undefined : item.confidence}
+              showNote={!allLowConfidence && item.confidence === 'low'}
             />
           ))}
         </div>
@@ -487,10 +492,14 @@ function ItemCard({
   itemName,
   predictedQty,
   confidence,
+  showNote = false,
 }: {
   itemName: string
   predictedQty: number
   confidence?: ForecastItem['confidence']
+  /** Whether `low` is printed. False when every line is low and the grid says
+   *  so once at the top; the grade is still announced either way. */
+  showNote?: boolean
 }) {
   const color = getItemColor(itemName)
   const Icon = getItemIcon(itemName)
@@ -515,9 +524,16 @@ function ItemCard({
       {/* The engine grades every line and the portal used to discard it, so a
           line with three months behind it and one with a fortnight printed
           identically at 3xl. Only `low` earns a note: annotating all three
-          grades would flatten the signal again. */}
-      {confidence === 'low' && (
+          grades would flatten the signal again.
+
+          A grade that is never printed is also never announced, though, so a
+          screen reader heard the same "33 Flat White" for both. The other two
+          grades are carried in text only assistive technology reads, which
+          keeps the tile's visual restraint without withholding the grade. */}
+      {showNote ? (
         <div className="text-guava-yellow text-[10px] leading-tight mt-1">low confidence</div>
+      ) : (
+        confidence != null && <span className="sr-only">{confidence} confidence</span>
       )}
     </div>
   )

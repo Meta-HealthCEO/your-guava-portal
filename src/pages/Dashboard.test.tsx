@@ -694,4 +694,46 @@ describe('Dashboard', () => {
     expect(await screen.findByText('Weather service is not configured')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /set cafe location/i })).toBeNull()
   })
+  // The engine grades every line. Only `low` is printed, on purpose — three
+  // grades on twenty tiles flattens the signal again. But a grade that is
+  // never printed is also never announced, so a screen reader hears "33 Flat
+  // White" for a line with three months behind it and for one with a
+  // fortnight, exactly the gap the visible note was added to close.
+  const gradedWeek = (confidence: 'high' | 'medium' | 'low') => [
+    {
+      ...mockForecast,
+      _id: 'f1',
+      date: '2026-03-28',
+      items: [
+        { itemName: 'Flat White (Blend)', predictedQty: 30, confidence },
+        { itemName: 'Long White (Blend)', predictedQty: 31, confidence: 'high' },
+      ],
+    },
+  ]
+
+  it('announces the confidence grade it does not print', async () => {
+    mockClosedWeek(gradedWeek('high'))
+
+    render(<Dashboard />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Revenue')).toBeInTheDocument())
+
+    // Two graded lines, both high: announced twice, printed never.
+    expect(screen.getAllByText('high confidence')).toHaveLength(2)
+    expect(screen.queryByText('low confidence')).toBeNull()
+  })
+
+  it('does not announce a low line twice', async () => {
+    mockClosedWeek(gradedWeek('low'))
+
+    render(<Dashboard />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Revenue')).toBeInTheDocument())
+
+    // One low line keeps its printed note; the sr-only copy would be a
+    // duplicate reading of the same words. (When EVERY line is low the banner
+    // says it once and the tiles say nothing — covered by its own test.)
+    expect(screen.getAllByText('low confidence')).toHaveLength(1)
+    expect(screen.getAllByText('high confidence')).toHaveLength(1)
+  })
 })
