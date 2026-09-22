@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ColumnMappingWizard } from '@/components/upload/ColumnMappingWizard'
-import { statusLabel } from '@/components/upload/UploadHistoryCard'
+import { statusLabel, uploadSourceLabel } from '@/components/upload/UploadHistoryCard'
 import { deleteUploadConsequence } from '@/lib/uploadMessages'
 import api from '@/lib/api'
 import { confirmUpload } from '@/lib/uploads'
@@ -29,8 +29,6 @@ interface RowsPagination {
 }
 
 const ROWS_LIMIT = 50
-const uploadSourceLabel = (posType: Upload['posType']) =>
-  posType === 'yoco' ? 'POS preset' : 'Mapped'
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -336,7 +334,7 @@ export default function UploadDetail() {
             <div>
               <CardTitle>{upload.fileName}</CardTitle>
               <p className="text-sm text-muted mt-1">
-                Uploaded {new Date(upload.createdAt).toLocaleString('en-ZA')} • {uploadSourceLabel(upload.posType)}
+                Uploaded {new Date(upload.createdAt).toLocaleString('en-ZA')} • {uploadSourceLabel(upload)}
               </p>
             </div>
             <Badge variant={upload.status === 'completed' ? 'success' : 'secondary'}>

@@ -54,6 +54,8 @@ export interface Upload {
   columnMapping: ColumnMapping;
   itemsMode: ItemsMode;
   status: UploadStatus;
+  /** How the column mapping was arrived at. Absent on uploads staged before this was recorded. */
+  mappingSource?: 'yoco' | 'saved' | 'ai' | 'manual' | 'none';
   stats: UploadStats;
   dateRange: UploadDateRange;
   errorMessage?: string;

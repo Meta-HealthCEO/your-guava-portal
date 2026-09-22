@@ -61,8 +61,28 @@ const statusBadge = (status: UploadStatus, imported: number, errorMessage?: stri
   return { tone: statusColor[status] || ('secondary' as const), label: statusLabel[status] || 'Unknown' };
 };
 
-const uploadSourceLabel = (posType: Upload['posType']) =>
-  posType === 'yoco' ? 'POS preset' : 'Mapped'
+const MAPPING_SOURCE_LABEL: Record<NonNullable<Upload['mappingSource']>, string> = {
+  yoco: 'POS preset',
+  saved: 'Saved mapping',
+  ai: 'AI mapping',
+  manual: 'Manual mapping',
+  none: 'Not mapped',
+}
+
+/**
+ * How the columns were matched, in the owner's terms.
+ *
+ * This column used to read 'Mapped' for everything that was not a Yoco export -
+ * a saved mapping, an AI guess, a mapping the owner typed by hand, and an
+ * upload that was never mapped at all all looked identical. Uploads staged
+ * before mappingSource was recorded fall back to the old two-way split.
+ */
+export const uploadSourceLabel = (upload: Upload) =>
+  upload.mappingSource
+    ? MAPPING_SOURCE_LABEL[upload.mappingSource]
+    : upload.posType === 'yoco'
+      ? 'POS preset'
+      : 'Mapped'
 
 // Every row's link reads "View", so on a long history a screen-reader user hears
 // "View" 20-odd times with nothing to tell the rows apart. Keep "View" as the
@@ -203,7 +223,7 @@ export function UploadHistoryCard({ refreshKey = 0, canRemove = false }: UploadH
                   {uploads.map((u) => (
                     <tr key={u._id} className="border-t border-border">
                       <td className="py-2 flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-[#9E9E9E]" />{u.fileName}</td>
-                      <td>{uploadSourceLabel(u.posType)}</td>
+                      <td>{uploadSourceLabel(u)}</td>
                       <td>{u.stats.imported}</td>
                       <td className="text-muted">
                         {u.dateRange?.firstDate ? new Date(u.dateRange.firstDate).toLocaleDateString('en-ZA') : '—'}
