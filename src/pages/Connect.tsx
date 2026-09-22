@@ -246,6 +246,7 @@ function DataStatusCard({
   let pillColor = 'bg-red-500/20 text-red-400 border-red-500/30'
   let statusLabel = 'No data uploaded yet'
   let statusSubtitle = 'Upload your first sales CSV or XLSX to get started.'
+  let statusAction: string | null = null
 
   if (!loading && status && status.latestDataDate) {
     if (daysSince !== null && daysSince < 2) {
@@ -267,6 +268,15 @@ function DataStatusCard({
       ? monthsSpan(status.earliestDataDate, status.latestDataDate)
       : ''
     statusSubtitle = `Latest: ${formatDate(status.latestDataDate)} · ${txLabel}${span ? ` across ${span}` : ''}`
+
+    // "Data is 4 days behind" states a fact the owner already knows and gives them
+    // nothing to do with it. Name the window they need to export, starting the day
+    // after the last sale we hold, so the next file picks up exactly where this one
+    // stopped and nothing is either missed or re-imported.
+    if (daysSince !== null && daysSince >= 2) {
+      const from = formatDate(toLocalDateOnly(addLocalDays(parseDateOnly(status.latestDataDate), 1)))
+      statusAction = `Export ${from} onwards from your till and upload it here.`
+    }
   }
 
   const isActionNeeded = !status?.latestDataDate || (daysSince !== null && daysSince >= 2)
@@ -303,6 +313,9 @@ function DataStatusCard({
                 {statusLabel}
               </div>
               <p className="text-[#9E9E9E] text-sm truncate">{statusSubtitle}</p>
+              {statusAction && (
+                <p className="text-text text-sm mt-1">{statusAction}</p>
+              )}
             </div>
 
             {/* Middle: 30-day coverage strip */}
