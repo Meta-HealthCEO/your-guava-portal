@@ -443,10 +443,16 @@ describe('Connect first-run guidance', () => {
 
     render(<Connect />)
 
-    expect(await screen.findByText(/30 of the last 30 days have no data/i)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/30 of the last 30 completed days have no data/i)
+    ).toBeInTheDocument()
+    // Today is in progress, not missing: it is drawn but never counted as a gap,
+    // so a cafe with no sales yet this morning is not told it has left a hole.
+    expect(screen.getByText(/today is still in progress/i)).toBeInTheDocument()
     const days = screen.getAllByRole('listitem')
-    expect(days).toHaveLength(30)
+    expect(days).toHaveLength(31)
     expect(days[0]).toHaveAccessibleName(/0 transactions/)
+    expect(days[30]).toHaveAccessibleName(/^Today: 0 transactions so far$/)
   })
 })
 
