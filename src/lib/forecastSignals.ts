@@ -17,6 +17,28 @@ export function weatherUnavailableReason(weather: ForecastWeatherSignal | null |
   return weather?.unavailableReason || 'Weather data is unavailable for this forecast.'
 }
 
+/**
+ * Some of the engine's "not configured" reasons are the owner's to fix and
+ * some are ours. "Cafe coordinates are not configured" names a setting without
+ * saying it is a setting, let alone where it lives; a missing weather API key
+ * reads almost identically and has no control in Settings at all.
+ *
+ * Only reasons listed here get an action. Sending someone to Settings to hunt
+ * for a control that is not there is worse than saying nothing.
+ */
+const OWNER_FIXABLE_SIGNALS: { match: RegExp; action: string; to: string }[] = [
+  {
+    match: /coordinates are not (configured|set)/i,
+    action: 'Set cafe location',
+    to: '/settings?section=general&edit=cafe',
+  },
+]
+
+export function signalFix(reason: string | null | undefined) {
+  if (!reason) return null
+  return OWNER_FIXABLE_SIGNALS.find((fix) => fix.match.test(reason)) || null
+}
+
 interface LoadSheddingSignal {
   loadSheddingStage: number | null
   loadSheddingAvailable?: boolean | null

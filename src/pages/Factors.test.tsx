@@ -609,4 +609,52 @@ describe('Factors', () => {
     expect(screen.getByText('Closed')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /open trading hours/i })).toBeNull()
   })
+  it('offers the coordinates fix once, not once per day', async () => {
+    // The Signals column repeats "Cafe coordinates are not configured" on
+    // every row, because coordinates are a cafe-level setting. Seven identical
+    // links would be noise; the fact belongs per row, the action does not.
+    const noCoords = {
+      ...readyForecast.signals,
+      weather: {
+        available: false,
+        condition: '',
+        unavailableReason: 'Cafe coordinates are not configured',
+      },
+    }
+    weekForecasts = [
+      { ...readyForecast, signals: noCoords },
+      { ...readyForecast, _id: 'forecast2', date: '2026-06-07', signals: noCoords },
+    ]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Factors')).toBeInTheDocument())
+
+    expect(screen.getAllByText('Cafe coordinates are not configured')).toHaveLength(2)
+    expect(screen.getAllByRole('link', { name: /set cafe location/i })).toHaveLength(1)
+    expect(screen.getByRole('link', { name: /set cafe location/i })).toHaveAttribute(
+      'href',
+      // Opens the editor, not the read-only summary: the fields this link
+      // promises are behind the Edit button.
+      '/settings?section=general&edit=cafe'
+    )
+  })
+
+  it('says nothing about location when the weather signal is working', async () => {
+    weekForecasts = [
+      {
+        ...readyForecast,
+        signals: {
+          ...readyForecast.signals,
+          weather: { available: true, temp: 21, condition: 'Sunny' },
+        },
+      },
+    ]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Factors')).toBeInTheDocument())
+
+    expect(screen.queryByRole('link', { name: /set cafe location/i })).toBeNull()
+  })
 })

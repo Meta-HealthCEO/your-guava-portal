@@ -224,6 +224,12 @@ export default function Settings() {
   const [hoursError, setHoursError] = useState<string | undefined>()
   const [isEditingHours, setIsEditingHours] = useState(false)
   const requestedSection = searchParams.get('section')
+  // Today and Factors send owners here with "Set cafe location". The latitude
+  // and longitude they were promised live behind the Edit button, so landing
+  // on the read-only summary reads as the wrong page. Open the editor for
+  // them; the instruction is spent once carried out, so the parameter is
+  // dropped from the URL and a reload does not reopen it.
+  const openCafeEditor = searchParams.get('edit') === 'cafe'
   const requestedSectionId = isSettingsSectionId(requestedSection) ? requestedSection : 'general'
   const visibleSections = SETTINGS_SECTIONS.filter((section) => !section.ownerOnly || isOwner)
   const activeSection = visibleSections.some((section) => section.id === requestedSectionId)
@@ -478,6 +484,16 @@ export default function Settings() {
     setHoursState('idle')
     setIsEditingHours(false)
   }
+
+  useEffect(() => {
+    // Waits for the snapshot: loadCafe closes both editors when it resolves,
+    // so opening one before that would be undone.
+    if (!openCafeEditor || !loaded) return
+    if (isOwner) setIsEditingCafe(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('edit')
+    setSearchParams(next, { replace: true })
+  }, [openCafeEditor, loaded, isOwner, searchParams, setSearchParams])
 
   const invalidDays = invalidTradingDays(tradingHours)
 

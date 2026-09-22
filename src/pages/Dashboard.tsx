@@ -42,6 +42,7 @@ import {
   isLoadSheddingAvailable,
   isWeatherAvailable,
   loadSheddingUnavailableReason,
+  signalFix,
   weatherUnavailableReason,
 } from '@/lib/forecastSignals'
 
@@ -217,6 +218,7 @@ function ForecastStatusCard({
 function WeatherCard({ signals, locationLabel }: { signals: Forecast['signals']; locationLabel: string }) {
   const { weather } = signals
   const weatherAvailable = isWeatherAvailable(weather)
+  const weatherFix = weatherAvailable ? null : signalFix(weatherUnavailableReason(weather))
   const loadSheddingAvailable = isLoadSheddingAvailable(signals)
   const condition = weatherAvailable ? weather.condition.toLowerCase() : ''
   const WeatherIcon = condition.includes('storm')
@@ -245,6 +247,15 @@ function WeatherCard({ signals, locationLabel }: { signals: Forecast['signals'];
                 <div>
                   <p className="font-semibold text-text">Weather unavailable</p>
                   <p className="mt-1 max-w-xs text-xs text-muted">{weatherUnavailableReason(weather)}</p>
+                  {/* Only when it is the owner's to fix. See signalFix. */}
+                  {weatherFix && (
+                    <Link
+                      to={weatherFix.to}
+                      className="mt-1 inline-block text-xs font-medium text-guava-red-text underline-offset-4 hover:underline"
+                    >
+                      {weatherFix.action}
+                    </Link>
+                  )}
                 </div>
               )}
             </div>

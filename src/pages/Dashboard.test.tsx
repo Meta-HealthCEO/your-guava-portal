@@ -638,4 +638,60 @@ describe('Dashboard', () => {
     // The muted "day off" card is the wrong register for a broken setting.
     expect(screen.queryByText('No trading forecast')).toBeNull()
   })
+  it('offers the fix when weather is off because the cafe has no coordinates', async () => {
+    // "Cafe coordinates are not configured" is a dead end: it names a setting
+    // without saying it is a setting, let alone where. The owner can fix this
+    // one themselves in under a minute.
+    mockClosedWeek([
+      {
+        ...mockForecast,
+        _id: 'f1',
+        date: '2026-03-28',
+        signals: {
+          ...mockForecast.signals,
+          weather: {
+            available: false,
+            condition: '',
+            unavailableReason: 'Cafe coordinates are not configured',
+          },
+        },
+      },
+    ])
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Weather unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Cafe coordinates are not configured')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /set cafe location/i })).toHaveAttribute(
+      'href',
+      // Opens the editor, not the read-only summary: the fields this link
+      // promises are behind the Edit button.
+      '/settings?section=general&edit=cafe'
+    )
+  })
+
+  it('does not offer a fix the owner cannot carry out', async () => {
+    // A missing WEATHER_API_KEY is ours, not theirs. Sending them to Settings
+    // to look for a control that is not there is worse than saying nothing.
+    mockClosedWeek([
+      {
+        ...mockForecast,
+        _id: 'f1',
+        date: '2026-03-28',
+        signals: {
+          ...mockForecast.signals,
+          weather: {
+            available: false,
+            condition: '',
+            unavailableReason: 'Weather service is not configured',
+          },
+        },
+      },
+    ])
+
+    render(<Dashboard />)
+
+    expect(await screen.findByText('Weather service is not configured')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /set cafe location/i })).toBeNull()
+  })
 })

@@ -25,7 +25,7 @@ import { Badge } from '@/components/ui/badge'
 import api from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { forecastDateKey, parseDateOnly, toLocalDateOnly } from '@/lib/date'
-import { isWeatherAvailable, weatherUnavailableReason } from '@/lib/forecastSignals'
+import { isWeatherAvailable, signalFix, weatherUnavailableReason } from '@/lib/forecastSignals'
 import type {
   EventSalesEffect,
   Forecast,
@@ -430,6 +430,13 @@ export default function Factors() {
     () => forecasts.filter((forecast) => dayAvailability(forecast) === 'ready'),
     [forecasts]
   )
+  // Coordinates are a cafe-level setting, so every row in the table repeats the
+  // same reason. The fact belongs on each row; the action belongs once.
+  const weatherFix = useMemo(() => {
+    const blocked = forecasts.find((forecast) => !isWeatherAvailable(forecast.signals.weather))
+    return blocked ? signalFix(weatherUnavailableReason(blocked.signals.weather)) : null
+  }, [forecasts])
+
   // A week whose only forecast days are closed ones says nothing about factors.
   const awaitingHistory = readyDays.length === 0 && awaitingDays.length > 0
   const awaitingReason =
@@ -742,6 +749,17 @@ export default function Factors() {
               </div>
             ) : tab === 'live' ? (
               <div className="space-y-5">
+                {weatherFix && (
+                  <p className="text-sm text-muted">
+                    Weather is not being applied to these days.{' '}
+                    <Link
+                      to={weatherFix.to}
+                      className="font-medium text-guava-red-text underline-offset-4 hover:underline"
+                    >
+                      {weatherFix.action}
+                    </Link>
+                  </p>
+                )}
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-[0.8fr_1.2fr]">
                   <div className="rounded-lg border border-border bg-[#111111] p-4">
                     <p className="text-sm font-semibold text-text">Active factor mix</p>

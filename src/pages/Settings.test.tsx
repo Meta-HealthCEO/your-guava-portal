@@ -644,4 +644,26 @@ describe('Settings', () => {
       expect(screen.getByText(/weather.*(off|unavailable|not).*until/i)).toBeInTheDocument()
     })
   })
+  it('opens the cafe editor when sent here to set the location', async () => {
+    // Today and Factors say "Set cafe location". Landing on the read-only
+    // summary makes that a lie: latitude and longitude only exist once the
+    // Edit button has been found and pressed.
+    window.history.pushState({}, '', '/settings?section=general&edit=cafe')
+
+    renderWithAuth(<Settings />)
+
+    expect(await screen.findByLabelText(/latitude/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/longitude/i)).toBeInTheDocument()
+    // The instruction is spent once carried out; a reload should not reopen it.
+    await waitFor(() => expect(window.location.search).not.toMatch(/edit=cafe/))
+  })
+
+  it('does not open the editor when arriving at General normally', async () => {
+    window.history.pushState({}, '', '/settings?section=general')
+
+    renderWithAuth(<Settings />)
+
+    expect(await screen.findByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/latitude/i)).not.toBeInTheDocument()
+  })
 })
