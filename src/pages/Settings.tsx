@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ComponentType, type FormEvent } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ComponentType, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import {
   AlertCircle,
@@ -15,6 +15,8 @@ import {
   Users,
 } from 'lucide-react'
 import { AppLayout } from '@/components/layout/AppLayout'
+import { tradingHourHints, weekdaysWithSales } from '@/lib/tradingHoursHints'
+import { addLocalDays, toLocalDateOnly } from '@/lib/date'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,7 +24,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/hooks/useAuth'
 import api from '@/lib/api'
-import type { Cafe, TradingHoursEntry } from '@/types'
+import type { Cafe, HeatmapCell, TradingHoursEntry } from '@/types'
 import { AccountSettingsContent } from './Account'
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error'
@@ -32,6 +34,9 @@ const CAFE_NAME_MIN = 2
 const CAFE_NAME_MAX = 120
 
 const DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const
+/** Eight weeks: the same span the forecast engine reasons over by default. */
+const SALES_HINT_DAYS = 56
+const SALES_HINT_WINDOW = 'the last 8 weeks'
 
 /**
  * Overnight trading (17:00–01:00) has no representation in the model: the
@@ -219,6 +224,10 @@ export default function Settings() {
   const [cafeError, setCafeError] = useState<string | undefined>()
   const [cafeNameInvalid, setCafeNameInvalid] = useState(false)
   const [isEditingCafe, setIsEditingCafe] = useState(false)
+  // Weekday transaction counts from the cafe's own sales, so the hours on this
+  // screen can be checked against them. Best-effort: a cafe with no history
+  // yet, or a failed request, must not be told its hours are wrong.
+  const [salesByDay, setSalesByDay] = useState<Map<number, number>>(new Map())
   const [tradingHours, setTradingHours] = useState<TradingHoursEntry[]>([])
   const [hoursState, setHoursState] = useState<SaveState>('idle')
   const [hoursError, setHoursError] = useState<string | undefined>()
@@ -258,6 +267,26 @@ export default function Settings() {
     setCafeTimezone(snapshot.cafeTimezone)
     setTradingHours(snapshot.tradingHours)
   }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    // An explicit window, because the hint quotes the number and an
+    // unqualified count is uncheckable: with no dates the endpoint returns the
+    // cafe's whole history, so a Sunday given up a year ago would be argued
+    // with forever. Eight weeks is what the forecast engine reasons over, so
+    // the two messages describe the same span rather than quoting different
+    // numbers for the same fact.
+    const endDate = toLocalDateOnly(new Date())
+    const startDate = toLocalDateOnly(addLocalDays(new Date(), -SALES_HINT_DAYS))
+    api
+      .get<{ heatmap?: HeatmapCell[]; data?: HeatmapCell[] }>(
+        `/analytics/heatmap?startDate=${startDate}&endDate=${endDate}`,
+        { signal: controller.signal }
+      )
+      .then(({ data }) => setSalesByDay(weekdaysWithSales(data.heatmap || data.data || [])))
+      .catch(() => setSalesByDay(new Map()))
+    return () => controller.abort()
+  }, [])
 
   const loadCafe = useCallback(async (signal?: AbortSignal) => {
     setLoadState('loading')
@@ -496,6 +525,16 @@ export default function Settings() {
   }, [openCafeEditor, loaded, isOwner, searchParams, setSearchParams])
 
   const invalidDays = invalidTradingDays(tradingHours)
+  // States the contradiction; never resolves it. The owner may have closed a
+  // day deliberately and the history may be stale, so this is a note beside
+  // the control rather than an automatic change to their settings.
+  const hintByDay = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const hint of tradingHourHints(tradingHours, salesByDay)) {
+      map.set(hint.dayOfWeek, hint.salesCount)
+    }
+    return map
+  }, [tradingHours, salesByDay])
 
   const isCafeDirty =
     isEditingCafe &&
@@ -674,6 +713,16 @@ export default function Settings() {
                           aria-describedby={dayInvalid ? hintId : undefined}
                           className={!entry.isOpen ? 'opacity-50' : ''}
                         />
+                        {/* The cafe's own sales disagreeing with this switch,
+                            said where the switch is. */}
+                        {hintByDay.has(entry.dayOfWeek) && (
+                          <p className="col-span-2 sm:col-span-4 text-xs text-guava-yellow">
+                            Your sales show trading on this day
+                            {' '}({hintByDay.get(entry.dayOfWeek)!.toLocaleString('en-ZA')} sales in
+                            {' '}{SALES_HINT_WINDOW}). While it is marked closed, this day
+                            {' '}forecasts zero.
+                          </p>
+                        )}
                         {/* Explained at the row, as it is typed — not saved up
                             for a banner at the bottom after Save is pressed. */}
                         {dayInvalid && (
@@ -728,6 +777,14 @@ export default function Settings() {
                         >
                           {formatTimeRange(entry)}
                         </span>
+                        {hintByDay.has(entry.dayOfWeek) && (
+                          <p className="col-span-full text-xs text-guava-yellow">
+                            Your sales show trading on this day
+                            {' '}({hintByDay.get(entry.dayOfWeek)!.toLocaleString('en-ZA')} sales in
+                            {' '}{SALES_HINT_WINDOW}). While it is marked closed, this day
+                            {' '}forecasts zero.
+                          </p>
+                        )}
                       </div>
                     )
                   })}

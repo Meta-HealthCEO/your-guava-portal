@@ -666,4 +666,128 @@ describe('Settings', () => {
     expect(await screen.findByRole('button', { name: /edit cafe details/i })).toBeInTheDocument()
     expect(screen.queryByLabelText(/latitude/i)).not.toBeInTheDocument()
   })
+  describe('trading hours vs the cafe’s own sales', () => {
+    // Nothing checked these two against each other and they drift silently: a
+    // weekday left marked closed forecasts zero however many months of sales
+    // exist for it, and scores 0% every week without anyone being told why.
+    const mockWithSundaySales = () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url.includes('/analytics/heatmap')) {
+          return Promise.resolve({
+            data: {
+              heatmap: [
+                // `transactions` is the per-day average; `totalTransactions`
+                // is the count. They differ here so reading the wrong one fails.
+                { dayOfWeek: 0, hour: 9, revenue: 630, transactions: 15, totalRevenue: 5040, totalTransactions: 120, observedDays: 8 },
+                { dayOfWeek: 0, hour: 10, revenue: 420, transactions: 10, totalRevenue: 3360, totalTransactions: 80, observedDays: 8 },
+                { dayOfWeek: 2, hour: 9, revenue: 525, transactions: 12.5, totalRevenue: 4200, totalTransactions: 100, observedDays: 8 },
+              ],
+            },
+          })
+        }
+        if (url.includes('/cafe/me')) {
+          return Promise.resolve({
+            data: {
+              success: true,
+              cafe: {
+                name: 'Blouberg Coffee',
+                location: { address: '123 Main St', city: 'Cape Town' },
+                tradingHours: [
+                  { dayOfWeek: 0, isOpen: false, openTime: '08:00', closeTime: '14:00' },
+                  { dayOfWeek: 1, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+                  { dayOfWeek: 2, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+                  { dayOfWeek: 3, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+                  { dayOfWeek: 4, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+                  { dayOfWeek: 5, isOpen: true, openTime: '07:00', closeTime: '17:00' },
+                  { dayOfWeek: 6, isOpen: true, openTime: '08:00', closeTime: '15:00' },
+                ],
+              },
+            },
+          })
+        }
+        if (url.includes('/events')) return Promise.resolve({ data: { events: [] } })
+        return Promise.resolve({ data: {} })
+      })
+    }
+
+    it('says so on the day, without changing anything', async () => {
+      mockWithSundaySales()
+
+      renderWithAuth(<Settings />)
+
+      const hint = await screen.findByText(/200 sales/)
+      expect(hint).toHaveTextContent(/your sales show trading on this day/i)
+      // Stating a contradiction is not the same as resolving it: the owner may
+      // have closed the day deliberately and the history may be stale.
+      expect(mockPut).not.toHaveBeenCalled()
+      expect(hint).toHaveTextContent(/this day forecasts zero/i)
+    })
+
+    it('carries the hint into the editor, where the switch is', async () => {
+      mockWithSundaySales()
+
+      renderWithAuth(<Settings />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /edit trading hours/i }))
+
+      expect(await screen.findByText(/200 sales/)).toBeInTheDocument()
+      expect(screen.getByRole('switch', { name: /sunday closed/i })).toBeInTheDocument()
+    })
+
+    it('says nothing about a day the sales agree is closed', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url.includes('/analytics/heatmap')) {
+          return Promise.resolve({
+            data: {
+              heatmap: [
+                { dayOfWeek: 2, hour: 9, revenue: 525, transactions: 12.5, totalRevenue: 4200, totalTransactions: 100, observedDays: 8 },
+              ],
+            },
+          })
+        }
+        if (url.includes('/cafe/me')) {
+          return Promise.resolve({
+            data: {
+              success: true,
+              cafe: {
+                name: 'Blouberg Coffee',
+                tradingHours: [{ dayOfWeek: 0, isOpen: false, openTime: '08:00', closeTime: '14:00' }],
+              },
+            },
+          })
+        }
+        if (url.includes('/events')) return Promise.resolve({ data: { events: [] } })
+        return Promise.resolve({ data: {} })
+      })
+
+      renderWithAuth(<Settings />)
+
+      expect(await screen.findByText('Trading Hours')).toBeInTheDocument()
+      expect(screen.queryByText(/your sales show trading on this day/i)).toBeNull()
+    })
+
+    it('does not accuse a cafe that has no sales history yet', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url.includes('/analytics/heatmap')) return Promise.reject(new Error('no data'))
+        if (url.includes('/cafe/me')) {
+          return Promise.resolve({
+            data: {
+              success: true,
+              cafe: {
+                name: 'Brand New Cafe',
+                tradingHours: [{ dayOfWeek: 0, isOpen: false, openTime: '08:00', closeTime: '14:00' }],
+              },
+            },
+          })
+        }
+        if (url.includes('/events')) return Promise.resolve({ data: { events: [] } })
+        return Promise.resolve({ data: {} })
+      })
+
+      renderWithAuth(<Settings />)
+
+      expect(await screen.findByText('Trading Hours')).toBeInTheDocument()
+      expect(screen.queryByText(/your sales show trading on this day/i)).toBeNull()
+    })
+  })
 })
