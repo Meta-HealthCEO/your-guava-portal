@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { ClosedDayNotice } from '@/components/forecasts/ClosedDayNotice'
 import { Link } from 'react-router'
 import {
   TrendingUp,
@@ -828,10 +829,17 @@ export default function Dashboard() {
           {/* A closed day has no items because nobody is trading, not because
               history is thin. Say so, as Planning does, with the engine's reason. */}
           {isClosedDay ? (
-            <ForecastStatusCard
-              title="No trading forecast"
-              message={activeForecast.availability?.reason || 'This café is closed for the day.'}
-            />
+            activeForecast.availability?.contradictsHistory ? (
+              /* Today is the screen people order from. A zero here that the
+                 cafe's own sales contradict has to read as a broken setting
+                 with a way out, not as a day off. */
+              <ClosedDayNotice availability={activeForecast.availability} />
+            ) : (
+              <ForecastStatusCard
+                title="No trading forecast"
+                message={activeForecast.availability?.reason || 'This café is closed for the day.'}
+              />
+            )
           ) : activeForecastHasItems ? (
             <PredictedOutput items={activeForecast.items} coverage={activeForecast.forecastCoverage} />
           ) : (

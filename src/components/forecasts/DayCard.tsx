@@ -1,4 +1,5 @@
 import { Cloud, Zap, Calendar, Banknote, Megaphone, ChevronRight } from 'lucide-react'
+import { ClosedDayNotice } from './ClosedDayNotice'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Forecast } from '@/types'
@@ -131,12 +132,19 @@ export function DayCard({ forecast, weekAvg, mode = 'plan', onClick }: Props) {
             </div>
             <Badge variant="destructive">Closed</Badge>
           </div>
-          <div className="rounded-lg border border-border bg-[#111111] px-3 py-3">
-            <p className="text-sm font-medium text-text">No trading forecast</p>
-            <p className="mt-1 text-xs text-muted">
-              {forecast.availability.reason || 'This café is closed for the day.'}
-            </p>
-          </div>
+          {/* A closure the sales record contradicts is a setting to fix, not a
+              fact to absorb, so it is an alert with a way out rather than the
+              same muted line as a genuine day off. */}
+          {forecast.availability.contradictsHistory ? (
+            <ClosedDayNotice availability={forecast.availability} />
+          ) : (
+            <div className="rounded-lg border border-border bg-[#111111] px-3 py-3">
+              <p className="text-sm font-medium text-text">No trading forecast</p>
+              <p className="mt-1 text-xs text-muted">
+                {forecast.availability.reason || 'This café is closed for the day.'}
+              </p>
+            </div>
+          )}
           <OpenDetailButton label={getDayLabel(calendarDate)} onClick={onClick} />
         </CardContent>
       </Card>

@@ -2,6 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@/test/test-utils'
 import { DayCard } from './DayCard'
 import { mockForecast } from '@/test/mocks/api'
+import type { Forecast } from '@/types'
+
+const CONTRADICTED_REASON =
+  'Cafe is closed in its trading hours, but 538 sales were recorded on this weekday in the last 8 weeks. Check the trading hours in Settings — this day is forecasting zero.'
 
 describe('DayCard', () => {
   it('renders day revenue and calls onClick', () => {
@@ -256,5 +260,73 @@ describe('DayCard', () => {
     bars.forEach((bar) => {
       expect((bar as HTMLElement).style.width).not.toContain('NaN')
     })
+  })
+  // A weekday wrongly marked closed forecasts zero and scores 0% against real
+  // sales. The engine flags it; nothing used to render the flag, so the
+  // setting stayed wrong and the accuracy stayed low.
+  const closedDay = (availability: Forecast['availability']) => ({
+    ...mockForecast,
+    _id: 'f-closed',
+    date: '2026-03-29',
+    items: [],
+    totalPredictedRevenue: 0,
+    availability,
+  })
+
+  it('warns when a closed day contradicts recorded sales, and links to trading hours', () => {
+    render(
+      <DayCard
+        forecast={closedDay({
+          status: 'closed',
+          reason: CONTRADICTED_REASON,
+          contradictsHistory: true,
+        })}
+        weekAvg={20000}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/538 sales/)
+    expect(screen.getByRole('link', { name: /open trading hours/i })).toHaveAttribute(
+      'href',
+      '/settings?section=general'
+    )
+  })
+
+  it('leaves a genuine day off alone', () => {
+    render(
+      <DayCard
+        forecast={closedDay({ status: 'closed', reason: 'Cafe is closed in its trading hours' })}
+        weekAvg={20000}
+        mode="plan"
+        onClick={() => {}}
+      />
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('link', { name: /trading hours/i })).toBeNull()
+    expect(screen.getByText('Closed')).toBeInTheDocument()
+    expect(screen.getByText('No trading forecast')).toBeInTheDocument()
+  })
+
+  it('opening trading hours does not also open the day drawer', () => {
+    const handleClick = vi.fn()
+    render(
+      <DayCard
+        forecast={closedDay({
+          status: 'closed',
+          reason: CONTRADICTED_REASON,
+          contradictsHistory: true,
+        })}
+        weekAvg={20000}
+        mode="plan"
+        onClick={handleClick}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: /open trading hours/i }))
+
+    expect(handleClick).not.toHaveBeenCalled()
   })
 })

@@ -211,6 +211,18 @@ const closedForecast = (id: string, date: string) => ({
   availability: { status: 'closed' as const, reason: 'Cafe is closed in its trading hours' },
 })
 
+// The same closure, on a weekday the cafe demonstrably trades.
+const CONTRADICTED_REASON =
+  'Cafe is closed in its trading hours, but 538 sales were recorded on this weekday in the last 8 weeks. Check the trading hours in Settings — this day is forecasting zero.'
+const contradictedForecast = (id: string, date: string) => ({
+  ...closedForecast(id, date),
+  availability: {
+    status: 'closed' as const,
+    reason: CONTRADICTED_REASON,
+    contradictsHistory: true,
+  },
+})
+
 // Set by a test before render to drive the /forecasts/week response.
 let weekForecasts: unknown[] = []
 
@@ -568,5 +580,33 @@ describe('Factors', () => {
     await waitFor(() => expect(screen.getByText('Forecast Factors')).toBeInTheDocument())
     expect(screen.getByText(/6 Jun/)).toBeInTheDocument()
     expect(screen.queryByText(/5 Jun/)).not.toBeInTheDocument()
+  })
+  it('flags a per-day row whose closure the sales record contradicts', async () => {
+    // Factors is the screen that explains why a number is what it is, so a day
+    // forecasting R0 because of a setting nobody has checked belongs here too
+    // - not only on the day card.
+    weekForecasts = [readyForecast, contradictedForecast('c1', '2026-06-07')]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Factors')).toBeInTheDocument())
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent(/538 sales/)
+    expect(within(alert).getByRole('link', { name: /open trading hours/i })).toHaveAttribute(
+      'href',
+      '/settings?section=general'
+    )
+  })
+
+  it('leaves a genuine closure unflagged', async () => {
+    weekForecasts = [readyForecast, closedForecast('c2', '2026-06-07')]
+
+    renderWithAuth(<Factors />)
+
+    await waitFor(() => expect(screen.getByText('Forecast Factors')).toBeInTheDocument())
+
+    expect(screen.getByText('Closed')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /open trading hours/i })).toBeNull()
   })
 })

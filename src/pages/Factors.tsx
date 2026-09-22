@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { ClosedDayNotice } from '@/components/forecasts/ClosedDayNotice'
 import { Link } from 'react-router'
 import {
   AlertCircle,
@@ -782,8 +783,11 @@ export default function Factors() {
                         {forecasts.map((forecast) => {
                           const active = (forecast.factors || []).filter((factor) => factor.active)
                           const availability = dayAvailability(forecast)
+                          const contradicted =
+                            availability === 'closed' && forecast.availability?.contradictsHistory
                           return (
-                            <tr key={forecast._id} className="border-t border-border">
+                            <Fragment key={forecast._id}>
+                            <tr className="border-t border-border">
                               {/* The cafe-local calendar key, as every other
                                   forecast surface uses. */}
                               <td className="px-3 py-3 text-text">{fmtDate(forecastDateKey(forecast))}</td>
@@ -817,6 +821,17 @@ export default function Factors() {
                                 </div>
                               </td>
                             </tr>
+                            {/* Spans the row rather than squeezing into the
+                                Forecast cell, so a long reason cannot widen a
+                                column that every other day has to share. */}
+                            {contradicted && (
+                              <tr className="border-t border-border/40">
+                                <td colSpan={4} className="px-3 pb-3">
+                                  <ClosedDayNotice availability={forecast.availability} compact />
+                                </td>
+                              </tr>
+                            )}
+                            </Fragment>
                           )
                         })}
                       </tbody>

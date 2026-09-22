@@ -49,9 +49,25 @@ const closedWeekForecasts = [
   { ...mockForecast, _id: 'f3', date: '2026-03-30', totalPredictedRevenue: 18000 },
 ]
 
-function mockClosedWeek() {
+// The same Sunday, on a cafe whose sales say it trades on Sundays.
+const CONTRADICTED_REASON =
+  'Cafe is closed in its trading hours, but 538 sales were recorded on this weekday in the last 8 weeks. Check the trading hours in Settings — this day is forecasting zero.'
+const contradictedWeekForecasts = closedWeekForecasts.map((forecast) =>
+  forecast._id === 'f2'
+    ? {
+        ...forecast,
+        availability: {
+          status: 'closed',
+          reason: CONTRADICTED_REASON,
+          contradictsHistory: true,
+        },
+      }
+    : forecast
+)
+
+function mockClosedWeek(forecasts: unknown[] = closedWeekForecasts) {
   mockGet.mockImplementation((url: string) => {
-    if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts: closedWeekForecasts } })
+    if (url.includes('/forecasts/week')) return Promise.resolve({ data: { forecasts } })
     if (url.includes('/transactions/stats')) return Promise.resolve({ data: { stats: mockStats } })
     if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test' } } })
     return Promise.reject(new Error('Unknown URL'))
@@ -598,5 +614,28 @@ describe('Dashboard', () => {
     render(<Dashboard />)
 
     expect(await screen.findByText('Unlock on Growth')).toBeInTheDocument()
+  })
+  it('warns on Today when a closed day contradicts the cafe’s own sales', async () => {
+    // Today is the screen the day is run from. A zero here that eight weeks of
+    // Sundays contradict is a setting nobody has checked, and it scored 0%
+    // against real sales every one of those weeks.
+    mockClosedWeek(contradictedWeekForecasts)
+
+    render(<Dashboard />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Forecast Revenue')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /29 Mar/ }))
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent(/538 sales/)
+    expect(within(alert).getByRole('link', { name: /open trading hours/i })).toHaveAttribute(
+      'href',
+      '/settings?section=general'
+    )
+    // The muted "day off" card is the wrong register for a broken setting.
+    expect(screen.queryByText('No trading forecast')).toBeNull()
   })
 })

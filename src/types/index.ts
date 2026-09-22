@@ -156,6 +156,9 @@ export interface Forecast {
   availability?: {
     status: 'ready' | 'insufficient_data' | 'closed'
     reason?: string
+    // True only when a *scheduled* closure is contradicted by sales on that
+    // weekday. An operator's deliberate closure event is not a contradiction.
+    contradictsHistory?: boolean
   }
   items: ForecastItem[]
   signals: {
