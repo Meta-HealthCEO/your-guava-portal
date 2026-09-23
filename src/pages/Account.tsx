@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import {
   AlertCircle,
   CheckCircle,
@@ -26,7 +26,8 @@ import type { Account, BillingPlan } from '@/types'
 
 type SaveState = 'idle' | 'saving' | 'success' | 'error'
 type NoticeTone = 'success' | 'error' | 'info'
-type NoticeState = { type: NoticeTone; message: string } | null
+type NoticeAction = { label: string; to: string }
+type NoticeState = { type: NoticeTone; message: string; action?: NoticeAction } | null
 type BillingCycle = 'monthly' | 'annual'
 
 /**
@@ -198,6 +199,11 @@ function Notice({ notice }: { notice: NoticeState }) {
     >
       <Icon className="w-4 h-4 shrink-0" />
       <span>{notice.message}</span>
+      {notice.action && (
+        <Link to={notice.action.to} className="ml-auto font-medium underline underline-offset-2">
+          {notice.action.label}
+        </Link>
+      )}
     </div>
   )
 }
@@ -434,12 +440,12 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
   // `persist` keeps a notice on screen. A payment that has not resolved yet is
   // exactly the case where a four-second toast leaves the owner with no record
   // that anything happened — which is what drives a second attempt to pay.
-  const showNotice = useCallback((type: NoticeTone, message: string, options?: { persist?: boolean }) => {
+  const showNotice = useCallback((type: NoticeTone, message: string, options?: { persist?: boolean; action?: NoticeAction }) => {
     if (noticeTimerRef.current !== null) {
       window.clearTimeout(noticeTimerRef.current)
       noticeTimerRef.current = null
     }
-    setNotice({ type, message })
+    setNotice({ type, message, action: options?.action })
     if (!options?.persist) {
       noticeTimerRef.current = window.setTimeout(() => {
         setNotice(null)
@@ -694,6 +700,11 @@ export function AccountSettingsContent({ section = 'all' }: { section?: AccountS
     } catch (err: any) {
       if (err?.response && err.response.status < 500 && err.response.status !== 408 && err.response.status !== 429) {
         planCheckoutRef.current = null
+      }
+      // checkout answers 409 { code: 'PLAN_LIMIT_EXCEEDED', message, capacity } at the top level of the body; the fix lives on Team.
+      if (err?.response?.data?.code === 'PLAN_LIMIT_EXCEEDED') {
+        showNotice('error', err.response.data.message, { persist: true, action: { label: 'Open Team', to: '/team' } })
+        return
       }
       showNotice('error', err?.response?.data?.message || 'Could not start card checkout.')
     } finally {

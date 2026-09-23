@@ -492,7 +492,7 @@ describe('Team', () => {
 
   // ── Location allowance ──────────────────────────────────────────────────────
 
-  function mockWithAccount(locations: { used: number; included: number }, cafes: { _id: string; name: string }[]) {
+  function mockWithAccount(locations: { used: number; included: number }, cafes: { _id: string; name: string; archivedAt?: string }[]) {
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/cafe/me')) return Promise.resolve({ data: { cafe: { name: 'Test Cafe' } } })
       if (url.includes('/cafe/list')) return Promise.resolve({ data: { success: true, cafes } })
@@ -543,7 +543,7 @@ describe('Team', () => {
     expect(screen.getByText(/starter plan is full/i)).toBeInTheDocument()
   })
 
-  it('warns that a new location is permanent and metered before it is created', async () => {
+  it('says a new location is metered and can be archived later', async () => {
     mockWithAccount({ used: 1, included: 2 }, [{ _id: 'c1', name: 'Blouberg Coffee' }])
 
     renderWithAuth(<Team />)
@@ -552,10 +552,47 @@ describe('Team', () => {
     const dialog = await screen.findByRole('dialog', { name: /add location/i })
     expect(within(dialog).getByText(/1 of your 2/i)).toBeInTheDocument()
     // There is no cafe-delete route anywhere in the backend.
-    expect(within(dialog).getByText(/cannot be removed from the portal/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/archive a location later/i)).toBeInTheDocument()
   })
 
   // ── Dialog behaviour ────────────────────────────────────────────────────────
+
+  it('archives a location after a confirmation that says what is kept', async () => {
+    mockWithAccount({ used: 2, included: 2 }, [
+      { _id: 'c1', name: 'Blouberg Coffee' },
+      { _id: 'c2', name: 'Sea Point Brew' },
+    ])
+    mockPost.mockResolvedValueOnce({
+      data: { success: true, cafe: { _id: 'c2', name: 'Sea Point Brew', archivedAt: '2026-09-23T10:00:00Z' }, locations: { used: 1, included: 2 } },
+    })
+
+    renderWithAuth(<Team />)
+    await userEvent.click(await screen.findByRole('button', { name: /archive sea point brew/i }))
+    const dialog = await screen.findByRole('dialog', { name: /archive location/i })
+    expect(within(dialog).getByText(/sales history and forecasts are kept/i)).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: /^archive location$/i }))
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/team/cafes/c2/archive'))
+  })
+
+  it('does not offer to archive the only active location', async () => {
+    mockWithAccount({ used: 1, included: 2 }, [{ _id: 'c1', name: 'Blouberg Coffee' }])
+    renderWithAuth(<Team />)
+    expect(await screen.findByRole('button', { name: /archive blouberg coffee/i })).toBeDisabled()
+  })
+
+  it('lists archived locations separately with a restore action', async () => {
+    mockWithAccount({ used: 1, included: 2 }, [
+      { _id: 'c1', name: 'Blouberg Coffee' },
+      { _id: 'c9', name: 'Old Branch', archivedAt: '2026-09-01T00:00:00Z' },
+    ])
+    mockPost.mockResolvedValueOnce({ data: { success: true, cafe: { _id: 'c9', name: 'Old Branch', archivedAt: null } } })
+
+    renderWithAuth(<Team />)
+    await userEvent.click(await screen.findByRole('button', { name: /restore old branch/i }))
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/team/cafes/c9/restore'))
+    expect(screen.queryByRole('button', { name: /archive old branch/i })).not.toBeInTheDocument()
+  })
 
   it('traps focus in a destructive dialog and restores it on Escape', async () => {
     const user = userEvent.setup()

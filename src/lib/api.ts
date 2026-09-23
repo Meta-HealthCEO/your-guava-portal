@@ -267,9 +267,12 @@ api.interceptors.response.use(
       // which required section=billing exactly, then bounced the user back to
       // billing with a full page reload. Every section became a reload trap
       // that discarded whatever was being edited.
-      const onSettings = window.location.pathname.startsWith('/settings')
+      // Settings holds billing, and Team is where a lapsed owner removes members and archives locations to fit a smaller plan
+      // (BE-02-T08). Only those two pages may stay open while the subscription is lapsed.
+      const path = window.location.pathname
+      const canActOnLapse = path.startsWith('/settings') || path.startsWith('/team')
       // N concurrent requests produce N 402s; one navigation is enough.
-      if (!onSettings && !billingRedirectIssued) {
+      if (!canActOnLapse && !billingRedirectIssued) {
         billingRedirectIssued = true
         window.location.href = '/settings?section=billing&billing=required'
       }

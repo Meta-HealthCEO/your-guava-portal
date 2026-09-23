@@ -627,4 +627,26 @@ describe('Account', () => {
     expect(screen.getByText(/confirmation do not match/i)).toBeInTheDocument()
     expect(mockPost).not.toHaveBeenCalledWith('/auth/change-password', expect.anything())
   })
+
+  it('sends the owner to Team when a downgrade is blocked by seats or locations', async () => {
+    mockPost.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: {
+          success: false,
+          code: 'PLAN_LIMIT_EXCEEDED',
+          message: 'Reduce usage before switching to the starter plan: 3 locations (limit 2)',
+          capacity: {},
+        },
+      },
+    })
+
+    renderWithAuth(<Account />)
+    await userEvent.click(await screen.findByRole('button', { name: /move to starter/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and pay/i }))
+
+    const alert = (await screen.findAllByRole('alert')).find((element) => /limit 2/.test(element.textContent ?? ''))
+    expect(alert).toBeDefined()
+    expect(within(alert as HTMLElement).getByRole('link', { name: /open team/i })).toHaveAttribute('href', '/team')
+  })
 })

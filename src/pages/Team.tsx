@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ComponentType, type Form
 import { useNavigate } from 'react-router'
 import {
   AlertCircle,
+  Archive,
+  ArchiveRestore,
   Building2,
   CheckCircle,
   Clock3,
@@ -276,12 +278,16 @@ function Initials({ name }: { name: string }) {
 }
 
 export default function Team() {
-  const { isOwner, logout } = useAuth()
+  const { isOwner, logout, user } = useAuth()
   const navigate = useNavigate()
 
   const [members, setMembers] = useState<TeamMember[]>([])
   const [invitations, setInvitations] = useState<PendingInvitation[]>([])
   const [cafes, setCafes] = useState<CafeBasic[]>([])
+  const [archivedCafes, setArchivedCafes] = useState<CafeBasic[]>([])
+  const [cafePendingArchive, setCafePendingArchive] = useState<CafeBasic | null>(null)
+  const [archivingCafe, setArchivingCafe] = useState(false)
+  const [restoringCafeId, setRestoringCafeId] = useState<string | null>(null)
   const [seats, setSeats] = useState<SeatSummary | null>(null)
   const [locationUsage, setLocationUsage] = useState<LocationUsage | null>(null)
   const [loading, setLoading] = useState(true)
@@ -324,12 +330,14 @@ export default function Team() {
     try {
       const [teamRes, cafeRes] = await Promise.all([
         api.get<{ success: boolean; members: TeamMember[]; invitations?: PendingInvitation[]; seats?: SeatSummary }>('/team'),
-        api.get<{ success: boolean; cafes: CafeBasic[] }>('/cafe/list'),
+        api.get<{ success: boolean; cafes: CafeBasic[] }>('/cafe/list', { params: { includeArchived: 'true' } }),
       ])
       setMembers(teamRes.data.members || [])
       setInvitations(teamRes.data.invitations || [])
       setSeats(teamRes.data.seats || null)
-      setCafes(cafeRes.data.cafes || [])
+      const all = cafeRes.data.cafes || []
+      setCafes(all.filter((cafe) => !cafe.archivedAt))
+      setArchivedCafes(all.filter((cafe) => Boolean(cafe.archivedAt)))
       setLoadError(false)
     } catch {
       // Leaving the empty state up after a failed fetch told the owner their
@@ -379,9 +387,42 @@ export default function Team() {
       : `${seats.remaining} available on ${seats.plan}`
     : 'Seat usage'
 
-  // Locations are a metered, plan-capped resource with no delete route anywhere
-  // in the backend, so the allowance has to be visible before the owner spends
-  // one — not discovered as a 402 after they have typed the whole form.
+  const handleArchiveCafe = async () => {
+    if (!cafePendingArchive) return
+    const target = cafePendingArchive
+    setArchivingCafe(true)
+    try {
+      await api.post(`/team/cafes/${target._id}/archive`)
+      showToast('success', `${target.name} is archived. Its history is kept and it no longer counts toward your plan.`)
+      setCafePendingArchive(null)
+      // This tab may be showing the archived cafe; reloading lets the server choose the cafe it opens now (BE-02-T04).
+      if (target._id === user?.activeCafeId) {
+        window.location.reload()
+        return
+      }
+      await fetchData()
+    } catch (err: any) {
+      showToast('error', err?.response?.data?.message || 'Could not archive this location.')
+    } finally {
+      setArchivingCafe(false)
+    }
+  }
+
+  const handleRestoreCafe = async (cafe: CafeBasic) => {
+    setRestoringCafeId(cafe._id)
+    try {
+      await api.post(`/team/cafes/${cafe._id}/restore`)
+      showToast('success', `${cafe.name} is active again. Give managers access to it from their member settings.`)
+      await fetchData()
+    } catch (err: any) {
+      showToast('error', err?.response?.data?.message || 'Could not restore this location.')
+    } finally {
+      setRestoringCafeId(null)
+    }
+  }
+
+  // Locations are a metered, plan-capped resource. Archiving (BE-02-T08) frees a slot and keeps the data, but the allowance
+  // still has to be visible before the owner spends one — not discovered as a 402 after they have typed the whole form.
   const locationPlan = locationUsage?.plan || seats?.plan
   const locationRemaining = locationUsage ? Math.max(0, locationUsage.included - locationUsage.used) : null
   const locationLimitReached = locationRemaining !== null && locationRemaining <= 0
@@ -870,9 +911,40 @@ export default function Team() {
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted">
                       <MapPin className="h-4 w-4" />
                     </div>
-                    <span className="min-w-0 truncate text-sm font-medium text-text">{cafe.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{cafe.name}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Archive ${cafe.name}`}
+                      title={cafes.length <= 1 ? 'An organisation needs at least one active location' : 'Archive location'}
+                      disabled={cafes.length <= 1}
+                      onClick={() => setCafePendingArchive(cafe)}
+                    >
+                      <Archive className="h-4 w-4" />
+                    </Button>
                   </div>
                 ))
+              )}
+              {archivedCafes.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted">Archived</p>
+                  {archivedCafes.map((cafe) => (
+                    <div key={cafe._id} className="flex items-center gap-3 rounded-lg border border-dashed border-border px-3 py-2">
+                      <span className="min-w-0 flex-1 truncate text-sm text-muted">{cafe.name}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Restore ${cafe.name}`}
+                        disabled={restoringCafeId === cafe._id || locationLimitReached}
+                        onClick={() => void handleRestoreCafe(cafe)}
+                      >
+                        <ArchiveRestore className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               )}
               {seats && (
                 <>
@@ -1173,6 +1245,31 @@ export default function Team() {
       </Dialog>
 
       <Dialog
+        open={Boolean(cafePendingArchive)}
+        title="Archive location"
+        description={cafePendingArchive?.name}
+        onClose={() => {
+          if (!archivingCafe) setCafePendingArchive(null)
+        }}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setCafePendingArchive(null)} disabled={archivingCafe}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleArchiveCafe} disabled={archivingCafe}>
+              <Archive className="h-4 w-4" />
+              {archivingCafe ? 'Archiving...' : 'Archive location'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-6 text-muted">
+          Its sales history and forecasts are kept. It stops counting toward your plan's locations, managers lose access to it, and it
+          leaves the cafe switcher. You can restore it later while your plan has room.
+        </p>
+      </Dialog>
+
+      <Dialog
         open={locationOpen}
         title="Add location"
         description="New locations count toward your plan allowance."
@@ -1189,9 +1286,8 @@ export default function Team() {
           </>
         }
       >
-        {/* There is no cafe-delete route in the backend and no remove control on
-            the Locations card, so a typo here permanently consumes one of two
-            slots on the entry plan. Say the price before it is paid. */}
+        {/* A location is metered from the moment it exists; it can be archived
+            later (BE-02-T08), but say the price before it is paid. */}
         <div className="mb-4 rounded-lg border border-border bg-[#111111] px-3 py-3">
           <p className="text-sm text-text">
             {locationUsage
@@ -1202,7 +1298,7 @@ export default function Team() {
               : 'This uses one of the locations your plan allows.'}
           </p>
           <p className="mt-1 text-xs text-muted">
-            Locations cannot be removed from the portal. Contact support if you add one by mistake.
+            You can archive a location later from the Locations card. Archived locations keep their data and stop counting toward your plan.
           </p>
         </div>
         <form id="add-location-form" onSubmit={handleAddCafe} className="space-y-4">

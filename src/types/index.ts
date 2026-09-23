@@ -82,6 +82,8 @@ export interface Account {
 export interface CafeBasic {
   _id: string
   name: string
+  // Set when the owner archived the location (BE-02-T08); active locations carry null or nothing.
+  archivedAt?: string | null
 }
 
 export interface TradingHoursEntry {

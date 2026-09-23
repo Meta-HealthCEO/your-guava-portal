@@ -65,6 +65,18 @@ describe('api interceptors', () => {
     return reload
   }
 
+  it('does not bounce a lapsed owner off Team, where they reduce usage to fit a smaller plan', async () => {
+    const { responseRejected } = await loadApi()
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { ...originalLocation, pathname: '/team', href: 'http://localhost/team' },
+    })
+    const error = { config: { url: '/cafe/me', headers: {} }, response: { status: 402, data: { code: 'BILLING_REQUIRED' } } }
+
+    await expect(responseRejected(error)).rejects.toBe(error)
+    expect(window.location.href).toBe('http://localhost/team')
+  })
+
   it('asks the refresh endpoint for the cafe this tab is showing', async () => {
     const { responseRejected, setTabCafeId } = await loadApi()
     setTabCafeId('cafeA')
