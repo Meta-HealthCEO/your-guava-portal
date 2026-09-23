@@ -76,7 +76,7 @@ describe('Signup', () => {
       )
     })
 
-    expect(screen.getByText(/verify your email/i)).toBeInTheDocument()
+    expect(screen.getByText(/check your inbox/i)).toBeInTheDocument()
     expect(screen.getByText('jane@cafe.co.za')).toBeInTheDocument()
   }, 10000)
 
@@ -97,10 +97,6 @@ describe('Signup', () => {
     [
       'VERIFICATION_EMAIL_FAILED',
       'Your registration is saved, but the verification email could not be sent.',
-    ],
-    [
-      'REGISTRATION_PENDING',
-      'Registration is already pending for this email.',
     ],
   ])('offers verification resend when registration returns %s', async (code, message) => {
     mockRegister.mockRejectedValueOnce({
@@ -148,7 +144,7 @@ describe('Signup', () => {
       response: {
         data: {
           data: {
-            code: 'REGISTRATION_PENDING',
+            code: 'VERIFICATION_EMAIL_FAILED',
             email: 'canonical@example.com',
             message: 'Registration is pending.',
           },
@@ -243,7 +239,7 @@ describe('Signup pending screen', () => {
     render(<Signup />)
     await completeSignupForm()
     await userEvent.click(screen.getByRole('button', { name: /create account/i }))
-    await screen.findByText(/verify your email/i)
+    await screen.findByText(/check your inbox/i)
   }
 
   // This screen is the entire gap between "I signed up" and "I can use the
@@ -267,6 +263,12 @@ describe('Signup pending screen', () => {
   // resendVerification answers the same 200 whether a link went out or the mail
   // provider refused the send and the token was rolled back, so a flat "a fresh
   // link has been sent" is an assertion the server never actually made.
+  it('shows one check-your-inbox state and says the link will ask for this password', async () => {
+    await reachPendingScreen()
+    expect(screen.getAllByRole('heading', { name: /check your inbox/i })).toHaveLength(1)
+    expect(screen.getByText(/enter the password you just chose/i)).toBeInTheDocument()
+  })
+
   it('does not promise delivery it cannot confirm', async () => {
     await reachPendingScreen()
     vi.mocked(api.post).mockResolvedValueOnce({ data: { success: true } })

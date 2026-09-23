@@ -33,19 +33,26 @@ describe('auth recovery pages', () => {
     window.history.replaceState({}, '', '/')
   })
 
-  it('verifies the fragment token and scrubs it from browser history', async () => {
+  it('verifies the fragment token with the sign-up password and scrubs it from browser history', async () => {
     window.history.replaceState({}, '', '/verify-email#token=verification-secret')
     mockPost.mockResolvedValueOnce({
       data: { message: 'Email verified. You can now sign in.' },
     })
     render(<VerifyEmail />)
 
+    // The token is read and scrubbed before anything is submitted; the link is spent only with the password (BE-02-T01).
+    await screen.findByLabelText(/^password$/i)
+    expect(window.location.hash).toBe('')
+    expect(mockPost).not.toHaveBeenCalled()
+    await userEvent.type(screen.getByLabelText(/^password$/i), 'owner-password-1')
+    await userEvent.click(screen.getByRole('button', { name: /verify and finish/i }))
+
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith('/auth/verify-email', {
         token: 'verification-secret',
+        password: 'owner-password-1',
       })
     })
-    expect(window.location.hash).toBe('')
     expect(await screen.findByText('Email verified')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /continue to sign in/i })).toHaveAttribute(
       'href',

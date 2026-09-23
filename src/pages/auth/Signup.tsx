@@ -85,10 +85,9 @@ export default function Signup() {
       setPendingEmail(result.email?.trim().toLowerCase() || submittedEmail)
     } catch (err: unknown) {
       const payload = registrationErrorPayload(err)
-      if (
-        payload?.code === 'VERIFICATION_EMAIL_FAILED' ||
-        payload?.code === 'REGISTRATION_PENDING'
-      ) {
+      // The server answers every accepted address with the same 202 (BE-02-T01), so the only
+      // error that still lands on the pending screen is a saved registration whose email failed.
+      if (payload?.code === 'VERIFICATION_EMAIL_FAILED') {
         setVerificationMessage(
           payload.message || 'Your registration is pending. Request a fresh verification link below.'
         )
@@ -125,12 +124,15 @@ export default function Signup() {
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-guava-green/10">
             <Mail className="h-6 w-6 text-guava-green" />
           </div>
-          <h1 className="text-xl font-bold text-text">Verify your email</h1>
+          <h1 className="text-xl font-bold text-text">Check your inbox</h1>
           <p className="mt-3 text-sm leading-6 text-muted">
             {verificationMessage || 'Open the verification link to finish creating your account.'}
           </p>
           <p className="mt-2 text-sm text-muted">
             Verification email: <span className="font-medium text-text">{pendingEmail}</span>
+          </p>
+          <p className="mt-2 text-sm text-muted">
+            When you open the link, you will enter the password you just chose to finish.
           </p>
           {/* The 24-hour window and the spam folder are the two things an owner
               needs when the link is slow, and neither was stated anywhere. */}
