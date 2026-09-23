@@ -24,7 +24,7 @@ interface AuthContextType {
     name: string,
     cafeName: string,
     orgName?: string
-  ) => Promise<{ email: string; message: string }>
+  ) => Promise<{ email: string; message: string; deliveryMode?: 'email' | 'console' | 'none' }>
   switchCafe: (cafeId: string) => Promise<void>
   updateCurrentUser?: (user: User) => void
 }
@@ -147,6 +147,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       verificationRequired: boolean
       email: string
       message: string
+      deliveryMode?: 'email' | 'console' | 'none'
     }>('/auth/register', {
       email,
       password,
@@ -158,7 +159,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     clearAccessToken()
     clearTabCafeId()
     setUser(null)
-    return { email: data.email, message: data.message }
+    return { email: data.email, message: data.message, deliveryMode: data.deliveryMode }
   }
 
   const switchCafe = async (cafeId: string) => {

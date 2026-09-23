@@ -245,6 +245,51 @@ describe('Team', () => {
     expect(screen.getByText(/account is created after they accept/i)).toBeInTheDocument()
   })
 
+  it('says no email was sent when the server is in development mode', async () => {
+    mockPost.mockResolvedValueOnce({
+      data: {
+        success: true,
+        emailSent: false,
+        deliveryMode: 'console',
+        invitation: { email: 'new@example.com' },
+      },
+    })
+    mockGet.mockImplementation((url: string) => {
+      if (url.includes('/team')) {
+        return Promise.resolve({ data: { success: true, members: [], seats: { plan: 'starter', used: 1, included: 2, remaining: 1 } } })
+      }
+      if (url.includes('/cafe/list')) {
+        return Promise.resolve({ data: { success: true, cafes: [{ _id: 'c1', name: 'Blouberg Coffee' }] } })
+      }
+      if (url.includes('/cafe/me')) {
+        return Promise.resolve({ data: { cafe: { name: 'Test' } } })
+      }
+      return Promise.resolve({ data: {} })
+    })
+
+    renderWithAuth(<Team />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Blouberg Coffee').length).toBeGreaterThanOrEqual(1)
+    })
+
+    await userEvent.click(screen.getAllByRole('button', { name: /^add member$/i })[0])
+    await userEvent.type(screen.getByPlaceholderText('Team member name'), 'New Manager')
+    await userEvent.type(screen.getByPlaceholderText('member@example.com'), 'new@example.com')
+    const submitButtons = screen.getAllByRole('button', { name: /^add member$/i })
+    await userEvent.click(submitButtons[submitButtons.length - 1])
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/team/invite', {
+        name: 'New Manager',
+        email: 'new@example.com',
+        cafeIds: ['c1'],
+        canSpendCredits: false,
+      })
+    })
+    expect(await screen.findByText(/development mode: no email was sent/i)).toBeInTheDocument()
+  })
+
   it('renders pending invitations and supports resend and revoke', async () => {
     const user = userEvent.setup()
     mockGet.mockImplementation((url: string) => {

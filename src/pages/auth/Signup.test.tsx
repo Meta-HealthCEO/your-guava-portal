@@ -263,6 +263,19 @@ describe('Signup pending screen', () => {
   // resendVerification answers the same 200 whether a link went out or the mail
   // provider refused the send and the token was rolled back, so a flat "a fresh
   // link has been sent" is an assertion the server never actually made.
+  it('says no email was sent when the server is in development mode', async () => {
+    mockRegister.mockResolvedValueOnce({ email: 'jane@cafe.co.za', message: 'Check your inbox.', deliveryMode: 'console' })
+    render(<Signup />)
+    await completeSignupForm()
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    expect(await screen.findByText(/development mode: no email was sent/i)).toBeInTheDocument()
+  })
+
+  it('does not mention development mode for a real delivery', async () => {
+    await reachPendingScreen()
+    expect(screen.queryByText(/development mode/i)).not.toBeInTheDocument()
+  })
+
   it('says how many verification emails an hour it will send', async () => {
     await reachPendingScreen()
     expect(screen.getByText(/up to 3 emails an hour/i)).toBeInTheDocument()

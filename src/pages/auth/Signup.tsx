@@ -58,6 +58,7 @@ export default function Signup() {
   const [isLoading, setIsLoading] = useState(false)
   const [pendingEmail, setPendingEmail] = useState<string | null>(null)
   const [verificationMessage, setVerificationMessage] = useState<string | null>(null)
+  const [deliveryMode, setDeliveryMode] = useState<string | undefined>()
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
 
@@ -82,6 +83,7 @@ export default function Signup() {
     try {
       const result = await register(submittedEmail, password, name, cafeName, orgName.trim() || undefined)
       setVerificationMessage(result.message)
+      setDeliveryMode(result.deliveryMode)
       setPendingEmail(result.email?.trim().toLowerCase() || submittedEmail)
     } catch (err: unknown) {
       const payload = registrationErrorPayload(err)
@@ -131,6 +133,11 @@ export default function Signup() {
           <p className="mt-2 text-sm text-muted">
             Verification email: <span className="font-medium text-text">{pendingEmail}</span>
           </p>
+          {deliveryMode === 'console' && (
+            <p className="mt-2 rounded-lg border border-border px-3 py-2 text-xs text-muted" role="note">
+              Development mode: no email was sent. The link is in the server log when EMAIL_CONSOLE_LINKS is on.
+            </p>
+          )}
           <p className="mt-2 text-sm text-muted">
             When you open the link, you will enter the password you just chose to finish.
           </p>

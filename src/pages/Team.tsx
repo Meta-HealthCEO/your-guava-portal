@@ -442,13 +442,18 @@ export default function Team() {
 
     setInviting(true)
     try {
-      await api.post<{ emailSent?: boolean }>('/team/invite', {
+      const { data } = await api.post<{ emailSent?: boolean; deliveryMode?: string }>('/team/invite', {
         name,
         email,
         cafeIds: invCafeIds,
         canSpendCredits: invCanSpendCredits,
       })
-      showToast('success', `Invitation sent to ${email}. Their account is created after they accept it.`)
+      showToast(
+        'success',
+        data?.deliveryMode === 'console'
+          ? `Invitation created for ${email}. Development mode: no email was sent; the link is in the server log.`
+          : `Invitation sent to ${email}. Their account is created after they accept it.`
+      )
       setInviteOpen(false)
       await fetchData()
     } catch (err: any) {
