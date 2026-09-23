@@ -2,6 +2,7 @@ import { createContext, useEffect, useState, type ReactNode } from 'react'
 import api, { API_CONFIG_ERROR, isSessionRejection, refreshAccessToken } from '@/lib/api'
 import { clearInsightChatStorage } from '@/lib/chatStorage'
 import { clearAccessToken, getAccessToken, setAccessToken } from '@/lib/accessToken'
+import { CafeContextChangedError, clearTabCafeId, setTabCafeId } from '@/lib/cafeContext'
 import type { User } from '@/types'
 
 interface AuthContextType {
@@ -75,7 +76,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     let active = true
     const restoreSession = async () => {
       try {
-        if (!getAccessToken()) await refreshAccessToken()
+        if (!getAccessToken()) {
+          try {
+            await refreshAccessToken()
+          } catch (error) {
+            // On a cold load nothing is on screen yet: a changed cafe is adopted (the token and tab cafe are already set).
+            if (!(error instanceof CafeContextChangedError)) throw error
+          }
+        }
         const response = await api.get<User>('/auth/me')
         if (active && response?.data) {
           setUser(response.data)
@@ -113,6 +121,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     })
     clearInsightChatStorage()
     setAccessToken(data.accessToken)
+    setTabCafeId(data.user.activeCafeId ?? null)
     setUser(data.user)
   }
 
@@ -121,6 +130,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       await api.post('/auth/logout')
     } finally {
       clearAccessToken()
+      clearTabCafeId()
       clearInsightChatStorage()
       setUser(null)
     }
@@ -146,6 +156,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     })
     clearInsightChatStorage()
     clearAccessToken()
+    clearTabCafeId()
     setUser(null)
     return { email: data.email, message: data.message }
   }
@@ -156,6 +167,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       { cafeId }
     )
     setAccessToken(data.accessToken)
+    // This tab now shows the new cafe; other tabs keep theirs (BE-02-T04).
+    setTabCafeId(data.activeCafeId)
     window.location.reload()
   }
 

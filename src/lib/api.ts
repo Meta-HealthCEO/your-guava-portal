@@ -1,5 +1,8 @@
 import axios from 'axios'
 import { clearAccessToken, getAccessToken, setAccessToken } from './accessToken'
+import { CafeContextChangedError, getTabCafeId, setTabCafeId } from './cafeContext'
+
+export { CafeContextChangedError } from './cafeContext'
 
 const REQUEST_TIMEOUT_MS = 20_000
 const configuredApiUrl = import.meta.env.VITE_API_URL?.trim()
@@ -93,10 +96,11 @@ let billingRedirectIssued = false
 
 export function refreshAccessToken() {
   if (!refreshPromise) {
+    const requestedCafeId = getTabCafeId()
     refreshPromise = axios
       .post(
         `${API_BASE_URL}/auth/refresh`,
-        {},
+        requestedCafeId ? { cafeId: requestedCafeId } : {},
         { withCredentials: true, timeout: REQUEST_TIMEOUT_MS }
       )
       .then(({ data }) => {
@@ -105,6 +109,12 @@ export function refreshAccessToken() {
           throw new Error('Refresh response did not include an access token')
         }
         setAccessToken(token)
+        // The server mints the cafe this tab asked for while the user can still open it, and always says which cafe it chose.
+        const grantedCafeId = typeof data?.cafeId === 'string' ? data.cafeId : null
+        setTabCafeId(grantedCafeId)
+        if (requestedCafeId && grantedCafeId !== requestedCafeId) {
+          throw new CafeContextChangedError(grantedCafeId)
+        }
         return token
       })
       .finally(() => {
@@ -128,6 +138,8 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
     const headers = new Headers(init.headers)
     if (token) headers.set('Authorization', `Bearer ${token}`)
     else headers.delete('Authorization')
+    const cafeId = getTabCafeId()
+    if (cafeId) headers.set('X-Cafe-Id', cafeId)
 
     const headerTimeout = new AbortController()
     const signal = init.signal
@@ -151,6 +163,13 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
   }
 
   let response = await send(getAccessToken())
+  if (response.status === 409) {
+    const body = await response.clone().json().catch(() => null)
+    if (body?.code === 'CAFE_CONTEXT_MISMATCH') {
+      window.location.reload()
+      return response
+    }
+  }
   if (response.status !== 401 || !shouldAttemptRefresh(path)) return response
 
   try {
@@ -158,6 +177,11 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
     response = await send(token)
     return response
   } catch (error) {
+    if (error instanceof CafeContextChangedError) {
+      // Same as the axios path: never replay a stream into a cafe this page is not showing.
+      window.location.reload()
+      throw error
+    }
     // Only a rejected credential ends the session. A transport failure is
     // handed back to the caller so the page can offer a retry and keep state.
     if (isSessionRejection(error)) {
@@ -172,6 +196,9 @@ export async function authenticatedFetch(path: string, init: RequestInit = {}): 
 api.interceptors.request.use((config) => {
   const token = getAccessToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // The cafe this tab is showing (BE-02-T04): the server refuses a token for another cafe before any handler runs.
+  const cafeId = getTabCafeId()
+  if (cafeId) config.headers['X-Cafe-Id'] = cafeId
   return config
 })
 
@@ -190,6 +217,12 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`
         return api(original)
       } catch (refreshError) {
+        if (refreshError instanceof CafeContextChangedError) {
+          // The cafes this user can open changed, or another tab moved the default. Replaying would send this page's request to
+          // a cafe it is not showing, so reload and let the page render the cafe the server chose.
+          window.location.reload()
+          return Promise.reject(refreshError)
+        }
         // Same rule as authenticatedFetch: a refused credential ends the
         // session, a failed connection does not.
         if (isSessionRejection(refreshError)) {
@@ -212,6 +245,13 @@ api.interceptors.response.use(
       if (normaliseApiPath(original.url) !== '/auth/me') {
         window.location.href = '/login'
       }
+      return Promise.reject(error)
+    }
+
+    // This tab's cafe and its token disagree (another tab or a revoked cafe moved the session): nothing was written, so reload
+    // and show the cafe the server will grant.
+    if (error.response?.status === 409 && error.response?.data?.code === 'CAFE_CONTEXT_MISMATCH') {
+      window.location.reload()
       return Promise.reject(error)
     }
 

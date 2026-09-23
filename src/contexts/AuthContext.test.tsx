@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { AuthProvider, AuthContext } from './AuthContext'
 import { useContext } from 'react'
 import { clearAccessToken, getAccessToken, setAccessToken } from '@/lib/accessToken'
+import { CafeContextChangedError, clearTabCafeId, getTabCafeId, setTabCafeId } from '@/lib/cafeContext'
 
 // Mock the api module
 const mockGet = vi.fn()
@@ -54,6 +55,8 @@ describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    sessionStorage.clear()
+    clearTabCafeId()
     clearAccessToken()
     // What "no session" actually looks like on the wire: the server refuses the
     // refresh cookie with a 401. It is deliberately not a bare Error — the app
@@ -288,6 +291,41 @@ describe('AuthContext', () => {
     })
   })
 
+  it('adopts the cafe the server granted when a cold load finds this tab cafe revoked', async () => {
+    setTabCafeId('cafeRevoked')
+    mockRefresh.mockImplementation(async () => {
+      setAccessToken('granted-token')
+      setTabCafeId('cafeGranted')
+      throw new CafeContextChangedError('cafeGranted')
+    })
+    mockGet.mockResolvedValue({
+      data: { id: 'u1', name: 'Thandi', email: 't@x.co', role: 'owner', activeCafeId: 'cafeGranted' },
+    })
+
+    render(<AuthProvider><TestConsumer /></AuthProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+    expect(screen.getByTestId('user')).toHaveTextContent('Thandi')
+    expect(screen.getByTestId('bootstrapError')).toHaveTextContent('none')
+    expect(getTabCafeId()).toBe('cafeGranted')
+  })
+
+  it('records the signed-in cafe for this tab and forgets it on logout', async () => {
+    mockPost
+      .mockResolvedValueOnce({
+        data: { accessToken: 'token123', user: { id: 'u1', name: 'Test User', role: 'owner', activeCafeId: 'c1', cafeIds: ['c1'] } },
+      })
+      .mockResolvedValueOnce({ data: { success: true } })
+
+    render(<AuthProvider><TestConsumer /></AuthProvider>)
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+    await userEvent.click(screen.getByText('Login'))
+    await waitFor(() => expect(getTabCafeId()).toBe('c1'))
+
+    await userEvent.click(screen.getByText('Logout'))
+    await waitFor(() => expect(getTabCafeId()).toBeNull())
+  })
+
   it('switchCafe calls API and reloads', async () => {
     const mockUser = {
       id: 'u1',
@@ -333,6 +371,7 @@ describe('AuthContext', () => {
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith('/team/switch-cafe', { cafeId: 'cafe456' })
     })
+    await waitFor(() => expect(getTabCafeId()).toBe('c2'))
 
     expect(getAccessToken()).toBe('newtoken')
     expect(localStorage.getItem('accessToken')).toBeNull()

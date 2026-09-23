@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const axiosMock = vi.hoisted(() => {
   const requestUse = vi.fn()
@@ -32,6 +32,7 @@ const loadApi = async () => {
   vi.resetModules()
   const mod = await import('./api')
   const tokenStore = await import('./accessToken')
+  const cafeContext = await import('./cafeContext')
   const requestHandler = axiosMock.requestUse.mock.calls[axiosMock.requestUse.mock.calls.length - 1]?.[0]
   const responseRejected = axiosMock.responseUse.mock.calls[axiosMock.responseUse.mock.calls.length - 1]?.[1]
   if (!requestHandler || !responseRejected) {
@@ -43,13 +44,74 @@ const loadApi = async () => {
     requestHandler,
     responseRejected,
     ...tokenStore,
+    ...cafeContext,
   }
 }
 
 describe('api interceptors', () => {
+  const originalLocation = window.location
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    sessionStorage.clear()
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { writable: true, value: originalLocation })
+  })
+
+  const stubReload = () => {
+    const reload = vi.fn()
+    Object.defineProperty(window, 'location', { writable: true, value: { ...originalLocation, reload } })
+    return reload
+  }
+
+  it('asks the refresh endpoint for the cafe this tab is showing', async () => {
+    const { responseRejected, setTabCafeId } = await loadApi()
+    setTabCafeId('cafeA')
+    axiosMock.post.mockResolvedValueOnce({ data: { accessToken: 'new-token', cafeId: 'cafeA' } })
+    const original: { url: string; headers: Record<string, string> } = { url: '/uploads', headers: {} }
+
+    await expect(responseRejected({ config: original, response: { status: 401 } })).resolves.toEqual(
+      expect.objectContaining({ data: { retried: true } })
+    )
+    expect(axiosMock.post).toHaveBeenCalledWith(
+      'http://localhost:5000/api/auth/refresh',
+      { cafeId: 'cafeA' },
+      { withCredentials: true, timeout: 20_000 }
+    )
+    expect(axiosMock.instance).toHaveBeenCalledWith(original)
+  })
+
+  it('reloads instead of replaying when the server grants a different cafe', async () => {
+    const { responseRejected, setTabCafeId, getTabCafeId, CafeContextChangedError } = await loadApi()
+    const reload = stubReload()
+    setTabCafeId('cafeA')
+    axiosMock.post.mockResolvedValueOnce({ data: { accessToken: 'new-token', cafeId: 'cafeB' } })
+
+    await expect(
+      responseRejected({ config: { url: '/uploads', headers: {} }, response: { status: 401 } })
+    ).rejects.toBeInstanceOf(CafeContextChangedError)
+    expect(axiosMock.instance).not.toHaveBeenCalled()
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(getTabCafeId()).toBe('cafeB')
+  })
+
+  it('sends the tab cafe with every request', async () => {
+    const { requestHandler, setTabCafeId } = await loadApi()
+    setTabCafeId('cafeA')
+    const config = requestHandler({ headers: {} })
+    expect(config.headers['X-Cafe-Id']).toBe('cafeA')
+  })
+
+  it('reloads on a cafe-context mismatch without refreshing or retrying', async () => {
+    const { responseRejected } = await loadApi()
+    const reload = stubReload()
+    const error = { config: { url: '/events', headers: {} }, response: { status: 409, data: { code: 'CAFE_CONTEXT_MISMATCH' } } }
+
+    await expect(responseRejected(error)).rejects.toBe(error)
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(axiosMock.post).not.toHaveBeenCalled()
+    expect(axiosMock.instance).not.toHaveBeenCalled()
   })
 
   it('configures axios with the API base URL and credentials', async () => {
