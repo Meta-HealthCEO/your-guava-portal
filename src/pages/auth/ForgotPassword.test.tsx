@@ -48,6 +48,15 @@ describe('ForgotPassword', () => {
     expect(screen.getByText(/check your inbox/i)).toBeInTheDocument()
   })
 
+  it('does not claim a reset link was sent to an address it cannot vouch for', async () => {
+    renderPage()
+    await submit('owner@example.com')
+
+    const panel = await screen.findByRole('status')
+    expect(panel).toHaveTextContent(/if an account uses owner@example\.com, a reset link is on its way/i)
+    expect(panel).not.toHaveTextContent(/check your inbox for a password reset link/i)
+  })
+
   // The link is single-use and lives exactly one hour, and requesting another
   // one revokes every prior token. None of that was stated anywhere, so a user
   // whose email was slow had no way to judge whether to wait or ask again.

@@ -68,7 +68,7 @@ export default function ForgotPassword() {
               <div className="flex items-start gap-3">
                 <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div className="space-y-2">
-                  <p>Check your inbox for a password reset link.</p>
+                  <p>Check your inbox. If an account uses {email}, a reset link is on its way.</p>
                   <p className="text-muted">
                     The link works once and expires after 1 hour. If it hasn’t arrived in a few
                     minutes, check your spam or promotions folder — asking for a new link cancels
