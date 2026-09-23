@@ -78,6 +78,16 @@ export interface Upload {
   };
 }
 
+/**
+ * One row of GET /uploads. The list returns only what the history table draws;
+ * previews, headers, row errors and the mapping come from GET /uploads/:id.
+ */
+export type UploadListItem = Pick<
+  Upload,
+  | '_id' | 'cafeId' | 'uploadedBy' | 'fileName' | 'fileSize' | 'posType' | 'mappingSource' | 'itemsMode'
+  | 'status' | 'stats' | 'dateRange' | 'errorMessage' | 'completedAt' | 'maintenance' | 'createdAt'
+>
+
 export interface StageUploadResponse {
   success: true;
   uploadId: string;

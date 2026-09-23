@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import api from '@/lib/api'
 import { deleteUploadConsequence } from '@/lib/uploadMessages'
-import type { Upload, UploadStatus } from '@/types/upload'
+import type { Upload, UploadListItem, UploadStatus } from '@/types/upload'
 
 const PAGE_SIZE = 20
 
@@ -77,7 +77,7 @@ const MAPPING_SOURCE_LABEL: Record<NonNullable<Upload['mappingSource']>, string>
  * upload that was never mapped at all all looked identical. Uploads staged
  * before mappingSource was recorded fall back to the old two-way split.
  */
-export const uploadSourceLabel = (upload: Upload) =>
+export const uploadSourceLabel = (upload: Pick<Upload, 'mappingSource' | 'posType'>) =>
   upload.mappingSource
     ? MAPPING_SOURCE_LABEL[upload.mappingSource]
     : upload.posType === 'yoco'
@@ -87,7 +87,7 @@ export const uploadSourceLabel = (upload: Upload) =>
 // Every row's link reads "View", so on a long history a screen-reader user hears
 // "View" 20-odd times with nothing to tell the rows apart. Keep "View" as the
 // first word (SC 2.5.3 Label in Name) and append the file and upload date.
-const viewLinkLabel = (upload: Upload) =>
+const viewLinkLabel = (upload: Pick<Upload, 'fileName' | 'createdAt'>) =>
   `View import of ${upload.fileName}, uploaded ${new Date(upload.createdAt).toLocaleDateString('en-ZA', {
     day: 'numeric',
     month: 'long',
@@ -107,7 +107,7 @@ interface UploadHistoryCardProps {
 }
 
 export function UploadHistoryCard({ refreshKey = 0, canRemove = false }: UploadHistoryCardProps) {
-  const [uploads, setUploads] = useState<Upload[]>([])
+  const [uploads, setUploads] = useState<UploadListItem[]>([])
   const [pagination, setPagination] = useState<UploadsPagination | null>(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
@@ -116,7 +116,7 @@ export function UploadHistoryCard({ refreshKey = 0, canRemove = false }: UploadH
   // Only an upload that imported nothing is offered here. A completed import is
   // deleted from its detail page, where the row count and date range are in view -
   // the consequence is bigger and the owner should see what they are removing.
-  const [pendingDelete, setPendingDelete] = useState<Upload | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<UploadListItem | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
@@ -146,7 +146,7 @@ export function UploadHistoryCard({ refreshKey = 0, canRemove = false }: UploadH
     const controller = new AbortController()
     setLoading(true)
     setError(false)
-    api.get<{ success: boolean; uploads: Upload[]; pagination?: UploadsPagination }>('/uploads', {
+    api.get<{ success: boolean; uploads: UploadListItem[]; pagination?: UploadsPagination }>('/uploads', {
       signal: controller.signal,
       params: { page, limit: PAGE_SIZE },
     })

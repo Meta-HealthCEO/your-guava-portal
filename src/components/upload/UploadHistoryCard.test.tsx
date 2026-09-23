@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BrowserRouter } from 'react-router'
 import { UploadHistoryCard, isDuplicateUploadMessage } from './UploadHistoryCard'
-import type { Upload } from '@/types/upload'
+import type { Upload, UploadListItem } from '@/types/upload'
 
 const mockGet = vi.fn()
 vi.mock('@/lib/api', () => ({
@@ -198,5 +198,36 @@ describe('isDuplicateUploadMessage', () => {
     expect(isDuplicateUploadMessage('Every valid row already exists in another upload')).toBe(true)
     expect(isDuplicateUploadMessage('File exceeds the 10000 row limit')).toBe(false)
     expect(isDuplicateUploadMessage(undefined)).toBe(false)
+  })
+})
+
+describe('UploadHistoryCard list contract', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('draws every column from the summary the list endpoint returns', async () => {
+    // GET /uploads no longer carries sampleRows, headers, rowErrors,
+    // columnMapping or r2Key; the table must not need them.
+    const summary: UploadListItem = {
+      _id: 'up9',
+      cafeId: 'cafe1',
+      uploadedBy: { _id: 'u1', name: 'Owner', email: 'owner@example.com' },
+      fileName: 'summary-only.csv',
+      fileSize: 1200,
+      posType: 'wizard',
+      mappingSource: 'manual',
+      itemsMode: 'packed',
+      status: 'completed',
+      stats: { imported: 42, skipped: 0, errors: 0, totalRows: 42 },
+      dateRange: { firstDate: '2026-08-01', lastDate: '2026-08-07' },
+      createdAt: '2026-09-03T08:30:00.000Z',
+    }
+    mockGet.mockResolvedValue({ data: { success: true, uploads: [summary] } })
+    renderCard()
+    await waitFor(() => expect(screen.getByText('summary-only.csv')).toBeInTheDocument())
+    expect(screen.getByText('Manual mapping')).toBeInTheDocument()
+    expect(screen.getByText('42')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /View import of summary-only\.csv/i })).toHaveAttribute('href', '/uploads/up9')
   })
 })
