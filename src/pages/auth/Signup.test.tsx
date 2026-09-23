@@ -263,6 +263,11 @@ describe('Signup pending screen', () => {
   // resendVerification answers the same 200 whether a link went out or the mail
   // provider refused the send and the token was rolled back, so a flat "a fresh
   // link has been sent" is an assertion the server never actually made.
+  it('says how many verification emails an hour it will send', async () => {
+    await reachPendingScreen()
+    expect(screen.getByText(/up to 3 emails an hour/i)).toBeInTheDocument()
+  })
+
   it('shows one check-your-inbox state and says the link will ask for this password', async () => {
     await reachPendingScreen()
     expect(screen.getAllByRole('heading', { name: /check your inbox/i })).toHaveLength(1)

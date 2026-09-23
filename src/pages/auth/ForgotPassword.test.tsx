@@ -67,6 +67,7 @@ describe('ForgotPassword', () => {
     const panel = await screen.findByRole('status')
     expect(panel).toHaveTextContent(/1 hour|one hour/i)
     expect(panel).toHaveTextContent(/spam/i)
+    expect(panel).toHaveTextContent(/up to 3 links an hour/i)
   })
 
   it('offers an escalation when the email never arrives', async () => {

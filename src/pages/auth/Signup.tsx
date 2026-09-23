@@ -138,7 +138,8 @@ export default function Signup() {
               needs when the link is slow, and neither was stated anywhere. */}
           <p className="mt-4 text-xs leading-5 text-muted">
             The link works for 24 hours. If it hasn't arrived in a few minutes, check your
-            spam or promotions folder before asking for another one.
+            spam or promotions folder before asking for another one. We send up to 3 emails an
+            hour to one address.
           </p>
           {resent && (
             <div className="mt-5 flex items-start justify-center gap-2 text-left text-sm text-guava-green" role="status">

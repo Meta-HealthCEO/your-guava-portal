@@ -71,8 +71,8 @@ export default function ForgotPassword() {
                   <p>Check your inbox. If an account uses {email}, a reset link is on its way.</p>
                   <p className="text-muted">
                     The link works once and expires after 1 hour. If it hasn’t arrived in a few
-                    minutes, check your spam or promotions folder — asking for a new link cancels
-                    the first one.
+                    minutes, check your spam or promotions folder. You can ask for up to 3 links an
+                    hour, and each new link cancels the one before.
                   </p>
                 </div>
               </div>
