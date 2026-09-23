@@ -10,9 +10,12 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/components/layout/AppLayout', () => ({
   AppLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
-vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => ({ user: { role: 'owner' }, isLoading: false, isOwner: true }),
+const authState = vi.hoisted(() => ({
+  user: { role: 'owner' as 'owner' | 'manager' },
+  isLoading: false,
+  isOwner: true,
 }))
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => authState }))
 
 const apiMock = api as unknown as {
   get: ReturnType<typeof vi.fn>
@@ -63,6 +66,8 @@ describe('UploadDetail', () => {
     apiMock.get.mockReset()
     apiMock.delete.mockReset()
     apiMock.patch.mockReset()
+    authState.user.role = 'owner'
+    authState.isOwner = true
   })
 
   it('renders upload metadata and a download link', async () => {
@@ -147,6 +152,17 @@ describe('UploadDetail', () => {
     expect(screen.getByText('Could not parse date or time')).toBeInTheDocument()
     expect(screen.getByText(/Receipt: R501/i)).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
+  })
+
+  it('does not offer re-mapping to a manager and says why', async () => {
+    authState.user.role = 'manager'
+    authState.isOwner = false
+    mockUploadDetail()
+    renderUploadDetail()
+
+    await waitFor(() => expect(screen.getByText('export.csv')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /re-map columns/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/only the account owner can re-map/i)).toBeInTheDocument()
   })
 
   it('uses an app confirmation dialog when deleting an upload', async () => {

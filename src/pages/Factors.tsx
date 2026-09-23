@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import api from '@/lib/api'
+import { useAuth } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
 import { forecastDateKey, parseDateOnly, toLocalDateOnly } from '@/lib/date'
 import { isWeatherAvailable, signalFix, weatherUnavailableReason } from '@/lib/forecastSignals'
@@ -310,6 +311,8 @@ function FactorsAwaitingHistory({ reason }: { reason: string }) {
 }
 
 export default function Factors() {
+  // Factor rules are model configuration: the server refuses a manager's PUT (BE-02-T05), so the page says so up front.
+  const { isOwner } = useAuth()
   const [tab, setTab] = useState<FactorTab>('live')
   const [settings, setSettings] = useState<ForecastFactorSettings | null>(null)
   const [defaults, setDefaults] = useState<ForecastFactorSettings | null>(null)
@@ -930,12 +933,22 @@ export default function Factors() {
                 </div>
 
                 <div className="flex justify-end gap-2">
+                  {!isOwner && (
+                    <p id="factors-owner-only" className="mr-auto self-center text-sm text-muted">
+                      Only the account owner can change forecast rules.
+                    </p>
+                  )}
                   {/* Names its blast radius: it sits beside Save Factors and
                       replaces every tuned rule on the page. */}
-                  <Button type="button" variant="outline" onClick={resetSettings}>
+                  <Button type="button" variant="outline" onClick={resetSettings} disabled={!isOwner}>
                     Reset all rules to defaults
                   </Button>
-                  <Button type="button" onClick={saveSettings} disabled={saving}>
+                  <Button
+                    type="button"
+                    onClick={saveSettings}
+                    disabled={saving || !isOwner}
+                    aria-describedby={isOwner ? undefined : 'factors-owner-only'}
+                  >
                     <Save className="h-3.5 w-3.5" />
                     {saving ? 'Saving...' : 'Save Factors'}
                   </Button>

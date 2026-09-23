@@ -569,10 +569,14 @@ export default function UploadDetail() {
                 Complete mapping
               </Button>
             </>
-          ) : (
+          ) : user?.role === 'owner' ? (
             <Button variant="outline" size="sm" className="mr-2" onClick={() => { setRemapError(null); setShowRemapConfirm(true) }}>
               Re-map columns
             </Button>
+          ) : (
+            <p className="mb-3 text-sm text-muted">
+              Only the account owner can re-map an imported upload, because it replaces every row it imported.
+            </p>
           )}
           {user?.role === 'owner' && (
             <Button

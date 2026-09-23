@@ -122,12 +122,12 @@ const entitlements = {
   lockedKeys: ['history', 'learning'],
 }
 
-function renderWithAuth(ui: ReactNode) {
+function renderWithAuth(ui: ReactNode, { role = 'owner' }: { role?: 'owner' | 'manager' } = {}) {
   const user = {
     id: 'user123',
     email: 'test@yourguava.com',
     name: 'Test Owner',
-    role: 'owner' as const,
+    role,
     orgId: 'org123',
     cafeIds: ['cafe123'],
     activeCafeId: 'cafe123',
@@ -139,7 +139,7 @@ function renderWithAuth(ui: ReactNode) {
         value={{
           user,
           isLoading: false,
-          isOwner: true,
+          isOwner: role === 'owner',
           login: vi.fn(),
           logout: vi.fn(),
           register: vi.fn(),
@@ -370,6 +370,16 @@ describe('Factors', () => {
     // Counts are stated over the days that actually have a forecast.
     expect(screen.getByText('Active this week')).toBeInTheDocument()
     expect(screen.getByText(/1 of 2 days forecast/i)).toBeInTheDocument()
+  })
+
+  it('lets a manager read the rules but not change them', async () => {
+    renderWithAuth(<Factors />, { role: 'manager' })
+
+    await userEvent.click(await screen.findByText('Rules'))
+    expect(screen.getByRole('button', { name: /save factors/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /reset all rules to defaults/i })).toBeDisabled()
+    expect(screen.getByText(/only the account owner can change forecast rules/i)).toBeInTheDocument()
+    expect(mockPut).not.toHaveBeenCalled()
   })
 
   it('saves factor rules', async () => {
